@@ -1,0 +1,15 @@
+target
+Cargo.lock
+package-lock.json
+elm-stuff
+node_modules
+.build
+dist
+elm.rs
+elmMain.js
+
+zombie
+
+# for experimentation
+perf.data
+testing/
