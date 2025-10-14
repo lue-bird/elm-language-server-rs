@@ -1,7 +1,7 @@
 module ParserFast exposing
     ( Parser(..), run
     , symbol, symbolWithEndLocation, symbolWithRange, symbolFollowedBy, symbolBacktrackableFollowedBy, followedBySymbol
-    , keyword, keywordFollowedBy
+    , keyword, keywordRange, keywordFollowedBy
     , anyChar, while, whileAtLeast1WithoutLinebreak, whileMapWithRange, ifFollowedByWhileWithoutLinebreak, ifFollowedByWhileMapWithoutLinebreak, ifFollowedByWhileMapWithRangeWithoutLinebreak, ifFollowedByWhileValidateWithoutLinebreak, ifFollowedByWhileValidateMapWithRangeWithoutLinebreak, whileAtMost3WithoutLinebreakAnd2PartUtf16ToResultAndThen, whileAtMost3WithoutLinebreakAnd2PartUtf16ValidateMapWithRangeBacktrackableFollowedBySymbol
     , integerDecimalMapWithRange, integerDecimalOrHexadecimalMapWithRange, floatOrIntegerDecimalOrHexadecimalMapWithRange
     , skipWhileWhitespaceBacktrackableFollowedBy, followedBySkipWhileWhitespace, nestableMultiCommentMapWithRange
@@ -10,7 +10,7 @@ module ParserFast exposing
     , loopWhileSucceeds, loopWhileSucceedsOntoResultFromParser, loopWhileSucceedsOntoResultFromParserRightToLeftStackUnsafe, loopWhileSucceedsRightToLeftStackUnsafe, loopUntil
     , orSucceed, orSucceedWithLocation, mapOrSucceed, map2OrSucceed, map2WithRangeOrSucceed, map3OrSucceed, map4OrSucceed, oneOf2, oneOf2Map, oneOf2MapWithStartRowColumnAndEndRowColumn, oneOf2OrSucceed, oneOf3, oneOf4, oneOf5, oneOf7, oneOf9
     , withIndentSetToColumn, columnIndentAndThen, validateEndColumnIndentation
-    , mapWithRange, offsetSourceAndThen, offsetSourceAndThenOrSucceed
+    , mapWithEndLocation, mapWithRange, offsetSourceAndThen, offsetSourceAndThenOrSucceed
     , problem
     )
 
@@ -61,7 +61,7 @@ With `ParserFast`, you need to either
 # Exact match primitives
 
 @docs symbol, symbolWithEndLocation, symbolWithRange, symbolFollowedBy, symbolBacktrackableFollowedBy, followedBySymbol
-@docs keyword, keywordFollowedBy
+@docs keyword, keywordRange, keywordFollowedBy
 
 
 # Fuzzy match primitives
@@ -115,7 +115,7 @@ Once a path is chosen, it does not come back and try the others.
 # Indentation, Locations and source
 
 @docs withIndentSetToColumn, columnIndentAndThen, validateEndColumnIndentation
-@docs mapWithRange, offsetSourceAndThen, offsetSourceAndThenOrSucceed
+@docs mapWithEndLocation, mapWithRange, offsetSourceAndThen, offsetSourceAndThenOrSucceed
 @docs problem
 
 -}
@@ -371,8 +371,8 @@ map2 func (Parser parseA) (Parser parseB) =
 
                 Good a s1 ->
                     case parseB s1 of
-                        Bad _ x ->
-                            Bad True x
+                        Bad _ () ->
+                            Bad True ()
 
                         Good b s2 ->
                             Good (func a b) s2
@@ -389,8 +389,8 @@ map2WithStartLocation func (Parser parseA) (Parser parseB) =
 
                 Good a s1 ->
                     case parseB s1 of
-                        Bad _ x ->
-                            Bad True x
+                        Bad _ () ->
+                            Bad True ()
 
                         Good b s2 ->
                             Good (func { line = s0.line, column = s0.col } a b) s2
@@ -407,8 +407,8 @@ map2WithRange func (Parser parseA) (Parser parseB) =
 
                 Good a s1 ->
                     case parseB s1 of
-                        Bad _ x ->
-                            Bad True x
+                        Bad _ () ->
+                            Bad True ()
 
                         Good b s2 ->
                             Good (func { start = { line = s0.line, column = s0.col }, end = { line = s2.line, column = s2.col } } a b) s2
@@ -425,13 +425,13 @@ map3 func (Parser parseA) (Parser parseB) (Parser parseC) =
 
                 Good a s1 ->
                     case parseB s1 of
-                        Bad _ x ->
-                            Bad True x
+                        Bad _ () ->
+                            Bad True ()
 
                         Good b s2 ->
                             case parseC s2 of
-                                Bad _ x ->
-                                    Bad True x
+                                Bad _ () ->
+                                    Bad True ()
 
                                 Good c s3 ->
                                     Good (func a b c) s3
@@ -448,13 +448,13 @@ map3WithRange func (Parser parseA) (Parser parseB) (Parser parseC) =
 
                 Good a s1 ->
                     case parseB s1 of
-                        Bad _ x ->
-                            Bad True x
+                        Bad _ () ->
+                            Bad True ()
 
                         Good b s2 ->
                             case parseC s2 of
-                                Bad _ x ->
-                                    Bad True x
+                                Bad _ () ->
+                                    Bad True ()
 
                                 Good c s3 ->
                                     Good (func { start = { line = s0.line, column = s0.col }, end = { line = s3.line, column = s3.col } } a b c) s3
@@ -471,18 +471,18 @@ map4 func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parseD) =
 
                 Good a s1 ->
                     case parseB s1 of
-                        Bad _ x ->
-                            Bad True x
+                        Bad _ () ->
+                            Bad True ()
 
                         Good b s2 ->
                             case parseC s2 of
-                                Bad _ x ->
-                                    Bad True x
+                                Bad _ () ->
+                                    Bad True ()
 
                                 Good c s3 ->
                                     case parseD s3 of
-                                        Bad _ x ->
-                                            Bad True x
+                                        Bad _ () ->
+                                            Bad True ()
 
                                         Good d s4 ->
                                             Good (func a b c d) s4
@@ -499,18 +499,18 @@ map4WithRange func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parse
 
                 Good a s1 ->
                     case parseB s1 of
-                        Bad _ x ->
-                            Bad True x
+                        Bad _ () ->
+                            Bad True ()
 
                         Good b s2 ->
                             case parseC s2 of
-                                Bad _ x ->
-                                    Bad True x
+                                Bad _ () ->
+                                    Bad True ()
 
                                 Good c s3 ->
                                     case parseD s3 of
-                                        Bad _ x ->
-                                            Bad True x
+                                        Bad _ () ->
+                                            Bad True ()
 
                                         Good d s4 ->
                                             Good (func { start = { line = s0.line, column = s0.col }, end = { line = s4.line, column = s4.col } } a b c d) s4
@@ -522,23 +522,23 @@ map4WithStartLocation func (Parser parseA) (Parser parseB) (Parser parseC) (Pars
     Parser
         (\s0 ->
             case parseA s0 of
-                Bad committed x ->
-                    Bad committed x
+                Bad committed () ->
+                    Bad committed ()
 
                 Good a s1 ->
                     case parseB s1 of
-                        Bad _ x ->
-                            Bad True x
+                        Bad _ () ->
+                            Bad True ()
 
                         Good b s2 ->
                             case parseC s2 of
-                                Bad _ x ->
-                                    Bad True x
+                                Bad _ () ->
+                                    Bad True ()
 
                                 Good c s3 ->
                                     case parseD s3 of
-                                        Bad _ x ->
-                                            Bad True x
+                                        Bad _ () ->
+                                            Bad True ()
 
                                         Good d s4 ->
                                             Good (func { line = s0.line, column = s0.col } a b c d) s4
@@ -550,18 +550,18 @@ map3WithStartLocation func (Parser parseA) (Parser parseB) (Parser parseC) =
     Parser
         (\s0 ->
             case parseA s0 of
-                Bad committed x ->
-                    Bad committed x
+                Bad committed () ->
+                    Bad committed ()
 
                 Good a s1 ->
                     case parseB s1 of
-                        Bad _ x ->
-                            Bad True x
+                        Bad _ () ->
+                            Bad True ()
 
                         Good b s2 ->
                             case parseC s2 of
-                                Bad _ x ->
-                                    Bad True x
+                                Bad _ () ->
+                                    Bad True ()
 
                                 Good c s3 ->
                                     Good (func { line = s0.line, column = s0.col } a b c) s3
@@ -573,28 +573,28 @@ map5 func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parseD) (Parse
     Parser
         (\s0 ->
             case parseA s0 of
-                Bad committed x ->
-                    Bad committed x
+                Bad committed () ->
+                    Bad committed ()
 
                 Good a s1 ->
                     case parseB s1 of
-                        Bad _ x ->
-                            Bad True x
+                        Bad _ () ->
+                            Bad True ()
 
                         Good b s2 ->
                             case parseC s2 of
-                                Bad _ x ->
-                                    Bad True x
+                                Bad _ () ->
+                                    Bad True ()
 
                                 Good c s3 ->
                                     case parseD s3 of
-                                        Bad _ x ->
-                                            Bad True x
+                                        Bad _ () ->
+                                            Bad True ()
 
                                         Good d s4 ->
                                             case parseE s4 of
-                                                Bad _ x ->
-                                                    Bad True x
+                                                Bad _ () ->
+                                                    Bad True ()
 
                                                 Good e s5 ->
                                                     Good (func a b c d e) s5
@@ -606,28 +606,28 @@ map5WithStartLocation func (Parser parseA) (Parser parseB) (Parser parseC) (Pars
     Parser
         (\s0 ->
             case parseA s0 of
-                Bad committed x ->
-                    Bad committed x
+                Bad committed () ->
+                    Bad committed ()
 
                 Good a s1 ->
                     case parseB s1 of
-                        Bad _ x ->
-                            Bad True x
+                        Bad _ () ->
+                            Bad True ()
 
                         Good b s2 ->
                             case parseC s2 of
-                                Bad _ x ->
-                                    Bad True x
+                                Bad _ () ->
+                                    Bad True ()
 
                                 Good c s3 ->
                                     case parseD s3 of
-                                        Bad _ x ->
-                                            Bad True x
+                                        Bad _ () ->
+                                            Bad True ()
 
                                         Good d s4 ->
                                             case parseE s4 of
-                                                Bad _ x ->
-                                                    Bad True x
+                                                Bad _ () ->
+                                                    Bad True ()
 
                                                 Good e s5 ->
                                                     Good (func { line = s0.line, column = s0.col } a b c d e) s5
@@ -639,28 +639,28 @@ map5WithRange func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parse
     Parser
         (\s0 ->
             case parseA s0 of
-                Bad committed x ->
-                    Bad committed x
+                Bad committed () ->
+                    Bad committed ()
 
                 Good a s1 ->
                     case parseB s1 of
-                        Bad _ x ->
-                            Bad True x
+                        Bad _ () ->
+                            Bad True ()
 
                         Good b s2 ->
                             case parseC s2 of
-                                Bad _ x ->
-                                    Bad True x
+                                Bad _ () ->
+                                    Bad True ()
 
                                 Good c s3 ->
                                     case parseD s3 of
-                                        Bad _ x ->
-                                            Bad True x
+                                        Bad _ () ->
+                                            Bad True ()
 
                                         Good d s4 ->
                                             case parseE s4 of
-                                                Bad _ x ->
-                                                    Bad True x
+                                                Bad _ () ->
+                                                    Bad True ()
 
                                                 Good e s5 ->
                                                     Good (func { start = { line = s0.line, column = s0.col }, end = { line = s5.line, column = s5.col } } a b c d e) s5
@@ -677,28 +677,28 @@ map6 func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parseD) (Parse
 
                 Good a s1 ->
                     case parseB s1 of
-                        Bad _ x ->
-                            Bad True x
+                        Bad _ () ->
+                            Bad True ()
 
                         Good b s2 ->
                             case parseC s2 of
-                                Bad _ x ->
-                                    Bad True x
+                                Bad _ () ->
+                                    Bad True ()
 
                                 Good c s3 ->
                                     case parseD s3 of
-                                        Bad _ x ->
-                                            Bad True x
+                                        Bad _ () ->
+                                            Bad True ()
 
                                         Good d s4 ->
                                             case parseE s4 of
-                                                Bad _ x ->
-                                                    Bad True x
+                                                Bad _ () ->
+                                                    Bad True ()
 
                                                 Good e s5 ->
                                                     case parseF s5 of
-                                                        Bad _ x ->
-                                                            Bad True x
+                                                        Bad _ () ->
+                                                            Bad True ()
 
                                                         Good f s6 ->
                                                             Good (func a b c d e f) s6
@@ -715,28 +715,28 @@ map6WithStartLocation func (Parser parseA) (Parser parseB) (Parser parseC) (Pars
 
                 Good a s1 ->
                     case parseB s1 of
-                        Bad _ x ->
-                            Bad True x
+                        Bad _ () ->
+                            Bad True ()
 
                         Good b s2 ->
                             case parseC s2 of
-                                Bad _ x ->
-                                    Bad True x
+                                Bad _ () ->
+                                    Bad True ()
 
                                 Good c s3 ->
                                     case parseD s3 of
-                                        Bad _ x ->
-                                            Bad True x
+                                        Bad _ () ->
+                                            Bad True ()
 
                                         Good d s4 ->
                                             case parseE s4 of
-                                                Bad _ x ->
-                                                    Bad True x
+                                                Bad _ () ->
+                                                    Bad True ()
 
                                                 Good e s5 ->
                                                     case parseF s5 of
-                                                        Bad _ x ->
-                                                            Bad True x
+                                                        Bad _ () ->
+                                                            Bad True ()
 
                                                         Good f s6 ->
                                                             Good (func { line = s0.line, column = s0.col } a b c d e f) s6
@@ -753,33 +753,33 @@ map7 func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parseD) (Parse
 
                 Good a s1 ->
                     case parseB s1 of
-                        Bad _ x ->
-                            Bad True x
+                        Bad _ () ->
+                            Bad True ()
 
                         Good b s2 ->
                             case parseC s2 of
-                                Bad _ x ->
-                                    Bad True x
+                                Bad _ () ->
+                                    Bad True ()
 
                                 Good c s3 ->
                                     case parseD s3 of
-                                        Bad _ x ->
-                                            Bad True x
+                                        Bad _ () ->
+                                            Bad True ()
 
                                         Good d s4 ->
                                             case parseE s4 of
-                                                Bad _ x ->
-                                                    Bad True x
+                                                Bad _ () ->
+                                                    Bad True ()
 
                                                 Good e s5 ->
                                                     case parseF s5 of
-                                                        Bad _ x ->
-                                                            Bad True x
+                                                        Bad _ () ->
+                                                            Bad True ()
 
                                                         Good f s6 ->
                                                             case parseG s6 of
-                                                                Bad _ x ->
-                                                                    Bad True x
+                                                                Bad _ () ->
+                                                                    Bad True ()
 
                                                                 Good g s7 ->
                                                                     Good (func a b c d e f g) s7
@@ -796,33 +796,33 @@ map7WithRange func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parse
 
                 Good a s1 ->
                     case parseB s1 of
-                        Bad _ x ->
-                            Bad True x
+                        Bad _ () ->
+                            Bad True ()
 
                         Good b s2 ->
                             case parseC s2 of
-                                Bad _ x ->
-                                    Bad True x
+                                Bad _ () ->
+                                    Bad True ()
 
                                 Good c s3 ->
                                     case parseD s3 of
-                                        Bad _ x ->
-                                            Bad True x
+                                        Bad _ () ->
+                                            Bad True ()
 
                                         Good d s4 ->
                                             case parseE s4 of
-                                                Bad _ x ->
-                                                    Bad True x
+                                                Bad _ () ->
+                                                    Bad True ()
 
                                                 Good e s5 ->
                                                     case parseF s5 of
-                                                        Bad _ x ->
-                                                            Bad True x
+                                                        Bad _ () ->
+                                                            Bad True ()
 
                                                         Good f s6 ->
                                                             case parseG s6 of
-                                                                Bad _ x ->
-                                                                    Bad True x
+                                                                Bad _ () ->
+                                                                    Bad True ()
 
                                                                 Good g s7 ->
                                                                     Good (func { start = { line = s0.line, column = s0.col }, end = { line = s7.line, column = s7.col } } a b c d e f g) s7
@@ -839,38 +839,38 @@ map8WithStartLocation func (Parser parseA) (Parser parseB) (Parser parseC) (Pars
 
                 Good a s1 ->
                     case parseB s1 of
-                        Bad _ x ->
-                            Bad True x
+                        Bad _ () ->
+                            Bad True ()
 
                         Good b s2 ->
                             case parseC s2 of
-                                Bad _ x ->
-                                    Bad True x
+                                Bad _ () ->
+                                    Bad True ()
 
                                 Good c s3 ->
                                     case parseD s3 of
-                                        Bad _ x ->
-                                            Bad True x
+                                        Bad _ () ->
+                                            Bad True ()
 
                                         Good d s4 ->
                                             case parseE s4 of
-                                                Bad _ x ->
-                                                    Bad True x
+                                                Bad _ () ->
+                                                    Bad True ()
 
                                                 Good e s5 ->
                                                     case parseF s5 of
-                                                        Bad _ x ->
-                                                            Bad True x
+                                                        Bad _ () ->
+                                                            Bad True ()
 
                                                         Good f s6 ->
                                                             case parseG s6 of
-                                                                Bad _ x ->
-                                                                    Bad True x
+                                                                Bad _ () ->
+                                                                    Bad True ()
 
                                                                 Good g s7 ->
                                                                     case parseH s7 of
-                                                                        Bad _ x ->
-                                                                            Bad True x
+                                                                        Bad _ () ->
+                                                                            Bad True ()
 
                                                                         Good h s8 ->
                                                                             Good (func { line = s0.line, column = s0.col } a b c d e f g h) s8
@@ -887,43 +887,43 @@ map9WithRange func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parse
 
                 Good a s1 ->
                     case parseB s1 of
-                        Bad _ x ->
-                            Bad True x
+                        Bad _ () ->
+                            Bad True ()
 
                         Good b s2 ->
                             case parseC s2 of
-                                Bad _ x ->
-                                    Bad True x
+                                Bad _ () ->
+                                    Bad True ()
 
                                 Good c s3 ->
                                     case parseD s3 of
-                                        Bad _ x ->
-                                            Bad True x
+                                        Bad _ () ->
+                                            Bad True ()
 
                                         Good d s4 ->
                                             case parseE s4 of
-                                                Bad _ x ->
-                                                    Bad True x
+                                                Bad _ () ->
+                                                    Bad True ()
 
                                                 Good e s5 ->
                                                     case parseF s5 of
-                                                        Bad _ x ->
-                                                            Bad True x
+                                                        Bad _ () ->
+                                                            Bad True ()
 
                                                         Good f s6 ->
                                                             case parseG s6 of
-                                                                Bad _ x ->
-                                                                    Bad True x
+                                                                Bad _ () ->
+                                                                    Bad True ()
 
                                                                 Good g s7 ->
                                                                     case parseH s7 of
-                                                                        Bad _ x ->
-                                                                            Bad True x
+                                                                        Bad _ () ->
+                                                                            Bad True ()
 
                                                                         Good h s8 ->
                                                                             case parseI s8 of
-                                                                                Bad _ x ->
-                                                                                    Bad True x
+                                                                                Bad _ () ->
+                                                                                    Bad True ()
 
                                                                                 Good i s9 ->
                                                                                     Good (func { start = { line = s0.line, column = s0.col }, end = { line = s9.line, column = s9.col } } a b c d e f g h i) s9
@@ -1006,15 +1006,15 @@ map2OrSucceed func (Parser parseA) (Parser parseB) fallback =
             case parseA s0 of
                 Bad c1 x ->
                     if c1 then
-                        Bad True x
+                        Bad True ()
 
                     else
                         Good fallback s0
 
                 Good a s1 ->
                     case parseB s1 of
-                        Bad _ x ->
-                            Bad True x
+                        Bad _ () ->
+                            Bad True ()
 
                         Good b s2 ->
                             Good (func a b) s2
@@ -1028,15 +1028,15 @@ map2WithRangeOrSucceed func (Parser parseA) (Parser parseB) fallback =
             case parseA s0 of
                 Bad c1 x ->
                     if c1 then
-                        Bad True x
+                        Bad True ()
 
                     else
                         Good fallback s0
 
                 Good a s1 ->
                     case parseB s1 of
-                        Bad _ x ->
-                            Bad True x
+                        Bad _ () ->
+                            Bad True ()
 
                         Good b s2 ->
                             Good (func { start = { line = s0.line, column = s0.col }, end = { line = s2.line, column = s2.col } } a b) s2
@@ -1050,20 +1050,20 @@ map3OrSucceed func (Parser parseA) (Parser parseB) (Parser parseC) fallback =
             case parseA s0 of
                 Bad c1 x ->
                     if c1 then
-                        Bad True x
+                        Bad True ()
 
                     else
                         Good fallback s0
 
                 Good a s1 ->
                     case parseB s1 of
-                        Bad _ x ->
-                            Bad True x
+                        Bad _ () ->
+                            Bad True ()
 
                         Good b s2 ->
                             case parseC s2 of
-                                Bad _ x ->
-                                    Bad True x
+                                Bad _ () ->
+                                    Bad True ()
 
                                 Good c s3 ->
                                     Good (func a b c) s3
@@ -1077,25 +1077,25 @@ map4OrSucceed func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parse
             case parseA s0 of
                 Bad c1 x ->
                     if c1 then
-                        Bad True x
+                        Bad True ()
 
                     else
                         Good fallback s0
 
                 Good a s1 ->
                     case parseB s1 of
-                        Bad _ x ->
-                            Bad True x
+                        Bad _ () ->
+                            Bad True ()
 
                         Good b s2 ->
                             case parseC s2 of
-                                Bad _ x ->
-                                    Bad True x
+                                Bad _ () ->
+                                    Bad True ()
 
                                 Good c s3 ->
                                     case parseD s3 of
-                                        Bad _ x ->
-                                            Bad True x
+                                        Bad _ () ->
+                                            Bad True ()
 
                                         Good d s4 ->
                                             Good (func a b c d) s4
@@ -1586,7 +1586,7 @@ loopWhileSucceedsHelp ((Parser parseElement) as element) soFar reduce foldedToRe
 
         Bad elementCommitted x ->
             if elementCommitted then
-                Bad True x
+                Bad True ()
 
             else
                 Good (foldedToRes soFar) s0
@@ -1614,52 +1614,58 @@ loopWhileSucceedsFromRightToLeftStackUnsafeHelp ((Parser parseElement) as elemen
 
         Bad elementCommitted x ->
             if elementCommitted then
-                Bad True x
+                Bad True ()
 
             else
                 Good initialFolded s0
 
 
-loopWhileSucceedsOntoResultFromParserRightToLeftStackUnsafe : Parser element -> Parser element -> (element -> element -> element) -> Parser element
+loopWhileSucceedsOntoResultFromParserRightToLeftStackUnsafe : Parser base -> Parser element -> (base -> element -> base) -> Parser base
 loopWhileSucceedsOntoResultFromParserRightToLeftStackUnsafe (Parser parseLeftestElement) taiElement reduce =
     Parser
         (\s0 ->
             case parseLeftestElement s0 of
-                Good elementResult s1 ->
-                    case loopWhileSucceedsRightToLeftStackUnsafeHelp taiElement reduce s1 of
-                        Good tailFolded s2 ->
-                            Good (reduce elementResult tailFolded) s2
+                Good leftestElementResult s1 ->
+                    case
+                        loopWhileSucceedsRightToLeftStackUnsafeHelp
+                            taiElement
+                            leftestElementResult
+                            reduce
+                            s1
+                    of
+                        (Good _ _) as good ->
+                            good
 
-                        (Bad tailCommitted _) as tailBad ->
-                            if tailCommitted then
-                                tailBad
+                        Bad elementCommitted () ->
+                            if elementCommitted then
+                                Bad True ()
 
                             else
-                                Good elementResult s1
+                                Good leftestElementResult s1
 
-                Bad elementCommitted x ->
-                    Bad elementCommitted x
+                Bad leftestElementCommitted () ->
+                    Bad leftestElementCommitted ()
         )
 
 
-loopWhileSucceedsRightToLeftStackUnsafeHelp : Parser element -> (element -> element -> element) -> State -> PStep element
-loopWhileSucceedsRightToLeftStackUnsafeHelp ((Parser parseElement) as element) reduce s0 =
+loopWhileSucceedsRightToLeftStackUnsafeHelp : Parser element -> base -> (base -> element -> base) -> State -> PStep base
+loopWhileSucceedsRightToLeftStackUnsafeHelp ((Parser parseElement) as element) base reduce s0 =
     -- IGNORE TCO
     case parseElement s0 of
         Good elementResult s1 ->
-            case loopWhileSucceedsRightToLeftStackUnsafeHelp element reduce s1 of
+            case loopWhileSucceedsRightToLeftStackUnsafeHelp element base reduce s1 of
                 Good tailFolded s2 ->
-                    Good (reduce elementResult tailFolded) s2
+                    Good (reduce tailFolded elementResult) s2
 
-                (Bad tailCommitted _) as tailBad ->
+                Bad tailCommitted () ->
                     if tailCommitted then
-                        tailBad
+                        Bad True ()
 
                     else
-                        Good elementResult s1
+                        Good (reduce base elementResult) s1
 
-        Bad elementCommitted x ->
-            Bad elementCommitted x
+        Bad elementCommitted () ->
+            Bad elementCommitted ()
 
 
 loopWhileSucceedsOntoResultFromParser :
@@ -2527,8 +2533,8 @@ pStepCommit pStep =
         (Good _ _) as good ->
             good
 
-        Bad _ x ->
-            Bad True x
+        Bad _ () ->
+            Bad True ()
 
 
 {-| Parse words without other word characters after like `let`, `case`, `type` or `import`.
@@ -2569,6 +2575,44 @@ keyword kwd res =
                     , indent = s.indent
                     , line = s.line
                     , col = s.col + kwdLength
+                    }
+
+            else
+                pStepBadBacktracking
+        )
+
+
+keywordRange : String -> Parser ElmSyntax.Range
+keywordRange kwd =
+    let
+        kwdLength : Int
+        kwdLength =
+            String.length kwd
+    in
+    Parser
+        (\s ->
+            let
+                newOffset : Int
+                newOffset =
+                    s.offset + kwdLength
+
+                newColumn : Int
+                newColumn =
+                    s.col + kwdLength
+            in
+            if
+                (String.slice s.offset newOffset s.src == kwd)
+                    && not (isSubCharAlphaNumOrUnderscore newOffset s.src)
+            then
+                Good
+                    { start = { line = s.line, column = s.col }
+                    , end = { line = s.line, column = newColumn }
+                    }
+                    { src = s.src
+                    , offset = newOffset
+                    , indent = s.indent
+                    , line = s.line
+                    , col = newColumn
                     }
 
             else
@@ -2834,6 +2878,22 @@ mapWithRange combineStartAndResult (Parser parse) =
             case parse s0 of
                 Good a s1 ->
                     Good (combineStartAndResult { start = { line = s0.line, column = s0.col }, end = { line = s1.line, column = s1.col } } a) s1
+
+                Bad committed x ->
+                    Bad committed x
+        )
+
+
+mapWithEndLocation :
+    (ElmSyntax.Location -> a -> b)
+    -> Parser a
+    -> Parser b
+mapWithEndLocation combineStartAndResult (Parser parse) =
+    Parser
+        (\s0 ->
+            case parse s0 of
+                Good a s1 ->
+                    Good (combineStartAndResult { line = s1.line, column = s1.col } a) s1
 
                 Bad committed x ->
                     Bad committed x

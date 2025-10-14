@@ -18,4 +18,7 @@ bumpalo = "3.19.0"
 
 [profile.dev]
 # disabling debug info speeds up builds a bunch
-debug = 2
+debug = "none"
+# required to enable tail-call-elimination.
+# Without, the lsp stack overflows on medium to large files
+opt-level = 1

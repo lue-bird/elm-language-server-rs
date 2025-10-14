@@ -15,6 +15,9 @@ module ElmSyntax exposing
 @docs Exposing, Expose
 @docs Declaration, ChoiceTypeDeclaration, OperatorDeclaration, TypeAliasDeclaration, ValueOrFunctionDeclaration
 @docs Pattern, Expression, LetDeclaration, StringQuotingStyle, TypeAnnotation
+
+TODO extract those below into a separate module, as they are more generally applicable
+
 @docs Location, locationCompare, Range, rangeIncludesLocation, rangeEmpty, Node, nodeCombine, nodeMap, nodeRange, nodeValue
 
 -}
@@ -252,10 +255,12 @@ type Expression
         , part2 : Node Expression
         }
     | ExpressionCall
-        -- TODO change to { called : Node Expression, argument0 : Node Expression, argument1Up : List (Node Expression) }
-        (List (Node Expression))
+        { called : Node Expression
+        , argument0 : Node Expression
+        , argument1Up : List (Node Expression)
+        }
     | ExpressionInfixOperation
-        { operator : String
+        { operator : Node String
         , left : Node Expression
         , right : Node Expression
         }
@@ -263,26 +268,32 @@ type Expression
       ExpressionReference { qualification : ModuleName, name : String }
     | ExpressionIfThenElse
         { condition : Node Expression
+        , thenKeywordRange : Range
         , onTrue : Node Expression
+        , elseKeywordRange : Range
         , onFalse : Node Expression
         }
     | ExpressionLetIn
         { -- TODO split into declaration0 and declaration1Up
           declarations : List (Node LetDeclaration)
+        , inKeywordRange : Range
         , result : Node Expression
         }
     | ExpressionCaseOf
-        { expression : Node Expression
+        { matched : Node Expression
+        , ofKeywordRange : Range
         , -- TODO split into case0 and case1Up
           cases :
             List
                 { pattern : Node Pattern
+                , arrowKeySymbolRange : Range
                 , result : Node Expression
                 }
         }
     | ExpressionLambda
-        { -- TODO split into parameter0 and parameter1Up
-          parameters : List (Node Pattern)
+        { parameter0 : Node Pattern
+        , parameter1Up : List (Node Pattern)
+        , arrowKeySymbolRange : Range
         , result : Node Expression
         }
     | ExpressionRecord
@@ -360,12 +371,9 @@ type TypeAnnotation
         }
     | TypeAnnotationRecord
         (List
-            -- TODO remove Node wrapping
-            (Node
-                { name : Node String
-                , value : Node TypeAnnotation
-                }
-            )
+            { name : Node String
+            , value : Node TypeAnnotation
+            }
         )
     | TypeAnnotationRecordExtension
         { recordVariable : Node String
@@ -373,16 +381,14 @@ type TypeAnnotation
             -- TODO remove Node wrapping
             Node
                 (List
-                    (Node
-                        -- TODO remove Node wrapping
-                        { name : Node String
-                        , value : Node TypeAnnotation
-                        }
-                    )
+                    { name : Node String
+                    , value : Node TypeAnnotation
+                    }
                 )
         }
     | TypeAnnotationFunction
         { input : Node TypeAnnotation
+        , arrowKeySymbolRange : Range
         , output : Node TypeAnnotation
         }
 
@@ -396,6 +402,7 @@ type TypeAnnotation
   - `PatternInt`: `42`
   - `PatternHex`: `0x11`
   - `PatternTuple`: `(a, b)`
+  - `PatternTriple`: `(a, b, c)`
   - `PatternRecord`: `{name, age}`
   - `PatternListCons`: `x :: xs`
   - `PatternListExact`: `[ x, y ]`
@@ -420,7 +427,11 @@ type Pattern
         , part2 : Node Pattern
         }
     | PatternRecord (List (Node String))
-    | PatternListCons { head : Node Pattern, tail : Node Pattern }
+    | PatternListCons
+        { head : Node Pattern
+        , consKeySymbolRange : Range
+        , tail : Node Pattern
+        }
     | PatternListExact (List (Node Pattern))
     | PatternVariable String
     | PatternVariant
@@ -428,7 +439,11 @@ type Pattern
         , name : String
         , values : List (Node Pattern)
         }
-    | PatternAs { pattern : Node Pattern, variable : Node String }
+    | PatternAs
+        { pattern : Node Pattern
+        , asKeywordRange : Range
+        , variable : Node String
+        }
     | PatternParenthesized (Node Pattern)
 
 
