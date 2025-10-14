@@ -2423,10 +2423,10 @@ expressionWhenIsFollowedByOptimisticLayout =
                     , end =
                         case case1UpReverse of
                             lastCase :: _ ->
-                                lastCase.result |> ElmSyntax.nodeRange |> .end
+                                lastCase.result.range.end
 
                             [] ->
-                                case0.result |> ElmSyntax.nodeRange |> .end
+                                case0.result.range.end
                     }
                 , value =
                     ElmSyntax.ExpressionCaseOf
@@ -2746,12 +2746,15 @@ letFunctionFollowedByOptimisticLayout =
                         |> ropePrependTo commentsAfterEqual
                         |> ropePrependTo result.comments
                 , syntax =
-                    { range = { start = start, end = result.syntax |> ElmSyntax.nodeRange |> .end }
+                    { range = { start = start, end = result.syntax.range.end }
                     , value =
                         ElmSyntax.LetValueOrFunctionDeclaration
                             { signature =
                                 Just
-                                    { name = { range = { start = start, end = start }, value = nameNode |> ElmSyntax.nodeValue }
+                                    { name =
+                                        { range = { start = start, end = start }
+                                        , value = nameNode.value
+                                        }
                                     , type_ = typeResult.syntax
                                     }
                             , name = nameNode.value
@@ -3629,8 +3632,8 @@ pattern =
                             |> ropePrependTo asExtension.comments
                     , syntax =
                         { range =
-                            { start = leftMaybeConsed.syntax |> ElmSyntax.nodeRange |> .start
-                            , end = asExtension.syntax |> ElmSyntax.nodeRange |> .end
+                            { start = leftMaybeConsed.syntax.range.start
+                            , end = asExtension.syntax.range.end
                             }
                         , value =
                             ElmSyntax.PatternAs

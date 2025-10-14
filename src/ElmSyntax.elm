@@ -4,7 +4,7 @@ module ElmSyntax exposing
     , Exposing(..), Expose(..)
     , Declaration(..), ChoiceTypeDeclaration, OperatorDeclaration, InfixDirection(..), TypeAliasDeclaration, ValueOrFunctionDeclaration
     , Pattern(..), Expression(..), LetDeclaration(..), StringQuotingStyle(..), IntBase(..), Type(..)
-    , Location, locationCompare, Range, rangeIncludesLocation, Node, nodeCombine, nodeRange, nodeValue
+    , Location, locationCompare, Range, rangeIncludesLocation, Node, nodeCombine
     )
 
 {-| Elm syntax tree
@@ -17,7 +17,7 @@ module ElmSyntax exposing
 
 TODO extract those below into a separate module `TextGrid`, as they are more generally applicable
 
-@docs Location, locationCompare, Range, rangeIncludesLocation, Node, nodeCombine, nodeRange, nodeValue
+@docs Location, locationCompare, Range, rangeIncludesLocation, Node, nodeCombine
 
 -}
 
@@ -499,20 +499,6 @@ type alias Node value =
 nodeCombine : (Node a -> Node b -> c) -> Node a -> Node b -> Node c
 nodeCombine f a b =
     { range = { start = a.range.start, end = b.range.end }, value = f a b }
-
-
-{-| Extract the range out of a `Node a`. Prefer `.range`
--}
-nodeRange : Node value_ -> Range
-nodeRange node =
-    node.range
-
-
-{-| Extract the value (`a`) out of a `Node a`. Prefer `.value`
--}
-nodeValue : Node value -> value
-nodeValue node =
-    node.value
 
 
 {-| Source location. Starts at 1 for the first line and 1 for the first character in the line
