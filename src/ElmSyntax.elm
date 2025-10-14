@@ -64,9 +64,14 @@ type alias ModuleName =
 {-| Type annotation for a file.
 -}
 type alias Module =
-    { moduleDefinition : Node ModuleHeader
+    { -- TODO rename to header
+      header : Node ModuleHeader
     , imports : List (Node Import)
-    , declarations : List (Node Declaration)
+    , declarations :
+        List
+            { documentation : Maybe (Node String)
+            , declaration : Node Declaration
+            }
     , comments : List (Node String)
     }
 
@@ -121,7 +126,9 @@ type alias Import =
 
 -}
 type Declaration
-    = DeclarationValueOrFunction ValueOrFunctionDeclaration
+    = -- TODO they all share the option to have documentation, move it outside
+      -- TODO add DeclarationValueOrFunctionSignatureOnly
+      DeclarationValueOrFunction ValueOrFunctionDeclaration
     | DeclarationTypeAlias TypeAliasDeclaration
     | DeclarationChoiceType ChoiceTypeDeclaration
     | DeclarationPort
@@ -141,8 +148,7 @@ type Declaration
 
 -}
 type alias ChoiceTypeDeclaration =
-    { documentation : Maybe (Node String)
-    , name : Node String
+    { name : Node String
     , parameters : List (Node String)
     , equalsKeySymbolRange : Range
     , variant0 :
@@ -170,8 +176,7 @@ type alias ChoiceTypeDeclaration =
 
 -}
 type alias TypeAliasDeclaration =
-    { documentation : Maybe (Node String)
-    , aliasKeywordRange : Range
+    { aliasKeywordRange : Range
     , name : Node String
     , parameters : List (Node String)
     , equalsKeySymbolRange : Range
@@ -203,11 +208,9 @@ type InfixDirection
 {-| value/full function declaration
 -}
 type alias ValueOrFunctionDeclaration =
-    { documentation : Maybe (Node String)
-    , signature :
+    { signature :
         Maybe
-            { -- TODO only store name range
-              name : Node String
+            { name : Node String
             , type_ : Node Type
             }
     , name : String
@@ -229,6 +232,8 @@ type alias ValueOrFunctionDeclaration =
   - `ExpressionOperatorFunction`: `(+)`
   - `ExpressionNegation`: `-a`
   - `ExpressionParenthesized`: `(a)`
+  - `ExpressionTuple`: `( a, b )`
+  - `ExpressionTriple`: `( a, b, c )`
   - `ExpressionCall`: `add a b`
   - `ExpressionInfixOperation`: `a + b`
   - `ExpressionReference`: `add` or `Basics.True` or `portCmd`
@@ -283,16 +288,20 @@ type Expression
         , onFalse : Node Expression
         }
     | ExpressionLetIn
-        { -- TODO split into declaration0 and declaration1Up
-          declarations : List (Node LetDeclaration)
+        { declaration0 : Node LetDeclaration
+        , declaration1Up : List (Node LetDeclaration)
         , inKeywordRange : Range
         , result : Node Expression
         }
     | ExpressionCaseOf
         { matched : Node Expression
         , ofKeywordRange : Range
-        , -- TODO split into case0 and case1Up
-          cases :
+        , case0 :
+            { pattern : Node Pattern
+            , arrowKeySymbolRange : Range
+            , result : Node Expression
+            }
+        , case1Up :
             List
                 { pattern : Node Pattern
                 , arrowKeySymbolRange : Range
@@ -320,8 +329,14 @@ type Expression
     | ExpressionRecordAccessFunction String
     | ExpressionRecordUpdate
         { recordVariable : Node String
-        , -- TODO split into field0 and field1Up
-          fields :
+        , -- vertical bar |
+          barKeySymbolRange : Range
+        , field0 :
+            { name : Node String
+            , equalsKeySymbolRange : Range
+            , value : Node Expression
+            }
+        , field1Up :
             List
                 { name : Node String
                 , equalsKeySymbolRange : Range
@@ -341,9 +356,7 @@ type StringQuotingStyle
 {-| Element before the result of a let block
 -}
 type LetDeclaration
-    = LetValueOrFunctionDeclaration
-        -- TODO inline and remove documentation
-        ValueOrFunctionDeclaration
+    = LetValueOrFunctionDeclaration ValueOrFunctionDeclaration
     | LetDestructuring
         { pattern : Node Pattern
         , equalsKeySymbolRange : Range
@@ -362,8 +375,6 @@ type LetDeclaration
   - `TypeRecord`: `{ name : String}`
   - `TypeRecordExtension`: `{ a | name : String}`
   - `TypeFunction`: `Int -> String`
-
-TODO rename to Type(-)
 
 -}
 type Type
@@ -392,15 +403,19 @@ type Type
         )
     | TypeRecordExtension
         { recordVariable : Node String
-        , fields :
-            -- TODO remove Node wrapping
-            Node
-                (List
-                    { name : Node String
-                    , colonKeySymbolRange : Range
-                    , value : Node Type
-                    }
-                )
+        , -- vertical bar |
+          barKeySymbolRange : Range
+        , field0 :
+            { name : Node String
+            , colonKeySymbolRange : Range
+            , value : Node Type
+            }
+        , field1Up :
+            List
+                { name : Node String
+                , colonKeySymbolRange : Range
+                , value : Node Type
+                }
         }
     | TypeFunction
         { input : Node Type
@@ -434,7 +449,7 @@ type Pattern
     | PatternChar Char
     | PatternString { content : String, quotingStyle : StringQuotingStyle }
     | PatternInt Int
-    | -- TODO join with Integer
+    | -- TODO join with Int
       PatternHex Int
     | PatternTuple { part0 : Node Pattern, part1 : Node Pattern }
     | PatternTriple
