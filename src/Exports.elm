@@ -89,8 +89,8 @@ locationDelta :
     -> ElmSyntax.Location
     -> { line : Int, column : Int }
 locationDelta earlier later =
-    if earlier.row == later.row then
+    if earlier.line == later.line then
         { line = 0, column = later.column - earlier.column }
 
     else
-        { line = later.row - earlier.row, column = later.column - 1 }
+        { line = later.line - earlier.line, column = later.column - 1 }

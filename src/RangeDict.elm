@@ -94,8 +94,8 @@ union (RangeDict aRangeDict) (RangeDict bRangeDict) =
 
 rangeToComparable : ElmSyntax.Range -> ( ( Int, Int ), ( Int, Int ) )
 rangeToComparable range =
-    ( ( range.start.row, range.start.column )
-    , ( range.end.row, range.end.column )
+    ( ( range.start.line, range.start.column )
+    , ( range.end.line, range.end.column )
     )
 
 
@@ -105,5 +105,5 @@ rangeFromTupleTuple ( start, end ) =
 
 
 locationFromTuple : ( Int, Int ) -> ElmSyntax.Location
-locationFromTuple ( row, column ) =
-    { row = row, column = column }
+locationFromTuple ( line, column ) =
+    { line = line, column = column }

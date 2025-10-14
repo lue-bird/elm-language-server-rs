@@ -151,7 +151,7 @@ type alias State =
     { src : String
     , offset : Int
     , indent : List Int
-    , row : Int
+    , line : Int
     , col : Int
     }
 
@@ -177,7 +177,7 @@ to avoid breaking changes
 -}
 run : Parser a -> String -> Maybe a
 run (Parser parse) src =
-    case parse { src = src, offset = 0, indent = [], row = 1, col = 1 } of
+    case parse { src = src, offset = 0, indent = [], line = 1, col = 1 } of
         Good value finalState ->
             if finalState.offset - String.length finalState.src == 0 then
                 Just value
@@ -326,7 +326,7 @@ validateEndColumnIndentation isOkay (Parser parse) =
 
 {-| Editors think of code as a grid, but behind the scenes it is just a flat
 array of UTF-16 characters. `getOffset` tells you your index in that flat
-array. So if you consume `"\n\n\n\n"` you are on row 5, column 1, and offset 4.
+array. So if you consume `"\n\n\n\n"` you are on line 5, column 1, and offset 4.
 
 **Note:** JavaScript uses a somewhat odd version of UTF-16 strings, so a single
 character may take two slots. So in JavaScript, `'abc'.length === 3` but
@@ -393,7 +393,7 @@ map2WithStartLocation func (Parser parseA) (Parser parseB) =
                             Bad True x
 
                         Good b s2 ->
-                            Good (func { row = s0.row, column = s0.col } a b) s2
+                            Good (func { line = s0.line, column = s0.col } a b) s2
         )
 
 
@@ -411,7 +411,7 @@ map2WithRange func (Parser parseA) (Parser parseB) =
                             Bad True x
 
                         Good b s2 ->
-                            Good (func { start = { row = s0.row, column = s0.col }, end = { row = s2.row, column = s2.col } } a b) s2
+                            Good (func { start = { line = s0.line, column = s0.col }, end = { line = s2.line, column = s2.col } } a b) s2
         )
 
 
@@ -457,7 +457,7 @@ map3WithRange func (Parser parseA) (Parser parseB) (Parser parseC) =
                                     Bad True x
 
                                 Good c s3 ->
-                                    Good (func { start = { row = s0.row, column = s0.col }, end = { row = s3.row, column = s3.col } } a b c) s3
+                                    Good (func { start = { line = s0.line, column = s0.col }, end = { line = s3.line, column = s3.col } } a b c) s3
         )
 
 
@@ -513,7 +513,7 @@ map4WithRange func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parse
                                             Bad True x
 
                                         Good d s4 ->
-                                            Good (func { start = { row = s0.row, column = s0.col }, end = { row = s4.row, column = s4.col } } a b c d) s4
+                                            Good (func { start = { line = s0.line, column = s0.col }, end = { line = s4.line, column = s4.col } } a b c d) s4
         )
 
 
@@ -541,7 +541,7 @@ map4WithStartLocation func (Parser parseA) (Parser parseB) (Parser parseC) (Pars
                                             Bad True x
 
                                         Good d s4 ->
-                                            Good (func { row = s0.row, column = s0.col } a b c d) s4
+                                            Good (func { line = s0.line, column = s0.col } a b c d) s4
         )
 
 
@@ -564,7 +564,7 @@ map3WithStartLocation func (Parser parseA) (Parser parseB) (Parser parseC) =
                                     Bad True x
 
                                 Good c s3 ->
-                                    Good (func { row = s0.row, column = s0.col } a b c) s3
+                                    Good (func { line = s0.line, column = s0.col } a b c) s3
         )
 
 
@@ -630,7 +630,7 @@ map5WithStartLocation func (Parser parseA) (Parser parseB) (Parser parseC) (Pars
                                                     Bad True x
 
                                                 Good e s5 ->
-                                                    Good (func { row = s0.row, column = s0.col } a b c d e) s5
+                                                    Good (func { line = s0.line, column = s0.col } a b c d e) s5
         )
 
 
@@ -663,7 +663,7 @@ map5WithRange func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parse
                                                     Bad True x
 
                                                 Good e s5 ->
-                                                    Good (func { start = { row = s0.row, column = s0.col }, end = { row = s5.row, column = s5.col } } a b c d e) s5
+                                                    Good (func { start = { line = s0.line, column = s0.col }, end = { line = s5.line, column = s5.col } } a b c d e) s5
         )
 
 
@@ -739,7 +739,7 @@ map6WithStartLocation func (Parser parseA) (Parser parseB) (Parser parseC) (Pars
                                                             Bad True x
 
                                                         Good f s6 ->
-                                                            Good (func { row = s0.row, column = s0.col } a b c d e f) s6
+                                                            Good (func { line = s0.line, column = s0.col } a b c d e f) s6
         )
 
 
@@ -825,7 +825,7 @@ map7WithRange func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parse
                                                                     Bad True x
 
                                                                 Good g s7 ->
-                                                                    Good (func { start = { row = s0.row, column = s0.col }, end = { row = s7.row, column = s7.col } } a b c d e f g) s7
+                                                                    Good (func { start = { line = s0.line, column = s0.col }, end = { line = s7.line, column = s7.col } } a b c d e f g) s7
         )
 
 
@@ -873,7 +873,7 @@ map8WithStartLocation func (Parser parseA) (Parser parseB) (Parser parseC) (Pars
                                                                             Bad True x
 
                                                                         Good h s8 ->
-                                                                            Good (func { row = s0.row, column = s0.col } a b c d e f g h) s8
+                                                                            Good (func { line = s0.line, column = s0.col } a b c d e f g h) s8
         )
 
 
@@ -926,7 +926,7 @@ map9WithRange func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parse
                                                                                     Bad True x
 
                                                                                 Good i s9 ->
-                                                                                    Good (func { start = { row = s0.row, column = s0.col }, end = { row = s9.row, column = s9.col } } a b c d e f g h i) s9
+                                                                                    Good (func { start = { line = s0.line, column = s0.col }, end = { line = s9.line, column = s9.col } } a b c d e f g h i) s9
         )
 
 
@@ -978,7 +978,7 @@ orSucceedWithLocation (Parser attempt) fallbackResult =
                         firstBad
 
                     else
-                        Good (fallbackResult { row = s.row, column = s.col }) s
+                        Good (fallbackResult { line = s.line, column = s.col }) s
         )
 
 
@@ -1039,7 +1039,7 @@ map2WithRangeOrSucceed func (Parser parseA) (Parser parseB) fallback =
                             Bad True x
 
                         Good b s2 ->
-                            Good (func { start = { row = s0.row, column = s0.col }, end = { row = s2.row, column = s2.col } } a b) s2
+                            Good (func { start = { line = s0.line, column = s0.col }, end = { line = s2.line, column = s2.col } } a b) s2
         )
 
 
@@ -1145,7 +1145,7 @@ oneOf2MapWithStartRowColumnAndEndRowColumn firstToChoice (Parser attemptFirst) s
             case attemptFirst s of
                 Good first s1 ->
                     Good
-                        (firstToChoice s.row s.col first s1.row s1.col)
+                        (firstToChoice s.line s.col first s1.line s1.col)
                         s1
 
                 Bad firstCommitted firstX ->
@@ -1156,7 +1156,7 @@ oneOf2MapWithStartRowColumnAndEndRowColumn firstToChoice (Parser attemptFirst) s
                         case attemptSecond s of
                             Good second s1 ->
                                 Good
-                                    (secondToChoice s.row s.col second s1.row s1.col)
+                                    (secondToChoice s.line s.col second s1.line s1.col)
                                     s1
 
                             Bad secondCommitted secondX ->
@@ -1750,15 +1750,15 @@ integerDecimalMapWithRange rangeAndIntToRes =
                 in
                 Good
                     (rangeAndIntToRes
-                        { start = { row = s0.row, column = s0.col }
-                        , end = { row = s0.row, column = newColumn }
+                        { start = { line = s0.line, column = s0.col }
+                        , end = { line = s0.line, column = newColumn }
                         }
                         s1.int
                     )
                     { src = s0.src
                     , offset = s1.offset
                     , indent = s0.indent
-                    , row = s0.row
+                    , line = s0.line
                     , col = newColumn
                     }
         )
@@ -1803,8 +1803,8 @@ integerDecimalOrHexadecimalMapWithRange rangeAndIntDecimalToRes rangeAndIntHexad
 
                     range : ElmSyntax.Range
                     range =
-                        { start = { row = s0.row, column = s0.col }
-                        , end = { row = s0.row, column = newColumn }
+                        { start = { line = s0.line, column = s0.col }
+                        , end = { line = s0.line, column = newColumn }
                         }
                 in
                 Good
@@ -1818,7 +1818,7 @@ integerDecimalOrHexadecimalMapWithRange rangeAndIntDecimalToRes rangeAndIntHexad
                     { src = s0.src
                     , offset = s1.offsetAndInt.offset
                     , indent = s0.indent
-                    , row = s0.row
+                    , line = s0.line
                     , col = newColumn
                     }
         )
@@ -1869,8 +1869,8 @@ floatOrIntegerDecimalOrHexadecimalMapWithRange rangeAndFloatToRes rangeAndIntDec
 
                         range : ElmSyntax.Range
                         range =
-                            { start = { row = s0.row, column = s0.col }
-                            , end = { row = s0.row, column = newColumn }
+                            { start = { line = s0.line, column = s0.col }
+                            , end = { line = s0.line, column = newColumn }
                             }
                     in
                     Good
@@ -1884,7 +1884,7 @@ floatOrIntegerDecimalOrHexadecimalMapWithRange rangeAndFloatToRes rangeAndIntDec
                         { src = s0.src
                         , offset = s1.offsetAndInt.offset
                         , indent = s0.indent
-                        , row = s0.row
+                        , line = s0.line
                         , col = newColumn
                         }
 
@@ -1898,15 +1898,15 @@ floatOrIntegerDecimalOrHexadecimalMapWithRange rangeAndFloatToRes rangeAndIntDec
                             in
                             Good
                                 (rangeAndFloatToRes
-                                    { start = { row = s0.row, column = s0.col }
-                                    , end = { row = s0.row, column = newColumn }
+                                    { start = { line = s0.line, column = s0.col }
+                                    , end = { line = s0.line, column = newColumn }
                                     }
                                     float
                                 )
                                 { src = s0.src
                                 , offset = offsetAfterFloat
                                 , indent = s0.indent
-                                , row = s0.row
+                                , line = s0.line
                                 , col = newColumn
                                 }
 
@@ -2348,7 +2348,7 @@ symbol str res =
                     { src = s.src
                     , offset = newOffset
                     , indent = s.indent
-                    , row = s.row
+                    , line = s.line
                     , col = s.col + strLength
                     }
 
@@ -2378,7 +2378,7 @@ followedBySymbol str (Parser parsePrevious) =
                             { src = s1.src
                             , offset = newOffset
                             , indent = s1.indent
-                            , row = s1.row
+                            , line = s1.line
                             , col = s1.col + strLength
                             }
 
@@ -2411,11 +2411,11 @@ symbolWithEndLocation str endLocationToRes =
                         s.col + strLength
                 in
                 Good
-                    (endLocationToRes { row = s.row, column = newCol })
+                    (endLocationToRes { line = s.line, column = newCol })
                     { src = s.src
                     , offset = newOffset
                     , indent = s.indent
-                    , row = s.row
+                    , line = s.line
                     , col = newCol
                     }
 
@@ -2445,11 +2445,11 @@ symbolWithRange str startAndEndLocationToRes =
                         s.col + strLength
                 in
                 Good
-                    (startAndEndLocationToRes { start = { row = s.row, column = s.col }, end = { row = s.row, column = newCol } })
+                    (startAndEndLocationToRes { start = { line = s.line, column = s.col }, end = { line = s.line, column = newCol } })
                     { src = s.src
                     , offset = newOffset
                     , indent = s.indent
-                    , row = s.row
+                    , line = s.line
                     , col = newCol
                     }
 
@@ -2480,7 +2480,7 @@ symbolFollowedBy str (Parser parseNext) =
                     { src = s.src
                     , offset = newOffset
                     , indent = s.indent
-                    , row = s.row
+                    , line = s.line
                     , col = s.col + strLength
                     }
                     |> pStepCommit
@@ -2512,7 +2512,7 @@ symbolBacktrackableFollowedBy str (Parser parseNext) =
                     { src = s.src
                     , offset = newOffset
                     , indent = s.indent
-                    , row = s.row
+                    , line = s.line
                     , col = s.col + strLength
                     }
 
@@ -2567,7 +2567,7 @@ keyword kwd res =
                     { src = s.src
                     , offset = newOffset
                     , indent = s.indent
-                    , row = s.row
+                    , line = s.line
                     , col = s.col + kwdLength
                     }
 
@@ -2607,7 +2607,7 @@ keywordFollowedBy kwd (Parser parseNext) =
                     { src = s.src
                     , offset = newOffset
                     , indent = s.indent
-                    , row = s.row
+                    , line = s.line
                     , col = s.col + kwdLength
                     }
                     |> pStepCommit
@@ -2636,7 +2636,7 @@ anyChar =
                     { src = s.src
                     , offset = s.offset + 1
                     , indent = s.indent
-                    , row = s.row + 1
+                    , line = s.line + 1
                     , col = 1
                     }
 
@@ -2651,7 +2651,7 @@ anyChar =
                             { src = s.src
                             , offset = newOffset
                             , indent = s.indent
-                            , row = s.row
+                            , line = s.line
                             , col = s.col + 1
                             }
         )
@@ -2686,12 +2686,12 @@ whileMapWithRange isGood rangeAndConsumedStringToRes =
             let
                 s1 : State
                 s1 =
-                    skipWhileHelp isGood s0.offset s0.row s0.col s0.src s0.indent
+                    skipWhileHelp isGood s0.offset s0.line s0.col s0.src s0.indent
             in
             Good
                 (rangeAndConsumedStringToRes
-                    { start = { row = s0.row, column = s0.col }
-                    , end = { row = s1.row, column = s1.col }
+                    { start = { line = s0.line, column = s0.col }
+                    , end = { line = s1.line, column = s1.col }
                     }
                     (String.slice s0.offset s1.offset s0.src)
                 )
@@ -2700,7 +2700,7 @@ whileMapWithRange isGood rangeAndConsumedStringToRes =
 
 
 skipWhileHelp : (Char -> Bool) -> Int -> Int -> Int -> String -> List Int -> State
-skipWhileHelp isGood offset row col src indent =
+skipWhileHelp isGood offset line col src indent =
     let
         actualChar : String
         actualChar =
@@ -2709,51 +2709,51 @@ skipWhileHelp isGood offset row col src indent =
     if String.any isGood actualChar then
         case actualChar of
             "\n" ->
-                skipWhileHelp isGood (offset + 1) (row + 1) 1 src indent
+                skipWhileHelp isGood (offset + 1) (line + 1) 1 src indent
 
             _ ->
-                skipWhileHelp isGood (offset + 1) row (col + 1) src indent
+                skipWhileHelp isGood (offset + 1) line (col + 1) src indent
 
     else if
         charStringIsUtf16HighSurrogate actualChar
             && -- String.any iterates over code points (so here just one Char)
                String.any isGood (String.slice offset (offset + 2) src)
     then
-        skipWhileHelp isGood (offset + 2) row (col + 1) src indent
+        skipWhileHelp isGood (offset + 2) line (col + 1) src indent
 
     else
         -- no match
         { src = src
         , offset = offset
         , indent = indent
-        , row = row
+        , line = line
         , col = col
         }
 
 
 skipWhileWithoutLinebreakHelp : (Char -> Bool) -> Int -> Int -> Int -> String -> List Int -> State
-skipWhileWithoutLinebreakHelp isGood offset row col src indent =
+skipWhileWithoutLinebreakHelp isGood offset line col src indent =
     let
         actualChar : String
         actualChar =
             String.slice offset (offset + 1) src
     in
     if String.any isGood actualChar then
-        skipWhileWithoutLinebreakHelp isGood (offset + 1) row (col + 1) src indent
+        skipWhileWithoutLinebreakHelp isGood (offset + 1) line (col + 1) src indent
 
     else if
         charStringIsUtf16HighSurrogate actualChar
             && -- String.any iterates over code points (so here just one Char)
                String.any isGood (String.slice offset (offset + 2) src)
     then
-        skipWhileWithoutLinebreakHelp isGood (offset + 2) row (col + 1) src indent
+        skipWhileWithoutLinebreakHelp isGood (offset + 2) line (col + 1) src indent
 
     else
         -- no match
         { src = src
         , offset = offset
         , indent = indent
-        , row = row
+        , line = line
         , col = col
         }
 
@@ -2764,7 +2764,7 @@ followedBySkipWhileWhitespace (Parser parseBefore) =
         (\s0 ->
             case parseBefore s0 of
                 Good res s1 ->
-                    Good res (skipWhileWhitespaceHelp s1.offset s1.row s1.col s1.src s1.indent)
+                    Good res (skipWhileWhitespaceHelp s1.offset s1.line s1.col s1.src s1.indent)
 
                 bad ->
                     bad
@@ -2777,25 +2777,25 @@ skipWhileWhitespaceBacktrackableFollowedBy : Parser next -> Parser next
 skipWhileWhitespaceBacktrackableFollowedBy (Parser parseNext) =
     Parser
         (\s0 ->
-            parseNext (skipWhileWhitespaceHelp s0.offset s0.row s0.col s0.src s0.indent)
+            parseNext (skipWhileWhitespaceHelp s0.offset s0.line s0.col s0.src s0.indent)
         )
 
 
 skipWhileWhitespaceHelp : Int -> Int -> Int -> String -> List Int -> State
-skipWhileWhitespaceHelp offset row col src indent =
+skipWhileWhitespaceHelp offset line col src indent =
     case String.slice offset (offset + 1) src of
         " " ->
-            skipWhileWhitespaceHelp (offset + 1) row (col + 1) src indent
+            skipWhileWhitespaceHelp (offset + 1) line (col + 1) src indent
 
         "\n" ->
-            skipWhileWhitespaceHelp (offset + 1) (row + 1) 1 src indent
+            skipWhileWhitespaceHelp (offset + 1) (line + 1) 1 src indent
 
         "\u{000D}" ->
-            skipWhileWhitespaceHelp (offset + 1) row (col + 1) src indent
+            skipWhileWhitespaceHelp (offset + 1) line (col + 1) src indent
 
         -- empty or non-whitespace
         _ ->
-            { src = src, offset = offset, indent = indent, row = row, col = col }
+            { src = src, offset = offset, indent = indent, line = line, col = col }
 
 
 changeIndent : (List Int -> List Int) -> State -> State
@@ -2803,7 +2803,7 @@ changeIndent newIndent s =
     { src = s.src
     , offset = s.offset
     , indent = s.indent |> newIndent
-    , row = s.row
+    , line = s.line
     , col = s.col
     }
 
@@ -2833,7 +2833,7 @@ mapWithRange combineStartAndResult (Parser parse) =
         (\s0 ->
             case parse s0 of
                 Good a s1 ->
-                    Good (combineStartAndResult { start = { row = s0.row, column = s0.col }, end = { row = s1.row, column = s1.col } } a) s1
+                    Good (combineStartAndResult { start = { line = s0.line, column = s0.col }, end = { line = s1.line, column = s1.col } } a) s1
 
                 Bad committed x ->
                     Bad committed x
@@ -2880,7 +2880,7 @@ ifFollowedByWhileValidateWithoutLinebreak firstIsOkay afterFirstIsOkay resultIsO
                 let
                     s1 : State
                     s1 =
-                        skipWhileWithoutLinebreakHelp afterFirstIsOkay firstOffset s.row (s.col + 1) s.src s.indent
+                        skipWhileWithoutLinebreakHelp afterFirstIsOkay firstOffset s.line (s.col + 1) s.src s.indent
 
                     name : String
                     name =
@@ -2933,7 +2933,7 @@ whileAtMost3WithoutLinebreakAnd2PartUtf16ToResultAndThen charAsStringIsOkay cons
                         { src = src
                         , offset = s0Offset + consumed.length
                         , indent = s0.indent
-                        , row = s0.row
+                        , line = s0.line
                         , col = s0.col + consumed.length
                         }
                         |> pStepCommit
@@ -2984,15 +2984,15 @@ whileAtMost3WithoutLinebreakAnd2PartUtf16ValidateMapWithRangeBacktrackableFollow
             then
                 Good
                     (whileRangeAndContentToRes
-                        { start = { row = s0.row, column = s0.col }
-                        , end = { row = s0.row, column = s0.col + consumedBeforeFinalSymbolLength }
+                        { start = { line = s0.line, column = s0.col }
+                        , end = { line = s0.line, column = s0.col + consumedBeforeFinalSymbolLength }
                         }
                         consumedBeforeFinalSymbolString
                     )
                     { src = src
                     , offset = s0Offset + consumedBeforeFinalSymbolLength + mandatoryFinalSymbolLength
                     , indent = s0.indent
-                    , row = s0.row
+                    , line = s0.line
                     , col = s0.col + consumedBeforeFinalSymbolLength + mandatoryFinalSymbolLength
                     }
 
@@ -3022,14 +3022,14 @@ ifFollowedByWhileValidateMapWithRangeWithoutLinebreak toResult firstIsOkay after
                 let
                     s1 : State
                     s1 =
-                        skipWhileWithoutLinebreakHelp afterFirstIsOkay firstOffset s0.row (s0.col + 1) s0.src s0.indent
+                        skipWhileWithoutLinebreakHelp afterFirstIsOkay firstOffset s0.line (s0.col + 1) s0.src s0.indent
 
                     name : String
                     name =
                         String.slice s0.offset s1.offset s0.src
                 in
                 if resultIsOkay name then
-                    Good (toResult { start = { row = s0.row, column = s0.col }, end = { row = s1.row, column = s1.col } } name) s1
+                    Good (toResult { start = { line = s0.line, column = s0.col }, end = { line = s1.line, column = s1.col } } name) s1
 
                 else
                     pStepBadBacktracking
@@ -3055,7 +3055,7 @@ ifFollowedByWhileWithoutLinebreak firstIsOkay afterFirstIsOkay =
                 let
                     s1 : State
                     s1 =
-                        skipWhileWithoutLinebreakHelp afterFirstIsOkay firstOffset s.row (s.col + 1) s.src s.indent
+                        skipWhileWithoutLinebreakHelp afterFirstIsOkay firstOffset s.line (s.col + 1) s.src s.indent
                 in
                 Good (String.slice s.offset s1.offset s.src) s1
         )
@@ -3081,12 +3081,12 @@ ifFollowedByWhileMapWithRangeWithoutLinebreak rangeAndConsumedStringToRes firstI
                 let
                     s1 : State
                     s1 =
-                        skipWhileWithoutLinebreakHelp afterFirstIsOkay firstOffset s0.row (s0.col + 1) s0.src s0.indent
+                        skipWhileWithoutLinebreakHelp afterFirstIsOkay firstOffset s0.line (s0.col + 1) s0.src s0.indent
                 in
                 Good
                     (rangeAndConsumedStringToRes
-                        { start = { row = s0.row, column = s0.col }
-                        , end = { row = s1.row, column = s1.col }
+                        { start = { line = s0.line, column = s0.col }
+                        , end = { line = s1.line, column = s1.col }
                         }
                         (String.slice s0.offset s1.offset s0.src)
                     )
@@ -3114,7 +3114,7 @@ ifFollowedByWhileMapWithoutLinebreak consumedStringToRes firstIsOkay afterFirstI
                 let
                     s1 : State
                     s1 =
-                        skipWhileWithoutLinebreakHelp afterFirstIsOkay firstOffset s0.row (s0.col + 1) s0.src s0.indent
+                        skipWhileWithoutLinebreakHelp afterFirstIsOkay firstOffset s0.line (s0.col + 1) s0.src s0.indent
                 in
                 Good
                     (consumedStringToRes (String.slice s0.offset s1.offset s0.src))
@@ -3182,7 +3182,7 @@ while isGood =
             let
                 s1 : State
                 s1 =
-                    skipWhileHelp isGood s0.offset s0.row s0.col s0.src s0.indent
+                    skipWhileHelp isGood s0.offset s0.line s0.col s0.src s0.indent
             in
             Good
                 (String.slice s0.offset s1.offset s0.src)
@@ -3197,7 +3197,7 @@ whileAtLeast1WithoutLinebreak isGood =
             let
                 s1 : State
                 s1 =
-                    skipWhileWithoutLinebreakHelp isGood s0.offset s0.row s0.col s0.src s0.indent
+                    skipWhileWithoutLinebreakHelp isGood s0.offset s0.line s0.col s0.src s0.indent
             in
             if s1.offset - s0.offset == 0 then
                 pStepBadBacktracking
@@ -3230,10 +3230,10 @@ anyCharFollowedByWhileMap consumedStringToRes afterFirstIsOkay =
                     s1 : State
                     s1 =
                         if firstOffset == -2 then
-                            skipWhileHelp afterFirstIsOkay (s.offset + 1) (s.row + 1) 1 s.src s.indent
+                            skipWhileHelp afterFirstIsOkay (s.offset + 1) (s.line + 1) 1 s.src s.indent
 
                         else
-                            skipWhileHelp afterFirstIsOkay firstOffset s.row (s.col + 1) s.src s.indent
+                            skipWhileHelp afterFirstIsOkay firstOffset s.line (s.col + 1) s.src s.indent
                 in
                 Good (consumedStringToRes (String.slice s.offset s1.offset s.src)) s1
         )

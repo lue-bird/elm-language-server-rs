@@ -24,7 +24,7 @@ struct State {
 #[derive(Clone)]
 struct ModuleState {
     source: &'static str,
-    syntax: Option<elm::ElmSyntaxFile<'static>>,
+    syntax: Option<elm::ElmSyntaxModule<'static>>,
 }
 
 const token_types: [lsp_types::SemanticTokenType; 11] =
@@ -266,7 +266,7 @@ async fn main() {
                         syntax: module_syntax,
                         source: elm::StringString::One(module_source),
                     }).into_iter().scan(elm::ElmSyntaxLocation {
-                        row: 1,
+                        line: 1,
                         column: 1,
                     }, |previous_start_location, segment| {
                         let delta = elm::exports_location_delta(*previous_start_location, segment.range.start);
@@ -408,8 +408,8 @@ fn elm_syntax_highlight_syntax_kind_to_lsp_semantic_token_type(
 }
 
 fn lsp_position_to_elm_syntax_location(lsp_position: lsp_types::Position) -> elm::ElmSyntaxLocation {
-    elm::GeneratedColumnRow {
-        row: (lsp_position.line + 1) as i64,
+    elm::GeneratedColumnLine {
+        line: (lsp_position.line + 1) as i64,
         column: (lsp_position.character + 1) as i64,
     }
 }

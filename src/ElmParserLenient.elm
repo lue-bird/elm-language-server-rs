@@ -13,10 +13,6 @@ module ElmParserLenient exposing
 but able to parse badly indented code and similar somewhat incorrect syntax,
 similar to elm-format.
 
-This is **not** a fault-tolerant parser!
-So if you write something it can't recognize in a file,
-the whole thing will fail.
-
 Some additional lenient parsing:
 
   - `a != b` or `a !== b` → `a /= b`
@@ -158,7 +154,7 @@ run syntaxParser source =
 
 {-| [`Parser`](#Parser) for an [`ElmSyntax.File`](#File)
 -}
-module_ : Parser ElmSyntax.File
+module_ : Parser ElmSyntax.Module
 module_ =
     ParserFast.map4
         (\moduleHeaderResult moduleComments importsResult declarationsResult ->
@@ -178,40 +174,10 @@ module_ =
 
                                 [] ->
                                     -- invalid syntax
-                                    { row = 2, column = 1 }
-
-                moduleHeaderBasedOnExistingPorts :
-                    ElmSyntax.DefaultModuleData
-                    -> ElmSyntax.Module
-                moduleHeaderBasedOnExistingPorts existingModuleHeaderInfo =
-                    if
-                        declarationsResult.syntax
-                            |> List.any
-                                (\declarationAndLateImports ->
-                                    declarationAndLateImports.declaration
-                                        |> ElmSyntax.nodeValue
-                                        |> declarationIsPort
-                                )
-                    then
-                        ElmSyntax.PortModule existingModuleHeaderInfo
-
-                    else
-                        ElmSyntax.NormalModule existingModuleHeaderInfo
+                                    { line = 2, column = 1 }
             in
             { moduleDefinition =
                 moduleHeaderResult.syntax
-                    |> ElmSyntax.nodeMap
-                        (\syntaxModuleHeader ->
-                            case syntaxModuleHeader of
-                                ElmSyntax.EffectModule effectModuleHeader ->
-                                    ElmSyntax.EffectModule effectModuleHeader
-
-                                ElmSyntax.NormalModule normalModuleHeader ->
-                                    moduleHeaderBasedOnExistingPorts normalModuleHeader
-
-                                ElmSyntax.PortModule normalModuleHeader ->
-                                    moduleHeaderBasedOnExistingPorts normalModuleHeader
-                        )
             , imports =
                 (declarationsResult.syntax
                     |> List.concatMap .lateImports
@@ -271,19 +237,19 @@ module_ =
 declarationIsPort : ElmSyntax.Declaration -> Bool
 declarationIsPort syntaxDeclaration =
     case syntaxDeclaration of
-        ElmSyntax.PortDeclaration _ ->
+        ElmSyntax.DeclarationPort _ ->
             True
 
-        ElmSyntax.ValueOrFunctionDeclaration _ ->
+        ElmSyntax.DeclarationValueOrFunction _ ->
             False
 
-        ElmSyntax.TypeAliasDeclaration _ ->
+        ElmSyntax.DeclarationTypeAlias _ ->
             False
 
-        ElmSyntax.ChoiceTypeDeclaration _ ->
+        ElmSyntax.DeclarationChoiceType _ ->
             False
 
-        ElmSyntax.InfixDeclaration _ ->
+        ElmSyntax.DeclarationOperator _ ->
             False
 
 
@@ -303,15 +269,15 @@ moduleName =
         )
 
 
-exposeDefinition : Parser (WithComments (ElmSyntax.Node ElmSyntax.Exposing))
-exposeDefinition =
+moduleHeaderExposing : Parser (WithComments (ElmSyntax.Node ElmSyntax.Exposing))
+moduleHeaderExposing =
     ParserFast.map2WithRange
-        (\range commentsAfterExposing exposingListInnerResult ->
+        (\range commentsAfterExposing exposingInnerResult ->
             { comments =
                 commentsAfterExposing
-                    |> ropePrependTo exposingListInnerResult.comments
+                    |> ropePrependTo exposingInnerResult.comments
             , syntax =
-                { range = range, value = exposingListInnerResult.syntax }
+                { range = range, value = exposingInnerResult.syntax }
             }
         )
         (ParserFast.symbolFollowedBy "exposing" whitespaceAndComments)
@@ -401,7 +367,7 @@ exposingWithinParensExplicitFollowedByWhitespaceAndCommentsMap exposingToSyntax 
 
 {-| [`Parser`](#Parser) for a single [`ElmSyntax.TopLevelExpose`](#TopLevelExpose)
 -}
-expose : Parser { comments : Comments, syntax : ElmSyntax.Node ElmSyntax.TopLevelExpose }
+expose : Parser { comments : Comments, syntax : ElmSyntax.Node ElmSyntax.Expose }
 expose =
     ParserFast.oneOf3
         functionExpose
@@ -409,7 +375,7 @@ expose =
         infixExpose
 
 
-infixExpose : Parser (WithComments (ElmSyntax.Node ElmSyntax.TopLevelExpose))
+infixExpose : Parser (WithComments (ElmSyntax.Node ElmSyntax.Expose))
 infixExpose =
     ParserFast.map2WithRange
         (\range infixName () ->
@@ -452,7 +418,7 @@ infixExpose =
         (ParserFast.symbol ")" ())
 
 
-typeExpose : Parser (WithComments (ElmSyntax.Node ElmSyntax.TopLevelExpose))
+typeExpose : Parser (WithComments (ElmSyntax.Node ElmSyntax.Expose))
 typeExpose =
     ParserFast.map3
         (\typeExposeNameNode commentsBeforeMaybeOpen maybeOpen ->
@@ -487,7 +453,7 @@ typeExpose =
         )
 
 
-functionExpose : Parser (WithComments (ElmSyntax.Node ElmSyntax.TopLevelExpose))
+functionExpose : Parser (WithComments (ElmSyntax.Node ElmSyntax.Expose))
 functionExpose =
     nameLowercaseMapWithRange
         (\range name ->
@@ -501,7 +467,7 @@ functionExpose =
 {-| [`Parser`](#Parser) for an [`ElmSyntax.Module`](#Module)
 (confusingly, that's their name for only the `module X exposing (Y)` lines)
 -}
-moduleHeader : Parser { comments : Comments, syntax : ElmSyntax.Node ElmSyntax.Module }
+moduleHeader : Parser { comments : Comments, syntax : ElmSyntax.Node ElmSyntax.ModuleHeader }
 moduleHeader =
     ParserFast.oneOf3
         normalModuleDefinition
@@ -616,79 +582,107 @@ effectWhereClauses =
         whereBlock
 
 
-effectModuleDefinition : Parser (WithComments (ElmSyntax.Node ElmSyntax.Module))
+effectModuleDefinition : Parser (WithComments (ElmSyntax.Node ElmSyntax.ModuleHeader))
 effectModuleDefinition =
-    ParserFast.map7WithRange
-        (\range commentsAfterEffect commentsAfterModule name commentsAfterName whereClauses commentsAfterWhereClauses exp ->
+    ParserFast.map8WithStartLocation
+        (\startLocation commentsAfterEffectKeyword moduleKeywordRange commentsAfterModuleKeyword name commentsAfterName whereClauses commentsAfterWhereClauses exposingResult ->
             { comments =
-                commentsAfterEffect
-                    |> ropePrependTo commentsAfterModule
+                commentsAfterEffectKeyword
+                    |> ropePrependTo commentsAfterModuleKeyword
                     |> ropePrependTo commentsAfterName
                     |> ropePrependTo whereClauses.comments
                     |> ropePrependTo commentsAfterWhereClauses
-                    |> ropePrependTo exp.comments
+                    |> ropePrependTo exposingResult.comments
             , syntax =
-                { range = range
+                { range =
+                    { start = startLocation
+                    , end = exposingResult.syntax.range.end
+                    }
                 , value =
-                    ElmSyntax.EffectModule
-                        { moduleName = name
-                        , exposingList = exp.syntax
-                        , command = whereClauses.syntax.command
-                        , subscription = whereClauses.syntax.subscription
-                        }
+                    { moduleName = name
+                    , exposing_ = exposingResult.syntax
+                    , specific =
+                        Just
+                            (ElmSyntax.ModuleHeaderSpecificEffect
+                                { moduleKeywordRange = moduleKeywordRange
+                                , command = whereClauses.syntax.command
+                                , subscription = whereClauses.syntax.subscription
+                                }
+                            )
+                    }
                 }
             }
         )
         (ParserFast.keywordFollowedBy "effect" whitespaceAndComments)
-        (ParserFast.keywordFollowedBy "module" whitespaceAndComments)
+        (ParserFast.mapWithRange (\range () -> range)
+            (ParserFast.keyword "module" ())
+        )
+        whitespaceAndComments
         moduleName
         whitespaceAndComments
         effectWhereClauses
         whitespaceAndComments
-        exposeDefinition
+        moduleHeaderExposing
 
 
-normalModuleDefinition : Parser (WithComments (ElmSyntax.Node ElmSyntax.Module))
+normalModuleDefinition : Parser (WithComments (ElmSyntax.Node ElmSyntax.ModuleHeader))
 normalModuleDefinition =
     ParserFast.map4WithRange
-        (\range commentsAfterModule moduleNameNode commentsAfterModuleName exposingList ->
+        (\range commentsAfterModule moduleNameNode commentsAfterModuleName exposingResult ->
             { comments =
                 commentsAfterModule
                     |> ropePrependTo commentsAfterModuleName
-                    |> ropePrependTo exposingList.comments
+                    |> ropePrependTo exposingResult.comments
             , syntax =
                 { range = range
                 , value =
-                    ElmSyntax.NormalModule { moduleName = moduleNameNode, exposingList = exposingList.syntax }
+                    { moduleName = moduleNameNode
+                    , exposing_ = exposingResult.syntax
+                    , specific = Nothing
+                    }
                 }
             }
         )
         (ParserFast.keywordFollowedBy "module" whitespaceAndComments)
         moduleName
         whitespaceAndComments
-        exposeDefinition
+        moduleHeaderExposing
 
 
-portModuleDefinition : Parser (WithComments (ElmSyntax.Node ElmSyntax.Module))
+portModuleDefinition : Parser (WithComments (ElmSyntax.Node ElmSyntax.ModuleHeader))
 portModuleDefinition =
-    ParserFast.map5WithRange
-        (\range commentsAfterPort commentsAfterModule moduleNameNode commentsAfterModuleName exposingList ->
+    ParserFast.map6WithStartLocation
+        (\startLocation commentsAfterPortKeyword moduleKeywordRange commentsAfterModuleKeyword moduleNameNode commentsAfterModuleName exposingResult ->
             { comments =
-                commentsAfterPort
-                    |> ropePrependTo commentsAfterModule
+                commentsAfterPortKeyword
+                    |> ropePrependTo commentsAfterModuleKeyword
                     |> ropePrependTo commentsAfterModuleName
-                    |> ropePrependTo exposingList.comments
+                    |> ropePrependTo exposingResult.comments
             , syntax =
-                { range = range
-                , value = ElmSyntax.PortModule { moduleName = moduleNameNode, exposingList = exposingList.syntax }
+                { range =
+                    { start = startLocation
+                    , end = exposingResult.syntax.range.end
+                    }
+                , value =
+                    { moduleName = moduleNameNode
+                    , exposing_ = exposingResult.syntax
+                    , specific =
+                        Just
+                            (ElmSyntax.ModuleHeaderSpecificPort
+                                { moduleKeywordRange = moduleKeywordRange }
+                            )
+                    }
                 }
             }
         )
         (ParserFast.keywordFollowedBy "port" whitespaceAndComments)
-        (ParserFast.keywordFollowedBy "module" whitespaceAndComments)
+        (ParserFast.mapWithRange (\range () -> range)
+            (ParserFast.keyword "module" ())
+        )
+        whitespaceAndComments
         moduleName
         whitespaceAndComments
-        exposeDefinition
+        moduleHeaderExposing
 
 
 {-| [`Parser`](#Parser) for a single [`ElmSyntax.Import`](#Import)
@@ -717,18 +711,18 @@ importFollowedByWhitespaceAndComments =
                                     |> ropePrependTo maybeExposingResult.comments
                             , syntax =
                                 { range = { start = start, end = moduleNameNode.range.end }
-                                , value = { moduleName = moduleNameNode, moduleAlias = Nothing, exposingList = Nothing }
+                                , value = { moduleName = moduleNameNode, moduleAlias = Nothing, exposing_ = Nothing }
                                 }
                             }
 
-                        Just exposingListValue ->
+                        Just exposingValue ->
                             { comments =
                                 commentsBeforeAlias
                                     |> ropePrependTo maybeExposingResult.comments
                             , syntax =
-                                { range = { start = start, end = exposingListValue.range.end }
+                                { range = { start = start, end = exposingValue.range.end }
                                 , value =
-                                    { moduleName = moduleNameNode, moduleAlias = Nothing, exposingList = Just exposingListValue }
+                                    { moduleName = moduleNameNode, moduleAlias = Nothing, exposing_ = Just exposingValue }
                                 }
                             }
 
@@ -744,22 +738,22 @@ importFollowedByWhitespaceAndComments =
                                 , value =
                                     { moduleName = moduleNameNode
                                     , moduleAlias = Just moduleAliasResult.syntax
-                                    , exposingList = Nothing
+                                    , exposing_ = Nothing
                                     }
                                 }
                             }
 
-                        Just exposingListValue ->
+                        Just exposingValue ->
                             { comments =
                                 commentsBeforeAlias
                                     |> ropePrependTo moduleAliasResult.comments
                                     |> ropePrependTo maybeExposingResult.comments
                             , syntax =
-                                { range = { start = start, end = exposingListValue.range.end }
+                                { range = { start = start, end = exposingValue.range.end }
                                 , value =
                                     { moduleName = moduleNameNode
                                     , moduleAlias = Just moduleAliasResult.syntax
-                                    , exposingList = Just exposingListValue
+                                    , exposing_ = Just exposingValue
                                     }
                                 }
                             }
@@ -777,7 +771,7 @@ importFollowedByWhitespaceAndComments =
             (ParserFast.keywordFollowedBy "as" whitespaceAndComments)
             (nameUppercaseMapWithRange
                 (\range moduleAlias ->
-                    { range = range, value = [ moduleAlias ] }
+                    { range = range, value = moduleAlias }
                 )
             )
             whitespaceAndComments
@@ -790,17 +784,17 @@ importFollowedByWhitespaceAndComments =
                 }
             )
             (ParserFast.map2WithRange
-                (\range commentsAfterExposing exposingListInnerResult ->
+                (\range commentsAfterExposing exposingInnerResult ->
                     { comments =
                         commentsAfterExposing
-                            |> ropePrependTo exposingListInnerResult.comments
+                            |> ropePrependTo exposingInnerResult.comments
                     , syntax =
-                        case exposingListInnerResult.syntax of
+                        case exposingInnerResult.syntax of
                             Nothing ->
                                 Nothing
 
-                            Just exposingListInner ->
-                                Just { range = range, value = exposingListInner }
+                            Just exposingInner ->
+                                Just { range = range, value = exposingInner }
                     }
                 )
                 (ParserFast.symbolFollowedBy "exposing" whitespaceAndComments)
@@ -902,26 +896,17 @@ declarationWithDocumentation =
                             , syntax =
                                 { range = { start = start, end = functionDeclarationAfterDocumentation.expression.range.end }
                                 , value =
-                                    ElmSyntax.ValueOrFunctionDeclaration
+                                    ElmSyntax.DeclarationValueOrFunction
                                         { documentation = Just documentation
                                         , signature =
                                             Just
-                                                (ElmSyntax.nodeCombine
-                                                    (\name value -> { name = name, typeAnnotation = value })
-                                                    functionDeclarationAfterDocumentation.startName
-                                                    signature.typeAnnotation
-                                                )
-                                        , declaration =
-                                            { range =
-                                                { start = signature.implementationName.range.start
-                                                , end = functionDeclarationAfterDocumentation.expression.range.end
+                                                { name = functionDeclarationAfterDocumentation.startName
+                                                , type_ = signature.type_
                                                 }
-                                            , value =
-                                                { name = signature.implementationName
-                                                , parameters = functionDeclarationAfterDocumentation.arguments
-                                                , expression = functionDeclarationAfterDocumentation.expression
-                                                }
-                                            }
+                                        , name = signature.implementationName.value
+                                        , implementationNameRange = signature.implementationName.range
+                                        , parameters = functionDeclarationAfterDocumentation.arguments
+                                        , result = functionDeclarationAfterDocumentation.expression
                                         }
                                 }
                             }
@@ -931,20 +916,13 @@ declarationWithDocumentation =
                             , syntax =
                                 { range = { start = start, end = functionDeclarationAfterDocumentation.expression.range.end }
                                 , value =
-                                    ElmSyntax.ValueOrFunctionDeclaration
+                                    ElmSyntax.DeclarationValueOrFunction
                                         { documentation = Just documentation
                                         , signature = Nothing
-                                        , declaration =
-                                            { range =
-                                                { start = functionDeclarationAfterDocumentation.startName.range.start
-                                                , end = functionDeclarationAfterDocumentation.expression.range.end
-                                                }
-                                            , value =
-                                                { name = functionDeclarationAfterDocumentation.startName
-                                                , parameters = functionDeclarationAfterDocumentation.arguments
-                                                , expression = functionDeclarationAfterDocumentation.expression
-                                                }
-                                            }
+                                        , name = functionDeclarationAfterDocumentation.startName.value
+                                        , implementationNameRange = functionDeclarationAfterDocumentation.startName.range
+                                        , parameters = functionDeclarationAfterDocumentation.arguments
+                                        , result = functionDeclarationAfterDocumentation.expression
                                         }
                                 }
                             }
@@ -964,7 +942,7 @@ declarationWithDocumentation =
                     , syntax =
                         { range = { start = start, end = end }
                         , value =
-                            ElmSyntax.ChoiceTypeDeclaration
+                            ElmSyntax.DeclarationChoiceType
                                 { documentation = Just documentation
                                 , name = typeDeclarationAfterDocumentation.name
                                 , parameters = typeDeclarationAfterDocumentation.parameters
@@ -978,13 +956,13 @@ declarationWithDocumentation =
                 TypeAliasDeclarationAfterDocumentation typeAliasDeclarationAfterDocumentation ->
                     { comments = afterDocumentation.comments
                     , syntax =
-                        { range = { start = start, end = typeAliasDeclarationAfterDocumentation.typeAnnotation.range.end }
+                        { range = { start = start, end = typeAliasDeclarationAfterDocumentation.type_.range.end }
                         , value =
-                            ElmSyntax.TypeAliasDeclaration
+                            ElmSyntax.DeclarationTypeAlias
                                 { documentation = Just documentation
                                 , name = typeAliasDeclarationAfterDocumentation.name
-                                , generics = typeAliasDeclarationAfterDocumentation.parameters
-                                , typeAnnotation = typeAliasDeclarationAfterDocumentation.typeAnnotation
+                                , parameters = typeAliasDeclarationAfterDocumentation.parameters
+                                , type_ = typeAliasDeclarationAfterDocumentation.type_
                                 }
                         }
                     }
@@ -996,12 +974,12 @@ declarationWithDocumentation =
                     , syntax =
                         { range =
                             { start = portDeclarationAfterName.startLocation
-                            , end = portDeclarationAfterName.typeAnnotation.range.end
+                            , end = portDeclarationAfterName.type_.range.end
                             }
                         , value =
-                            ElmSyntax.PortDeclaration
+                            ElmSyntax.DeclarationPort
                                 { name = portDeclarationAfterName.name
-                                , typeAnnotation = portDeclarationAfterName.typeAnnotation
+                                , type_ = portDeclarationAfterName.type_
                                 }
                         }
                     }
@@ -1017,25 +995,25 @@ declarationWithDocumentation =
         |> ParserFast.validate
             (\result ->
                 case result.syntax.value of
-                    ElmSyntax.ValueOrFunctionDeclaration letFunctionDeclaration ->
+                    ElmSyntax.DeclarationValueOrFunction letFunctionDeclaration ->
                         case letFunctionDeclaration.signature of
                             Nothing ->
                                 True
 
                             Just signatureNode ->
-                                letFunctionDeclaration.declaration.value.name.value
-                                    == signatureNode.value.name.value
+                                letFunctionDeclaration.name
+                                    == signatureNode.name.value
 
-                    ElmSyntax.TypeAliasDeclaration _ ->
+                    ElmSyntax.DeclarationTypeAlias _ ->
                         True
 
-                    ElmSyntax.ChoiceTypeDeclaration _ ->
+                    ElmSyntax.DeclarationChoiceType _ ->
                         True
 
-                    ElmSyntax.PortDeclaration _ ->
+                    ElmSyntax.DeclarationPort _ ->
                         True
 
-                    ElmSyntax.InfixDeclaration _ ->
+                    ElmSyntax.DeclarationOperator _ ->
                         True
             )
 
@@ -1045,7 +1023,7 @@ type DeclarationAfterDocumentation
         { startName : ElmSyntax.Node String
         , signature :
             Maybe
-                { typeAnnotation : ElmSyntax.Node ElmSyntax.TypeAnnotation
+                { type_ : ElmSyntax.Node ElmSyntax.TypeAnnotation
                 , implementationName : ElmSyntax.Node String
                 }
         , arguments : List (ElmSyntax.Node ElmSyntax.Pattern)
@@ -1070,12 +1048,12 @@ type DeclarationAfterDocumentation
     | TypeAliasDeclarationAfterDocumentation
         { name : ElmSyntax.Node String
         , parameters : List (ElmSyntax.Node String)
-        , typeAnnotation : ElmSyntax.Node ElmSyntax.TypeAnnotation
+        , type_ : ElmSyntax.Node ElmSyntax.TypeAnnotation
         }
     | PortDeclarationAfterDocumentation
         { startLocation : ElmSyntax.Location
         , name : ElmSyntax.Node String
-        , typeAnnotation : ElmSyntax.Node ElmSyntax.TypeAnnotation
+        , type_ : ElmSyntax.Node ElmSyntax.TypeAnnotation
         }
 
 
@@ -1099,7 +1077,7 @@ type TypeOrTypeAliasDeclarationWithoutDocumentation
     | TypeAliasDeclarationWithoutDocumentation
         { name : ElmSyntax.Node String
         , parameters : List (ElmSyntax.Node String)
-        , typeAnnotation : ElmSyntax.Node ElmSyntax.TypeAnnotation
+        , type_ : ElmSyntax.Node ElmSyntax.TypeAnnotation
         }
 
 
@@ -1135,7 +1113,7 @@ functionAfterDocumentation =
                     , syntax =
                         Just
                             { implementationName = implementationName.syntax
-                            , typeAnnotation = typeAnnotationResult.syntax
+                            , type_ = typeAnnotationResult.syntax
                             }
                     }
                 )
@@ -1169,7 +1147,7 @@ functionAfterDocumentation =
                         , signature =
                             Just
                                 { implementationName = nameNode
-                                , typeAnnotation = typeAnnotationResult.syntax
+                                , type_ = typeAnnotationResult.syntax
                                 }
                         , arguments = arguments.syntax
                         , expression = result.syntax
@@ -1202,13 +1180,13 @@ functionDeclarationWithoutDocumentation =
                         , syntax =
                             { range = { start = startNameStart, end = result.syntax.range.end }
                             , value =
-                                ElmSyntax.ValueOrFunctionDeclaration
+                                ElmSyntax.DeclarationValueOrFunction
                                     { documentation = Nothing
                                     , signature = Nothing
-                                    , declaration =
-                                        { range = { start = startNameStart, end = result.syntax.range.end }
-                                        , value = { name = startNameNode, parameters = arguments.syntax, expression = result.syntax }
-                                        }
+                                    , name = startNameNode.value
+                                    , implementationNameRange = startNameNode.range
+                                    , parameters = arguments.syntax
+                                    , result = result.syntax
                                     }
                             }
                         }
@@ -1222,23 +1200,18 @@ functionDeclarationWithoutDocumentation =
                         , syntax =
                             { range = { start = startNameStart, end = result.syntax.range.end }
                             , value =
-                                ElmSyntax.ValueOrFunctionDeclaration
+                                ElmSyntax.DeclarationValueOrFunction
                                     { documentation = Nothing
                                     , signature =
                                         Just
-                                            (ElmSyntax.nodeCombine
-                                                (\name typeAnnotation -> { name = name, typeAnnotation = typeAnnotation })
-                                                startNameNode
-                                                signature.typeAnnotation
-                                            )
-                                    , declaration =
-                                        { range = { start = signature.implementationName.range.start, end = result.syntax.range.end }
-                                        , value =
-                                            { name = signature.implementationName
-                                            , parameters = arguments.syntax
-                                            , expression = result.syntax
+                                            { name = startNameNode
+                                            , type_ = signature.type_
                                             }
-                                        }
+                                    , name = signature.implementationName.value
+                                    , implementationNameRange =
+                                        signature.implementationName.range
+                                    , parameters = arguments.syntax
+                                    , result = result.syntax
                                     }
                             }
                         }
@@ -1246,15 +1219,15 @@ functionDeclarationWithoutDocumentation =
             functionNameNotInfixNode
             whitespaceAndComments
             (ParserFast.map4OrSucceed
-                (\commentsBeforeTypeAnnotation typeAnnotationResult implementationName afterImplementationName ->
+                (\commentsBeforeTypeAnnotation typeResult implementationName afterImplementationName ->
                     Just
                         { comments =
                             commentsBeforeTypeAnnotation
-                                |> ropePrependTo typeAnnotationResult.comments
+                                |> ropePrependTo typeResult.comments
                                 |> ropePrependTo implementationName.comments
                                 |> ropePrependTo afterImplementationName
                         , implementationName = implementationName.syntax
-                        , typeAnnotation = typeAnnotationResult.syntax
+                        , type_ = typeResult.syntax
                         }
                 )
                 (ParserFast.symbolFollowedBy ":" whitespaceAndComments)
@@ -1271,25 +1244,25 @@ functionDeclarationWithoutDocumentation =
             |> ParserFast.validate
                 (\result ->
                     case result.syntax.value of
-                        ElmSyntax.ValueOrFunctionDeclaration letFunctionDeclaration ->
+                        ElmSyntax.DeclarationValueOrFunction letFunctionDeclaration ->
                             case letFunctionDeclaration.signature of
                                 Nothing ->
                                     True
 
                                 Just signatureNode ->
-                                    letFunctionDeclaration.declaration.value.name.value
-                                        == signatureNode.value.name.value
+                                    letFunctionDeclaration.name
+                                        == signatureNode.name.value
 
-                        ElmSyntax.TypeAliasDeclaration _ ->
+                        ElmSyntax.DeclarationTypeAlias _ ->
                             True
 
-                        ElmSyntax.ChoiceTypeDeclaration _ ->
+                        ElmSyntax.DeclarationChoiceType _ ->
                             True
 
-                        ElmSyntax.PortDeclaration _ ->
+                        ElmSyntax.DeclarationPort _ ->
                             True
 
-                        ElmSyntax.InfixDeclaration _ ->
+                        ElmSyntax.DeclarationOperator _ ->
                             True
                 )
         )
@@ -1306,23 +1279,17 @@ functionDeclarationWithoutDocumentation =
                 , syntax =
                     { range = { start = start, end = result.syntax |> ElmSyntax.nodeRange |> .end }
                     , value =
-                        ElmSyntax.ValueOrFunctionDeclaration
+                        ElmSyntax.DeclarationValueOrFunction
                             { documentation = Nothing
                             , signature =
                                 Just
-                                    { range = { start = start, end = typeAnnotationResult.syntax |> ElmSyntax.nodeRange |> .end }
-                                    , value =
-                                        { name = { range = { start = start, end = start }, value = nameNode |> ElmSyntax.nodeValue }
-                                        , typeAnnotation = typeAnnotationResult.syntax
-                                        }
+                                    { name = { range = { start = start, end = start }, value = nameNode |> ElmSyntax.nodeValue }
+                                    , type_ = typeAnnotationResult.syntax
                                     }
-                            , declaration =
-                                { range =
-                                    { start = nameNode |> ElmSyntax.nodeRange |> .start
-                                    , end = result.syntax |> ElmSyntax.nodeRange |> .end
-                                    }
-                                , value = { name = nameNode, parameters = arguments.syntax, expression = result.syntax }
-                                }
+                            , name = nameNode.value
+                            , implementationNameRange = nameNode.range
+                            , parameters = arguments.syntax
+                            , result = result.syntax
                             }
                     }
                 }
@@ -1369,7 +1336,7 @@ infixDeclaration =
             , syntax =
                 { range = range
                 , value =
-                    ElmSyntax.InfixDeclaration
+                    ElmSyntax.DeclarationOperator
                         { direction = direction, precedence = precedence, operator = operator, function = fn }
                 }
             }
@@ -1383,8 +1350,8 @@ infixDeclaration =
             (ParserFast.whileAtMost3WithoutLinebreakAnd2PartUtf16ValidateMapWithRangeBacktrackableFollowedBySymbol
                 (\operatorRange operator ->
                     { range =
-                        { start = { row = operatorRange.start.row, column = operatorRange.start.column - 1 }
-                        , end = { row = operatorRange.end.row, column = operatorRange.end.column + 1 }
+                        { start = { line = operatorRange.start.line, column = operatorRange.start.column - 1 }
+                        , end = { line = operatorRange.end.line, column = operatorRange.end.column + 1 }
                         }
                     , value = operator
                     }
@@ -1418,9 +1385,9 @@ portDeclarationAfterDocumentation =
                     |> ropePrependTo commentsAfterColon
             , syntax =
                 PortDeclarationAfterDocumentation
-                    { startLocation = { row = nameNode.range.start.row, column = 1 }
+                    { startLocation = { line = nameNode.range.start.line, column = 1 }
                     , name = nameNode
-                    , typeAnnotation = typeAnnotationResult.syntax
+                    , type_ = typeAnnotationResult.syntax
                     }
             }
         )
@@ -1442,11 +1409,14 @@ portDeclarationWithoutDocumentation =
                     |> ropePrependTo typeAnnotationResult.comments
             , syntax =
                 { range =
-                    { start = { row = nameNode.range.start.row, column = 1 }
+                    { start = { line = nameNode.range.start.line, column = 1 }
                     , end = typeAnnotationResult.syntax.range.end
                     }
                 , value =
-                    ElmSyntax.PortDeclaration { name = nameNode, typeAnnotation = typeAnnotationResult.syntax }
+                    ElmSyntax.DeclarationPort
+                        { name = nameNode
+                        , type_ = typeAnnotationResult.syntax
+                        }
                 }
             }
         )
@@ -1486,7 +1456,7 @@ typeAliasDefinitionAfterDocumentationAfterTypePrefix =
                 TypeAliasDeclarationAfterDocumentation
                     { name = name
                     , parameters = parameters.syntax
-                    , typeAnnotation = typeAnnotationResult.syntax
+                    , type_ = typeAnnotationResult.syntax
                     }
             }
         )
@@ -1574,7 +1544,7 @@ typeOrTypeAliasDefinitionWithoutDocumentation =
                     , syntax =
                         { range = { start = start, end = end }
                         , value =
-                            ElmSyntax.ChoiceTypeDeclaration
+                            ElmSyntax.DeclarationChoiceType
                                 { documentation = Nothing
                                 , name = typeDeclarationAfterDocumentation.name
                                 , parameters = typeDeclarationAfterDocumentation.parameters
@@ -1588,13 +1558,13 @@ typeOrTypeAliasDefinitionWithoutDocumentation =
                 TypeAliasDeclarationWithoutDocumentation typeAliasDeclarationAfterDocumentation ->
                     { comments = allComments
                     , syntax =
-                        { range = { start = start, end = typeAliasDeclarationAfterDocumentation.typeAnnotation.range.end }
+                        { range = { start = start, end = typeAliasDeclarationAfterDocumentation.type_.range.end }
                         , value =
-                            ElmSyntax.TypeAliasDeclaration
+                            ElmSyntax.DeclarationTypeAlias
                                 { documentation = Nothing
                                 , name = typeAliasDeclarationAfterDocumentation.name
-                                , generics = typeAliasDeclarationAfterDocumentation.parameters
-                                , typeAnnotation = typeAliasDeclarationAfterDocumentation.typeAnnotation
+                                , parameters = typeAliasDeclarationAfterDocumentation.parameters
+                                , type_ = typeAliasDeclarationAfterDocumentation.type_
                                 }
                         }
                     }
@@ -1620,7 +1590,7 @@ typeAliasDefinitionWithoutDocumentationAfterTypePrefix =
                 TypeAliasDeclarationWithoutDocumentation
                     { name = name
                     , parameters = parameters.syntax
-                    , typeAnnotation = typeAnnotationResult.syntax
+                    , type_ = typeAnnotationResult.syntax
                     }
             }
         )
@@ -1832,7 +1802,7 @@ typeUnitOrParenthesizedOrTupleOrTriple =
                 (\end ->
                     { comments = ropeEmpty
                     , syntax =
-                        { range = { start = { row = end.row, column = end.column - 2 }, end = end }
+                        { range = { start = { line = end.line, column = end.column - 2 }, end = end }
                         , value = ElmSyntax.TypeAnnotationUnit
                         }
                     }
@@ -1847,7 +1817,7 @@ typeUnitOrParenthesizedOrTupleOrTriple =
                     , syntax =
                         { range =
                             { start =
-                                { row = rangeAfterOpeningParens.start.row
+                                { line = rangeAfterOpeningParens.start.line
                                 , column = rangeAfterOpeningParens.start.column - 1
                                 }
                             , end = rangeAfterOpeningParens.end
@@ -2475,7 +2445,7 @@ expressionArray =
             (\range commentsBefore elements ->
                 { comments = commentsBefore |> ropePrependTo elements.comments
                 , syntax =
-                    { range = { start = { row = range.start.row, column = range.start.column - 1 }, end = range.end }
+                    { range = { start = { line = range.start.line, column = range.start.column - 1 }, end = range.end }
                     , value = elements.syntax
                     }
                 }
@@ -2568,31 +2538,25 @@ recordOrRecordUpdateContentsFollowedByCurlyEnd =
 
                                 FieldsFirstValue firstFieldValue ->
                                     ElmSyntax.ExpressionRecord
-                                        (ElmSyntax.nodeCombine
-                                            (\name value ->
-                                                { name = name, value = value }
-                                            )
-                                            firstFieldNameOrUpdatedRecordVariable
-                                            firstFieldValue
+                                        ({ name = firstFieldNameOrUpdatedRecordVariable
+                                         , value = firstFieldValue
+                                         }
                                             :: tailFields.syntax
                                         )
 
                                 FieldsFirstValuePunned () ->
                                     ElmSyntax.ExpressionRecord
-                                        ({ range = firstFieldNameOrUpdatedRecordVariable.range
+                                        ({ name = firstFieldNameOrUpdatedRecordVariable
                                          , value =
-                                            { name = firstFieldNameOrUpdatedRecordVariable
-                                            , value =
-                                                { range =
-                                                    { start = firstFieldNameOrUpdatedRecordVariable.range.end
-                                                    , end = firstFieldNameOrUpdatedRecordVariable.range.end
-                                                    }
-                                                , value =
-                                                    ElmSyntax.ExpressionReference
-                                                        { qualification = []
-                                                        , name = firstFieldNameOrUpdatedRecordVariable.value
-                                                        }
+                                            { range =
+                                                { start = firstFieldNameOrUpdatedRecordVariable.range.end
+                                                , end = firstFieldNameOrUpdatedRecordVariable.range.end
                                                 }
+                                            , value =
+                                                ElmSyntax.ExpressionReference
+                                                    { qualification = []
+                                                    , name = firstFieldNameOrUpdatedRecordVariable.value
+                                                    }
                                             }
                                          }
                                             :: tailFields.syntax
@@ -2665,11 +2629,9 @@ recordOrRecordUpdateContentsFollowedByCurlyEnd =
 
 type RecordFieldsOrUpdateAfterName
     = RecordUpdateFirstSetter
-        (ElmSyntax.Node
-            { name : ElmSyntax.Node String
-            , value : ElmSyntax.Node ElmSyntax.Expression
-            }
-        )
+        { name : ElmSyntax.Node String
+        , value : ElmSyntax.Node ElmSyntax.Expression
+        }
     | FieldsFirstValue (ElmSyntax.Node ElmSyntax.Expression)
     | FieldsFirstValuePunned ()
 
@@ -2678,11 +2640,9 @@ recordFields :
     Parser
         (WithComments
             (List
-                (ElmSyntax.Node
-                    { name : ElmSyntax.Node String
-                    , value : ElmSyntax.Node ElmSyntax.Expression
-                    }
-                )
+                { name : ElmSyntax.Node String
+                , value : ElmSyntax.Node ElmSyntax.Expression
+                }
             )
         )
 recordFields =
@@ -2710,11 +2670,9 @@ recordFields =
 recordSetterNodeFollowedByWhitespaceAndComments :
     Parser
         (WithComments
-            (ElmSyntax.Node
-                { name : ElmSyntax.Node String
-                , value : ElmSyntax.Node ElmSyntax.Expression
-                }
-            )
+            { name : ElmSyntax.Node String
+            , value : ElmSyntax.Node ElmSyntax.Expression
+            }
         )
 recordSetterNodeFollowedByWhitespaceAndComments =
     ParserFast.map4WithRange
@@ -2726,20 +2684,17 @@ recordSetterNodeFollowedByWhitespaceAndComments =
                     { comments =
                         commentsAfterName |> ropePrependTo commentsAfterEquals
                     , syntax =
-                        { range = range
+                        { name = nameNode
                         , value =
-                            { name = nameNode
-                            , value =
-                                { range =
-                                    { start = nameNode |> ElmSyntax.nodeRange |> .end
-                                    , end = nameNode |> ElmSyntax.nodeRange |> .end
-                                    }
-                                , value =
-                                    ElmSyntax.ExpressionReference
-                                        { qualification = []
-                                        , name = nameNode.value
-                                        }
+                            { range =
+                                { start = nameNode |> ElmSyntax.nodeRange |> .end
+                                , end = nameNode |> ElmSyntax.nodeRange |> .end
                                 }
+                            , value =
+                                ElmSyntax.ExpressionReference
+                                    { qualification = []
+                                    , name = nameNode.value
+                                    }
                             }
                         }
                     }
@@ -2750,7 +2705,7 @@ recordSetterNodeFollowedByWhitespaceAndComments =
                             |> ropePrependTo commentsAfterEquals
                             |> ropePrependTo expressionResult.comments
                     , syntax =
-                        { range = range, value = { name = nameNode, value = expressionResult.syntax } }
+                        { name = nameNode, value = expressionResult.syntax }
                     }
         )
         nameLowercaseNodeUnderscoreSuffixingKeywords
@@ -3090,14 +3045,13 @@ letFunctionFollowedByOptimisticLayout =
                         , syntax =
                             { range = { start = startNameStart, end = expressionResult.syntax.range.end }
                             , value =
-                                ElmSyntax.LetFunction
+                                ElmSyntax.LetValueOrFunctionDeclaration
                                     { documentation = Nothing
                                     , signature = Nothing
-                                    , declaration =
-                                        { range = { start = startNameStart, end = expressionResult.syntax.range.end }
-                                        , value =
-                                            { name = startNameNode, parameters = parameters.syntax, expression = expressionResult.syntax }
-                                        }
+                                    , name = startNameNode.value
+                                    , implementationNameRange = startNameNode.range
+                                    , parameters = parameters.syntax
+                                    , result = expressionResult.syntax
                                     }
                             }
                         }
@@ -3111,24 +3065,18 @@ letFunctionFollowedByOptimisticLayout =
                         , syntax =
                             { range = { start = startNameStart, end = expressionResult.syntax.range.end }
                             , value =
-                                ElmSyntax.LetFunction
+                                ElmSyntax.LetValueOrFunctionDeclaration
                                     { documentation = Nothing
                                     , signature =
                                         Just
-                                            (ElmSyntax.nodeCombine
-                                                (\name value -> { name = name, typeAnnotation = value })
-                                                startNameNode
-                                                signature.typeAnnotation
-                                            )
-                                    , declaration =
-                                        { range =
-                                            { start = signature.implementationName.range.start, end = expressionResult.syntax.range.end }
-                                        , value =
-                                            { name = signature.implementationName
-                                            , parameters = parameters.syntax
-                                            , expression = expressionResult.syntax
+                                            { name = startNameNode
+                                            , type_ = signature.typeAnnotation
                                             }
-                                        }
+                                    , name = signature.implementationName.value
+                                    , implementationNameRange =
+                                        signature.implementationName.range
+                                    , parameters = parameters.syntax
+                                    , result = expressionResult.syntax
                                     }
                             }
                         }
@@ -3164,21 +3112,21 @@ letFunctionFollowedByOptimisticLayout =
                         ElmSyntax.LetDestructuring _ ->
                             True
 
-                        ElmSyntax.LetFunction letFunctionDeclaration ->
+                        ElmSyntax.LetValueOrFunctionDeclaration letFunctionDeclaration ->
                             case letFunctionDeclaration.signature of
                                 Nothing ->
                                     True
 
-                                Just signatureNode ->
-                                    letFunctionDeclaration.declaration.value.name.value
-                                        == signatureNode.value.name.value
+                                Just letSignature ->
+                                    letFunctionDeclaration.name
+                                        == letSignature.name.value
                 )
         )
         (ParserFast.map8WithStartLocation
-            (\start commentsBeforeTypeAnnotation typeAnnotationResult commentsBetweenTypeAndName nameNode afterImplementationName parameters commentsAfterEqual result ->
+            (\start commentsBeforeTypeAnnotation typeResult commentsBetweenTypeAndName nameNode afterImplementationName parameters commentsAfterEqual result ->
                 { comments =
                     commentsBeforeTypeAnnotation
-                        |> ropePrependTo typeAnnotationResult.comments
+                        |> ropePrependTo typeResult.comments
                         |> ropePrependTo commentsBetweenTypeAndName
                         |> ropePrependTo afterImplementationName
                         |> ropePrependTo parameters.comments
@@ -3187,23 +3135,17 @@ letFunctionFollowedByOptimisticLayout =
                 , syntax =
                     { range = { start = start, end = result.syntax |> ElmSyntax.nodeRange |> .end }
                     , value =
-                        ElmSyntax.LetFunction
+                        ElmSyntax.LetValueOrFunctionDeclaration
                             { documentation = Nothing
                             , signature =
                                 Just
-                                    { range = { start = start, end = typeAnnotationResult.syntax |> ElmSyntax.nodeRange |> .end }
-                                    , value =
-                                        { name = { range = { start = start, end = start }, value = nameNode |> ElmSyntax.nodeValue }
-                                        , typeAnnotation = typeAnnotationResult.syntax
-                                        }
+                                    { name = { range = { start = start, end = start }, value = nameNode |> ElmSyntax.nodeValue }
+                                    , type_ = typeResult.syntax
                                     }
-                            , declaration =
-                                { range =
-                                    { start = nameNode |> ElmSyntax.nodeRange |> .start
-                                    , end = result.syntax |> ElmSyntax.nodeRange |> .end
-                                    }
-                                , value = { name = nameNode, parameters = parameters.syntax, expression = result.syntax }
-                                }
+                            , name = nameNode.value
+                            , implementationNameRange = nameNode.range
+                            , parameters = parameters.syntax
+                            , result = result.syntax
                             }
                     }
                 }
@@ -3336,7 +3278,7 @@ negationAfterMinus =
             , syntax =
                 { range =
                     { start =
-                        { row = subExpressionResult.syntax.range.start.row
+                        { line = subExpressionResult.syntax.range.start.line
                         , column = subExpressionResult.syntax.range.start.column - 1
                         }
                     , end = subExpressionResult.syntax.range.end
@@ -3431,7 +3373,7 @@ expressionRecordAccessFunction =
 
 rangeMoveStartLeftByOneColumn : ElmSyntax.Range -> ElmSyntax.Range
 rangeMoveStartLeftByOneColumn range =
-    { start = { row = range.start.row, column = range.start.column - 1 }
+    { start = { line = range.start.line, column = range.start.column - 1 }
     , end = range.end
     }
 
@@ -3446,7 +3388,7 @@ expressionStartingWithParensOpeningIfNecessaryFollowedByRecordAccess =
                 (\end ->
                     { comments = ropeEmpty
                     , syntax =
-                        { range = { start = { row = end.row, column = end.column - 2 }, end = end }
+                        { range = { start = { line = end.line, column = end.column - 2 }, end = end }
                         , value = ElmSyntax.ExpressionUnit
                         }
                     }
@@ -3464,8 +3406,8 @@ allowedPrefixOperatorFollowedByClosingParensOneOf =
             { comments = ropeEmpty
             , syntax =
                 { range =
-                    { start = { row = operatorRange.start.row, column = operatorRange.start.column - 1 }
-                    , end = { row = operatorRange.end.row, column = operatorRange.end.column + 1 }
+                    { start = { line = operatorRange.start.line, column = operatorRange.start.column - 1 }
+                    , end = { line = operatorRange.end.line, column = operatorRange.end.column + 1 }
                     }
                 , value = ElmSyntax.ExpressionOperatorFunction operator
                 }
@@ -3486,7 +3428,7 @@ expressionParenthesizedOrTupleOrTripleAfterOpeningParens =
             , syntax =
                 { range =
                     { start =
-                        { row = rangeAfterOpeningParens.start.row
+                        { line = rangeAfterOpeningParens.start.line
                         , column = rangeAfterOpeningParens.start.column - 1
                         }
                     , end = rangeAfterOpeningParens.end
@@ -4125,7 +4067,7 @@ patternUnitOrParenthesizedOrTupleOrTriple =
                     commentsBeforeHead
                         |> ropePrependTo contentResult.comments
                 , syntax =
-                    { range = { start = { row = range.start.row, column = range.start.column - 1 }, end = range.end }
+                    { range = { start = { line = range.start.line, column = range.start.column - 1 }, end = range.end }
                     , value = contentResult.syntax
                     }
                 }
@@ -4279,7 +4221,7 @@ allPattern =
             { comments = ropeEmpty
             , syntax =
                 { range =
-                    { start = { row = endLocation.row, column = endLocation.column - 1 }
+                    { start = { line = endLocation.line, column = endLocation.column - 1 }
                     , end = endLocation
                     }
                 , value = ElmSyntax.PatternIgnored
@@ -4663,16 +4605,16 @@ characterLiteralMapWithRange rangeAndCharToRes =
         (ParserFast.oneOf2MapWithStartRowColumnAndEndRowColumn
             (\startRow startColumn char endRow endColumn ->
                 rangeAndCharToRes
-                    { start = { row = startRow, column = startColumn - 1 }
-                    , end = { row = endRow, column = endColumn + 1 }
+                    { start = { line = startRow, column = startColumn - 1 }
+                    , end = { line = endRow, column = endColumn + 1 }
                     }
                     char
             )
             (ParserFast.symbolFollowedBy "\\" (escapedCharValueMap identity))
             (\startRow startColumn char endRow endColumn ->
                 rangeAndCharToRes
-                    { start = { row = startRow, column = startColumn - 1 }
-                    , end = { row = endRow, column = endColumn + 1 }
+                    { start = { line = startRow, column = startColumn - 1 }
+                    , end = { line = endRow, column = endColumn + 1 }
                     }
                     char
             )
@@ -4692,8 +4634,8 @@ singleOrTripleQuotedStringLiteralMapWithRange rangeAndStringToRes =
         (ParserFast.oneOf2MapWithStartRowColumnAndEndRowColumn
             (\startRow startColumn string endRow endColumn ->
                 rangeAndStringToRes
-                    { start = { row = startRow, column = startColumn - 1 }
-                    , end = { row = endRow, column = endColumn }
+                    { start = { line = startRow, column = startColumn - 1 }
+                    , end = { line = endRow, column = endColumn }
                     }
                     { content = string, quotingStyle = ElmSyntax.StringTripleQuoted }
             )
@@ -4702,8 +4644,8 @@ singleOrTripleQuotedStringLiteralMapWithRange rangeAndStringToRes =
             )
             (\startRow startColumn string endRow endColumn ->
                 rangeAndStringToRes
-                    { start = { row = startRow, column = startColumn - 1 }
-                    , end = { row = endRow, column = endColumn }
+                    { start = { line = startRow, column = startColumn - 1 }
+                    , end = { line = endRow, column = endColumn }
                     }
                     { content = string, quotingStyle = ElmSyntax.StringSingleQuoted }
             )
@@ -4996,8 +4938,8 @@ singleLineComment =
             )
             (\range content ->
                 { range =
-                    { start = { row = range.start.row, column = range.start.column - 2 }
-                    , end = { row = range.start.row, column = range.end.column }
+                    { start = { line = range.start.line, column = range.start.column - 2 }
+                    , end = { line = range.start.line, column = range.end.column }
                     }
                 , value = "--" ++ content
                 }

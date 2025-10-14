@@ -1,20 +1,21 @@
 module ElmSyntax exposing
-    ( File, ModuleName, Import
-    , DefaultModuleData, EffectModuleData, Module(..)
-    , Exposing(..), TopLevelExpose(..)
-    , Declaration(..), ValueOrFunctionDeclarationInfo, ChoiceTypeDeclarationInfo, TypeAliasDeclarationInfo, InfixDeclarationInfo, InfixDirection(..)
+    ( ModuleName, Import
+    , ModuleHeader, ModuleHeaderSpecific(..)
+    , Exposing(..), Expose(..)
+    , Declaration(..), ChoiceTypeDeclaration, OperatorDeclaration, TypeAliasDeclaration, ValueOrFunctionDeclaration
     , Pattern(..), Expression(..), LetDeclaration(..), StringQuotingStyle(..), TypeAnnotation(..)
-    , Location, locationCompare, Range, rangeEmpty, Node, nodeCombine, nodeMap, nodeRange, nodeValue
+    , Location, locationCompare, Range, rangeIncludesLocation, rangeEmpty, Node, nodeCombine, nodeMap, nodeRange, nodeValue
+    , InfixDirection(..), Module
     )
 
 {-| Elm syntax tree
 
 @docs File, ModuleName, Import
-@docs DefaultModuleData, EffectModuleData, Module
-@docs Exposing, TopLevelExpose
-@docs Declaration, ValueOrFunctionDeclarationInfo, ChoiceTypeDeclarationInfo, TypeAliasDeclarationInfo, InfixDeclarationInfo, InfixDirection
+@docs ModuleHeader, ModuleHeaderSpecific
+@docs Exposing, Expose
+@docs Declaration, ChoiceTypeDeclaration, OperatorDeclaration, TypeAliasDeclaration, ValueOrFunctionDeclaration
 @docs Pattern, Expression, LetDeclaration, StringQuotingStyle, TypeAnnotation
-@docs Location, locationCompare, Range, rangeEmpty, Node, nodeCombine, nodeMap, nodeRange, nodeValue
+@docs Location, locationCompare, Range, rangeIncludesLocation, rangeEmpty, Node, nodeCombine, nodeMap, nodeRange, nodeValue
 
 -}
 
@@ -23,13 +24,21 @@ module ElmSyntax exposing
 
     module Html.Attributes exposing (style)
 
-TODO rename to ModuleHeader
-
 -}
-type Module
-    = NormalModule DefaultModuleData
-    | PortModule DefaultModuleData
-    | EffectModule EffectModuleData
+type alias ModuleHeader =
+    { moduleName : Node ModuleName
+    , exposing_ : Node Exposing
+    , specific : Maybe ModuleHeaderSpecific
+    }
+
+
+type ModuleHeaderSpecific
+    = ModuleHeaderSpecificPort { moduleKeywordRange : Range }
+    | ModuleHeaderSpecificEffect
+        { moduleKeywordRange : Range
+        , command : Maybe (Node String)
+        , subscription : Maybe (Node String)
+        }
 
 
 {-| Used for imports, module names, and for qualification.
@@ -45,45 +54,15 @@ For example:
 
     My.Module.SomeType
 
-
-TODO inline as String
-
 -}
 type alias ModuleName =
     List String
 
 
-{-| Data for a default default
-
-TODO inline
-
--}
-type alias DefaultModuleData =
-    { moduleName : Node ModuleName
-    , exposingList : Node Exposing
-    }
-
-
-{-| Data for an effect module
-
-TODO inline
-
--}
-type alias EffectModuleData =
-    { moduleName : Node ModuleName
-    , exposingList : Node Exposing
-    , command : Maybe (Node String)
-    , subscription : Maybe (Node String)
-    }
-
-
 {-| Type annotation for a file.
-
-TODO rename to module
-
 -}
-type alias File =
-    { moduleDefinition : Node Module
+type alias Module =
+    { moduleDefinition : Node ModuleHeader
     , imports : List (Node Import)
     , declarations : List (Node Declaration)
     , comments : List (Node String)
@@ -99,12 +78,12 @@ For example:
 -}
 type Exposing
     = ExposingAll Range
-    | ExposingExplicit (List (Node TopLevelExpose))
+    | ExposingExplicit (List (Node Expose))
 
 
 {-| An exposed entity
 -}
-type TopLevelExpose
+type Expose
     = ExposeOperator String
     | ExposeVariable String
     | ExposeTypeName String
@@ -121,8 +100,8 @@ type TopLevelExpose
 -}
 type alias Import =
     { moduleName : Node ModuleName
-    , moduleAlias : Maybe (Node ModuleName)
-    , exposingList : Maybe (Node Exposing)
+    , moduleAlias : Maybe (Node String)
+    , exposing_ : Maybe (Node Exposing)
     }
 
 
@@ -134,18 +113,16 @@ type alias Import =
   - Port declaration: `port sendMessage: String -> Cmd msg`
   - Infix declaration. You will probably not need this, while only core packages can define these.
 
-TODO prefix `Declaration-` instead of suffix.
-
 -}
 type Declaration
-    = ValueOrFunctionDeclaration ValueOrFunctionDeclarationInfo
-    | TypeAliasDeclaration TypeAliasDeclarationInfo
-    | ChoiceTypeDeclaration ChoiceTypeDeclarationInfo
-    | PortDeclaration
+    = DeclarationValueOrFunction ValueOrFunctionDeclaration
+    | DeclarationTypeAlias TypeAliasDeclaration
+    | DeclarationChoiceType ChoiceTypeDeclaration
+    | DeclarationPort
         { name : Node String
-        , typeAnnotation : Node TypeAnnotation
+        , type_ : Node TypeAnnotation
         }
-    | InfixDeclaration InfixDeclarationInfo
+    | DeclarationOperator OperatorDeclaration
 
 
 {-| custom type. For example:
@@ -156,10 +133,8 @@ type Declaration
         = Blue
         | Red
 
-TODO inline
-
 -}
-type alias ChoiceTypeDeclarationInfo =
+type alias ChoiceTypeDeclaration =
     { documentation : Maybe (Node String)
     , name : Node String
     , parameters : List (Node String)
@@ -175,7 +150,7 @@ type alias ChoiceTypeDeclarationInfo =
     }
 
 
-{-| For example:
+{-| `type alias` declaration. For example:
 
     {-| This is a person
     -}
@@ -184,24 +159,21 @@ type alias ChoiceTypeDeclarationInfo =
         , age : Int
         }
 
-TODO inline
-
 -}
-type alias TypeAliasDeclarationInfo =
+type alias TypeAliasDeclaration =
     { documentation : Maybe (Node String)
     , name : Node String
-    , -- TODO rename to parameters
-      generics : List (Node String)
-    , typeAnnotation : Node TypeAnnotation
+    , parameters : List (Node String)
+    , type_ : Node TypeAnnotation
     }
 
 
-{-| Type annotation for a infix definition
+{-| `infix` declaration, for example
 
-TODO inline
+    infix left  0 (|>) = apR
 
 -}
-type alias InfixDeclarationInfo =
+type alias OperatorDeclaration =
     { direction : Node InfixDirection
     , precedence : Node Int
     , operator : Node String
@@ -218,28 +190,19 @@ type InfixDirection
 
 
 {-| value/full function declaration
-
-TODO inline
-
 -}
-type alias ValueOrFunctionDeclarationInfo =
+type alias ValueOrFunctionDeclaration =
     { documentation : Maybe (Node String)
     , signature :
         Maybe
-            -- TODO do not wrap in Node
-            (Node
-                { -- TODO only store name range
-                  name : Node String
-                , typeAnnotation : Node TypeAnnotation
-                }
-            )
-    , -- TODO remove Node and inline
-      declaration :
-        Node
-            { name : Node String
-            , parameters : List (Node Pattern)
-            , expression : Node Expression
+            { -- TODO only store name range
+              name : Node String
+            , type_ : Node TypeAnnotation
             }
+    , name : String
+    , implementationNameRange : Range
+    , parameters : List (Node Pattern)
+    , result : Node Expression
     }
 
 
@@ -318,17 +281,15 @@ type Expression
                 }
         }
     | ExpressionLambda
-        { parameters : List (Node Pattern)
+        { -- TODO split into parameter0 and parameter1Up
+          parameters : List (Node Pattern)
         , result : Node Expression
         }
     | ExpressionRecord
         (List
-            -- TODO remove Node wrapping
-            (Node
-                { name : Node String
-                , value : Node Expression
-                }
-            )
+            { name : Node String
+            , value : Node Expression
+            }
         )
     | ExpressionList (List (Node Expression))
     | ExpressionRecordAccess
@@ -338,14 +299,12 @@ type Expression
     | ExpressionRecordAccessFunction String
     | ExpressionRecordUpdate
         { recordVariable : Node String
-        , fields :
+        , -- TODO split into field0 and field1Up
+          fields :
             List
-                -- TODO remove Node wrapping
-                (Node
-                    { name : Node String
-                    , value : Node Expression
-                    }
-                )
+                { name : Node String
+                , value : Node Expression
+                }
         }
 
 
@@ -360,8 +319,9 @@ type StringQuotingStyle
 {-| Element before the result of a let block
 -}
 type LetDeclaration
-    = -- rename to LetValueOrFunctionDeclaration
-      LetFunction ValueOrFunctionDeclarationInfo
+    = LetValueOrFunctionDeclaration
+        -- TODO inline and remove documentation
+        ValueOrFunctionDeclaration
     | LetDestructuring
         { pattern : Node Pattern
         , expression : Node Expression
@@ -513,23 +473,22 @@ nodeValue node =
 {-| Source location. Starts at 1 for the first line and 1 for the first character in the line
 -}
 type alias Location =
-    { -- TODO rename to line
-      row : Int
+    { line : Int
     , column : Int
     }
 
 
 locationStart : Location
 locationStart =
-    { row = 1, column = 1 }
+    { line = 1, column = 1 }
 
 
 locationCompare : Location -> Location -> Basics.Order
 locationCompare a b =
-    if a.row < b.row then
+    if a.line < b.line then
         LT
 
-    else if a.row > b.row then
+    else if a.line > b.line then
         GT
 
     else

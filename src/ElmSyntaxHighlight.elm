@@ -227,7 +227,7 @@ expressionSyntaxKindMap context expressionNode =
                 |> RangeDict.union (ifThenElse.onFalse |> expressionSyntaxKindMap context)
                 |> RangeDict.insert
                     { start = expressionNode.range.start
-                    , end = { row = expressionNode.range.start.row, column = expressionNode.range.start.column + 2 }
+                    , end = { line = expressionNode.range.start.line, column = expressionNode.range.start.column + 2 }
                     }
                     Flow
                 |> RangeDict.insert
@@ -314,7 +314,7 @@ expressionSyntaxKindMap context expressionNode =
                 (letIn.result |> expressionSyntaxKindMap context)
                 |> RangeDict.insert
                     { start = expressionNode.range.start
-                    , end = { row = expressionNode.range.start.row, column = expressionNode.range.start.column + 3 }
+                    , end = { line = expressionNode.range.start.line, column = expressionNode.range.start.column + 3 }
                     }
                     KeySymbol
                 |> RangeDict.insert
@@ -349,11 +349,11 @@ expressionSyntaxKindMap context expressionNode =
                                     (-- TODO do not rely on elm-format-ed code
                                      { start =
                                         { column = syntaxCase.pattern.range.end.column + 1
-                                        , row = syntaxCase.pattern.range.end.row
+                                        , line = syntaxCase.pattern.range.end.line
                                         }
                                      , end =
                                         { column = syntaxCase.pattern.range.end.column + 3
-                                        , row = syntaxCase.pattern.range.end.row
+                                        , line = syntaxCase.pattern.range.end.line
                                         }
                                      }
                                     )
@@ -362,7 +362,7 @@ expressionSyntaxKindMap context expressionNode =
                 )
                 |> RangeDict.insert
                     { start = expressionNode.range.start
-                    , end = { row = expressionNode.range.start.row, column = expressionNode.range.start.column + 4 }
+                    , end = { line = expressionNode.range.start.line, column = expressionNode.range.start.column + 4 }
                     }
                     Flow
                 |> RangeDict.insert
@@ -392,7 +392,7 @@ expressionSyntaxKindMap context expressionNode =
                 (lambda.result |> expressionSyntaxKindMap context)
                 |> RangeDict.insert
                     { start = expressionNode.range.start
-                    , end = { row = expressionNode.range.start.row, column = expressionNode.range.start.column + 1 }
+                    , end = { line = expressionNode.range.start.line, column = expressionNode.range.start.column + 1 }
                     }
                     Flow
                 |> RangeDict.insert
@@ -401,11 +401,11 @@ expressionSyntaxKindMap context expressionNode =
                             -- TODO do not rely on elm-format-ed code
                             { start =
                                 { column = lastParameter.range.end.column + 1
-                                , row = lastParameter.range.end.row
+                                , line = lastParameter.range.end.line
                                 }
                             , end =
                                 { column = lastParameter.range.end.column + 3
-                                , row = lastParameter.range.end.row
+                                , line = lastParameter.range.end.line
                                 }
                             }
 
@@ -418,14 +418,14 @@ expressionSyntaxKindMap context expressionNode =
         ElmSyntax.ExpressionRecord fields ->
             fields
                 |> RangeDict.unionFromListMap
-                    (\fieldNode ->
-                        fieldNode.value.value
+                    (\field ->
+                        field.value
                             |> expressionSyntaxKindMap context
-                            |> RangeDict.insert fieldNode.value.name.range Field
+                            |> RangeDict.insert field.name.range Field
                             |> RangeDict.insert
                                 (-- TODO store in syntax tree
-                                 { start = fieldNode.value.name.range.end |> locationAddColumn 1
-                                 , end = fieldNode.value.name.range.end |> locationAddColumn 2
+                                 { start = field.name.range.end |> locationAddColumn 1
+                                 , end = field.name.range.end |> locationAddColumn 2
                                  }
                                 )
                                 KeySymbol
@@ -463,14 +463,14 @@ expressionSyntaxKindMap context expressionNode =
         ElmSyntax.ExpressionRecordUpdate recordUpdate ->
             recordUpdate.fields
                 |> RangeDict.unionFromListMap
-                    (\fieldNode ->
-                        fieldNode.value.value
+                    (\field ->
+                        field.value
                             |> expressionSyntaxKindMap context
-                            |> RangeDict.insert fieldNode.value.name.range Field
+                            |> RangeDict.insert field.name.range Field
                             |> RangeDict.insert
                                 (-- TODO store in syntax tree
-                                 { start = fieldNode.value.name.range.end |> locationAddColumn 1
-                                 , end = fieldNode.value.name.range.end |> locationAddColumn 2
+                                 { start = field.name.range.end |> locationAddColumn 1
+                                 , end = field.name.range.end |> locationAddColumn 2
                                  }
                                 )
                                 KeySymbol
@@ -518,12 +518,12 @@ tokenFindRangeIn searchRange context token =
                                         operatorStartLocation =
                                             case searchLineIndex of
                                                 0 ->
-                                                    { row = searchRange.start.row
+                                                    { line = searchRange.start.line
                                                     , column = searchRange.start.column + operatorOffset
                                                     }
 
                                                 searchLineAfterFirstIndex ->
-                                                    { row = searchRange.start.row + searchLineAfterFirstIndex
+                                                    { line = searchRange.start.line + searchLineAfterFirstIndex
                                                     , column = operatorOffset + 1
                                                     }
 
@@ -548,7 +548,7 @@ tokenFindRangeIn searchRange context token =
             Just
                 { start = operatorStartLocation
                 , end =
-                    { row = operatorStartLocation.row
+                    { line = operatorStartLocation.line
                     , column = operatorStartLocation.column + String.length token
                     }
                 }
@@ -595,47 +595,39 @@ letDeclarationSyntaxKindMap context letDeclarationNode =
                         tokenBeforeEqualsEnd =
                             letDestructuring.pattern.range.end
                      in
-                     { start = { column = tokenBeforeEqualsEnd.column + 1, row = tokenBeforeEqualsEnd.row }
-                     , end = { column = tokenBeforeEqualsEnd.column + 2, row = tokenBeforeEqualsEnd.row }
+                     { start = { column = tokenBeforeEqualsEnd.column + 1, line = tokenBeforeEqualsEnd.line }
+                     , end = { column = tokenBeforeEqualsEnd.column + 2, line = tokenBeforeEqualsEnd.line }
                      }
                     )
                     KeySymbol
 
-        ElmSyntax.LetFunction fnDeclaration ->
+        ElmSyntax.LetValueOrFunctionDeclaration fnDeclaration ->
             RangeDict.union
                 (case fnDeclaration.signature of
-                    Just signatureNode ->
-                        signatureNode.value |> signatureSyntaxKindMap
+                    Just functionSignature ->
+                        functionSignature |> signatureSyntaxKindMap
 
                     Nothing ->
                         RangeDict.empty
                 )
-                (let
-                    implementation :
-                        { name : ElmSyntax.Node String
-                        , parameters : List (ElmSyntax.Node ElmSyntax.Pattern)
-                        , expression : ElmSyntax.Node ElmSyntax.Expression
-                        }
-                    implementation =
-                        fnDeclaration.declaration.value
-                 in
-                 RangeDict.union
-                    (implementation.expression |> expressionSyntaxKindMap context)
-                    (implementation.parameters |> RangeDict.unionFromListMap patternSyntaxKindMap)
-                    |> RangeDict.insert implementation.name.range Variable
+                (RangeDict.union
+                    (fnDeclaration.result |> expressionSyntaxKindMap context)
+                    (fnDeclaration.parameters |> RangeDict.unionFromListMap patternSyntaxKindMap)
+                    |> RangeDict.insert fnDeclaration.implementationNameRange
+                        Variable
                     |> RangeDict.insert
                         (let
                             tokenBeforeEqualsEnd : ElmSyntax.Location
                             tokenBeforeEqualsEnd =
-                                case implementation.parameters |> listLast of
+                                case fnDeclaration.parameters |> listLast of
                                     Just lastParameter ->
                                         lastParameter.range.end
 
                                     Nothing ->
-                                        implementation.name.range.end
+                                        fnDeclaration.implementationNameRange.end
                          in
-                         { start = { column = tokenBeforeEqualsEnd.column + 1, row = tokenBeforeEqualsEnd.row }
-                         , end = { column = tokenBeforeEqualsEnd.column + 2, row = tokenBeforeEqualsEnd.row }
+                         { start = { column = tokenBeforeEqualsEnd.column + 1, line = tokenBeforeEqualsEnd.line }
+                         , end = { column = tokenBeforeEqualsEnd.column + 2, line = tokenBeforeEqualsEnd.line }
                          }
                         )
                         KeySymbol
@@ -644,12 +636,12 @@ letDeclarationSyntaxKindMap context letDeclarationNode =
 
 stringLinesSlice : ElmSyntax.Range -> List String -> String
 stringLinesSlice rangeToExtract lines =
-    case List.drop (rangeToExtract.start.row - 1) lines of
+    case List.drop (rangeToExtract.start.line - 1) lines of
         [] ->
             ""
 
         firstLine :: rest ->
-            if rangeToExtract.start.row == rangeToExtract.end.row then
+            if rangeToExtract.start.line == rangeToExtract.end.line then
                 String.slice
                     (rangeToExtract.start.column - 1)
                     (rangeToExtract.end.column - 1)
@@ -659,7 +651,7 @@ stringLinesSlice rangeToExtract lines =
                 let
                     restLinesTaken : { linesTaken : String, lastLine : Maybe String }
                     restLinesTaken =
-                        linesTake (rangeToExtract.end.row - rangeToExtract.start.row - 1) rest ""
+                        linesTake (rangeToExtract.end.line - rangeToExtract.start.line - 1) rest ""
                 in
                 String.dropLeft (rangeToExtract.start.column - 1) firstLine
                     ++ restLinesTaken.linesTaken
@@ -773,11 +765,11 @@ typeAnnotationSyntaxKindMap typeNode =
 
 signatureSyntaxKindMap :
     { name : ElmSyntax.Node String
-    , typeAnnotation : ElmSyntax.Node ElmSyntax.TypeAnnotation
+    , type_ : ElmSyntax.Node ElmSyntax.TypeAnnotation
     }
     -> RangeDict SyntaxKind
 signatureSyntaxKindMap signature =
-    signature.typeAnnotation
+    signature.type_
         |> typeAnnotationSyntaxKindMap
         |> RangeDict.insert signature.name.range
             VariableDeclaration
@@ -789,16 +781,7 @@ declarationSyntaxKindMap :
     -> RangeDict SyntaxKind
 declarationSyntaxKindMap context declarationNode =
     case declarationNode.value of
-        ElmSyntax.ValueOrFunctionDeclaration fnDeclaration ->
-            let
-                implementation :
-                    { name : ElmSyntax.Node String
-                    , parameters : List (ElmSyntax.Node ElmSyntax.Pattern)
-                    , expression : ElmSyntax.Node ElmSyntax.Expression
-                    }
-                implementation =
-                    fnDeclaration.declaration.value
-            in
+        ElmSyntax.DeclarationValueOrFunction fnDeclaration ->
             (case fnDeclaration.documentation of
                 Nothing ->
                     RangeDict.empty
@@ -808,35 +791,36 @@ declarationSyntaxKindMap context declarationNode =
             )
                 |> RangeDict.union
                     (case fnDeclaration.signature of
-                        Just signatureNode ->
-                            signatureNode.value |> signatureSyntaxKindMap
+                        Just functionSignature ->
+                            functionSignature |> signatureSyntaxKindMap
 
                         Nothing ->
                             RangeDict.empty
                     )
                 |> RangeDict.union
-                    (implementation.expression |> expressionSyntaxKindMap context)
+                    (fnDeclaration.result |> expressionSyntaxKindMap context)
                 |> RangeDict.union
-                    (implementation.parameters |> RangeDict.unionFromListMap patternSyntaxKindMap)
-                |> RangeDict.insert implementation.name.range VariableDeclaration
+                    (fnDeclaration.parameters |> RangeDict.unionFromListMap patternSyntaxKindMap)
+                |> RangeDict.insert fnDeclaration.implementationNameRange
+                    VariableDeclaration
                 |> RangeDict.insert
                     (let
                         tokenBeforeEqualsEnd : ElmSyntax.Location
                         tokenBeforeEqualsEnd =
-                            case implementation.parameters |> listLast of
+                            case fnDeclaration.parameters |> listLast of
                                 Just lastParameterNode ->
                                     lastParameterNode.range.end
 
                                 Nothing ->
-                                    implementation.name.range.end
+                                    fnDeclaration.implementationNameRange.end
                      in
-                     { start = { column = tokenBeforeEqualsEnd.column + 1, row = tokenBeforeEqualsEnd.row }
-                     , end = { column = tokenBeforeEqualsEnd.column + 2, row = tokenBeforeEqualsEnd.row }
+                     { start = { column = tokenBeforeEqualsEnd.column + 1, line = tokenBeforeEqualsEnd.line }
+                     , end = { column = tokenBeforeEqualsEnd.column + 2, line = tokenBeforeEqualsEnd.line }
                      }
                     )
                     KeySymbol
 
-        ElmSyntax.TypeAliasDeclaration aliasTypeDeclaration ->
+        ElmSyntax.DeclarationTypeAlias aliasTypeDeclaration ->
             (case aliasTypeDeclaration.documentation of
                 Nothing ->
                     RangeDict.empty
@@ -845,9 +829,9 @@ declarationSyntaxKindMap context declarationNode =
                     commentSyntaxKindMap documentationNode
             )
                 |> RangeDict.union
-                    (aliasTypeDeclaration.typeAnnotation |> typeAnnotationSyntaxKindMap)
+                    (aliasTypeDeclaration.type_ |> typeAnnotationSyntaxKindMap)
                 |> RangeDict.union
-                    (aliasTypeDeclaration.generics
+                    (aliasTypeDeclaration.parameters
                         |> RangeDict.mapFromList
                             (\variableNode ->
                                 ( variableNode.range, Variable )
@@ -858,27 +842,27 @@ declarationSyntaxKindMap context declarationNode =
                     Type
                 |> RangeDict.insert
                     { start = declarationNode.range.start
-                    , end = { row = declarationNode.range.start.row, column = declarationNode.range.start.column + 10 }
+                    , end = { line = declarationNode.range.start.line, column = declarationNode.range.start.column + 10 }
                     }
                     KeySymbol
                 |> RangeDict.insert
                     (let
                         tokenBeforeEqualsEnd : ElmSyntax.Location
                         tokenBeforeEqualsEnd =
-                            case aliasTypeDeclaration.generics |> listLast of
+                            case aliasTypeDeclaration.parameters |> listLast of
                                 Just lastParameter ->
                                     lastParameter.range.end
 
                                 Nothing ->
                                     aliasTypeDeclaration.name.range.end
                      in
-                     { start = { column = tokenBeforeEqualsEnd.column + 1, row = tokenBeforeEqualsEnd.row }
-                     , end = { column = tokenBeforeEqualsEnd.column + 2, row = tokenBeforeEqualsEnd.row }
+                     { start = { column = tokenBeforeEqualsEnd.column + 1, line = tokenBeforeEqualsEnd.line }
+                     , end = { column = tokenBeforeEqualsEnd.column + 2, line = tokenBeforeEqualsEnd.line }
                      }
                     )
                     KeySymbol
 
-        ElmSyntax.ChoiceTypeDeclaration choiceTypeDeclaration ->
+        ElmSyntax.DeclarationChoiceType choiceTypeDeclaration ->
             (case choiceTypeDeclaration.documentation of
                 Nothing ->
                     RangeDict.empty
@@ -899,8 +883,8 @@ declarationSyntaxKindMap context declarationNode =
                                     |> RangeDict.unionFromListMap typeAnnotationSyntaxKindMap
                                     |> RangeDict.insert variantNameRange Variant
                                     |> RangeDict.insert
-                                        { start = { column = variantNameRange.start.column - 2, row = variantNameRange.start.row }
-                                        , end = { column = variantNameRange.start.column - 1, row = variantNameRange.start.row }
+                                        { start = { column = variantNameRange.start.column - 2, line = variantNameRange.start.line }
+                                        , end = { column = variantNameRange.start.column - 1, line = variantNameRange.start.line }
                                         }
                                         KeySymbol
                             )
@@ -918,32 +902,32 @@ declarationSyntaxKindMap context declarationNode =
                 |> RangeDict.insert
                     { start = declarationNode.range.start
                     , end =
-                        { row = declarationNode.range.start.row
+                        { line = declarationNode.range.start.line
                         , column = declarationNode.range.start.column + 4
                         }
                     }
                     KeySymbol
 
-        ElmSyntax.PortDeclaration signature ->
+        ElmSyntax.DeclarationPort signature ->
             signature
                 |> signatureSyntaxKindMap
                 |> RangeDict.insert
                     { start = declarationNode.range.start
                     , end =
-                        { row = declarationNode.range.start.row
+                        { line = declarationNode.range.start.line
                         , column = declarationNode.range.start.column + 4
                         }
                     }
                     KeySymbol
 
-        ElmSyntax.InfixDeclaration _ ->
+        ElmSyntax.DeclarationOperator _ ->
             RangeDict.empty
 
 
 {-| Assumes `elm-format`ed code
 -}
 for :
-    { source : String, syntax : ElmSyntax.File }
+    { source : String, syntax : ElmSyntax.Module }
     ->
         List
             { range : ElmSyntax.Range
@@ -996,49 +980,50 @@ listReverseAndMap elementChange listReverse =
             []
 
 
-moduleHeaderSyntaxKindMap : ElmSyntax.Node ElmSyntax.Module -> RangeDict SyntaxKind
+moduleHeaderSyntaxKindMap : ElmSyntax.Node ElmSyntax.ModuleHeader -> RangeDict SyntaxKind
 moduleHeaderSyntaxKindMap moduleHeaderNode =
-    case moduleHeaderNode.value of
-        ElmSyntax.EffectModule _ ->
-            RangeDict.empty
+    moduleHeaderNode.value.exposing_
+        |> exposingSyntaxKindMap
+        |> RangeDict.insert moduleHeaderNode.value.moduleName.range
+            ModuleNameOrAlias
+        |> RangeDict.union
+            (case moduleHeaderNode.value.specific of
+                Nothing ->
+                    RangeDict.singleton
+                        { start = moduleHeaderNode.range.start
+                        , end =
+                            { line = moduleHeaderNode.range.start.line
+                            , column = moduleHeaderNode.range.start.column + 6
+                            }
+                        }
+                        KeySymbol
 
-        ElmSyntax.NormalModule normalModuleHeader ->
-            normalModuleHeader.exposingList
-                |> exposingSyntaxKindMap
-                |> RangeDict.insert
-                    { start = moduleHeaderNode.range.start
-                    , end =
-                        { row = moduleHeaderNode.range.start.row
-                        , column = moduleHeaderNode.range.start.column + 6
+                Just (ElmSyntax.ModuleHeaderSpecificPort portModuleHeaderSpecific) ->
+                    RangeDict.singleton
+                        { start = moduleHeaderNode.range.start
+                        , end =
+                            { line = moduleHeaderNode.range.start.line
+                            , column = moduleHeaderNode.range.start.column + 4
+                            }
                         }
-                    }
-                    KeySymbol
-                |> RangeDict.insert normalModuleHeader.moduleName.range
-                    ModuleNameOrAlias
+                        KeySymbol
+                        |> RangeDict.insert
+                            portModuleHeaderSpecific.moduleKeywordRange
+                            KeySymbol
 
-        ElmSyntax.PortModule portModuleHeader ->
-            portModuleHeader.exposingList
-                |> exposingSyntaxKindMap
-                |> RangeDict.insert
-                    { start = moduleHeaderNode.range.start
-                    , end =
-                        { row = moduleHeaderNode.range.start.row
-                        , column = moduleHeaderNode.range.start.column + 4
+                Just (ElmSyntax.ModuleHeaderSpecificEffect effectModuleHeaderSpecific) ->
+                    RangeDict.singleton
+                        { start = moduleHeaderNode.range.start
+                        , end =
+                            { line = moduleHeaderNode.range.start.line
+                            , column = moduleHeaderNode.range.start.column + 6
+                            }
                         }
-                    }
-                    KeySymbol
-                |> RangeDict.insert
-                    { start =
-                        { row = moduleHeaderNode.range.start.row
-                        , column = moduleHeaderNode.range.start.column + 5
-                        }
-                    , end =
-                        { row = moduleHeaderNode.range.start.row
-                        , column = moduleHeaderNode.range.start.column + 11
-                        }
-                    }
-                    KeySymbol
-                |> RangeDict.insert portModuleHeader.moduleName.range ModuleNameOrAlias
+                        KeySymbol
+                        |> RangeDict.insert
+                            effectModuleHeaderSpecific.moduleKeywordRange
+                            KeySymbol
+            )
 
 
 commentSyntaxKindMap : ElmSyntax.Node String -> RangeDict SyntaxKind
@@ -1067,9 +1052,9 @@ plainCommentSyntaxKindMap commentNode =
         |> List.foldl
             (\( innerRow, innerRowLine ) soFar ->
                 let
-                    row : Int
-                    row =
-                        commentNode.range.start.row + innerRow
+                    line : Int
+                    line =
+                        commentNode.range.start.line + innerRow
                 in
                 soFar
                     |> RangeDict.insert
@@ -1078,13 +1063,13 @@ plainCommentSyntaxKindMap commentNode =
                                 commentNode.range.start
 
                             else
-                                { row = row, column = 1 }
+                                { line = line, column = 1 }
                         , end =
-                            if row == commentNode.range.end.row then
+                            if line == commentNode.range.end.line then
                                 commentNode.range.end
 
                             else
-                                { row = row, column = 1 + (innerRowLine |> String.length) }
+                                { line = line, column = 1 + (innerRowLine |> String.length) }
                         }
                         Comment
             )
@@ -1094,17 +1079,17 @@ plainCommentSyntaxKindMap commentNode =
 importSyntaxKindMap : ElmSyntax.Node ElmSyntax.Import -> RangeDict SyntaxKind
 importSyntaxKindMap importNode =
     RangeDict.union
-        ((case importNode.value.exposingList of
+        ((case importNode.value.exposing_ of
             Nothing ->
                 RangeDict.empty
 
-            Just exposingList ->
-                exposingList |> exposingSyntaxKindMap
+            Just exposing_ ->
+                exposing_ |> exposingSyntaxKindMap
          )
             |> RangeDict.insert
                 { start = importNode.range.start
                 , end =
-                    { row = importNode.range.start.row
+                    { line = importNode.range.start.line
                     , column = importNode.range.start.column + 6
                     }
                 }
@@ -1120,11 +1105,11 @@ importSyntaxKindMap importNode =
                     |> RangeDict.insert
                         { start =
                             { column = aliasNode.range.start.column - 3
-                            , row = aliasNode.range.start.row
+                            , line = aliasNode.range.start.line
                             }
                         , end =
                             { column = aliasNode.range.start.column - 1
-                            , row = aliasNode.range.start.row
+                            , line = aliasNode.range.start.line
                             }
                         }
                         KeySymbol
@@ -1140,7 +1125,7 @@ rangeAddRow rowPlus range =
 
 locationAddRow : Int -> ElmSyntax.Location -> ElmSyntax.Location
 locationAddRow rowPlus location =
-    { row = location.row + rowPlus, column = location.column }
+    { line = location.line + rowPlus, column = location.column }
 
 
 rangeAddColumn : Int -> ElmSyntax.Range -> ElmSyntax.Range
@@ -1157,11 +1142,11 @@ exposingSyntaxKindMap exposingNode =
         exposingKeywordRange =
             { start =
                 { column = exposingNode.range.start.column
-                , row = exposingNode.range.start.row
+                , line = exposingNode.range.start.line
                 }
             , end =
                 { column = exposingNode.range.start.column + 8
-                , row = exposingNode.range.start.row
+                , line = exposingNode.range.start.line
                 }
             }
     in
