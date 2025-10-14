@@ -440,17 +440,7 @@ letDeclarationSyntaxKindMap letDeclarationNode =
             RangeDict.union
                 (letDestructuring.pattern |> patternSyntaxKindMap)
                 (letDestructuring.expression |> expressionSyntaxKindMap)
-                |> RangeDict.insert
-                    (let
-                        tokenBeforeEqualsEnd : ElmSyntax.Location
-                        tokenBeforeEqualsEnd =
-                            letDestructuring.pattern.range.end
-                     in
-                     -- TODO add to AST
-                     { start = { column = tokenBeforeEqualsEnd.column + 1, line = tokenBeforeEqualsEnd.line }
-                     , end = { column = tokenBeforeEqualsEnd.column + 2, line = tokenBeforeEqualsEnd.line }
-                     }
-                    )
+                |> RangeDict.insert letDestructuring.equalsKeySymbolRange
                     KeySymbol
 
         ElmSyntax.LetValueOrFunctionDeclaration fnDeclaration ->
@@ -467,22 +457,7 @@ letDeclarationSyntaxKindMap letDeclarationNode =
                     (fnDeclaration.parameters |> RangeDict.unionFromListMap patternSyntaxKindMap)
                     |> RangeDict.insert fnDeclaration.implementationNameRange
                         Variable
-                    |> RangeDict.insert
-                        (let
-                            tokenBeforeEqualsEnd : ElmSyntax.Location
-                            tokenBeforeEqualsEnd =
-                                case fnDeclaration.parameters |> listLast of
-                                    Just lastParameter ->
-                                        lastParameter.range.end
-
-                                    Nothing ->
-                                        fnDeclaration.implementationNameRange.end
-                         in
-                         -- TODO add to AST
-                         { start = { column = tokenBeforeEqualsEnd.column + 1, line = tokenBeforeEqualsEnd.line }
-                         , end = { column = tokenBeforeEqualsEnd.column + 2, line = tokenBeforeEqualsEnd.line }
-                         }
-                        )
+                    |> RangeDict.insert fnDeclaration.equalsKeySymbolRange
                         KeySymbol
                 )
 
@@ -533,26 +508,26 @@ linesTake n lines linesTaken =
                     (linesTaken ++ "\n" ++ line)
 
 
-typeAnnotationSyntaxKindMap : ElmSyntax.Node ElmSyntax.TypeAnnotation -> RangeDict SyntaxKind
+typeAnnotationSyntaxKindMap : ElmSyntax.Node ElmSyntax.Type -> RangeDict SyntaxKind
 typeAnnotationSyntaxKindMap typeNode =
     -- IGNORE TCO
     case typeNode.value of
-        ElmSyntax.TypeAnnotationUnit ->
+        ElmSyntax.TypeUnit ->
             RangeDict.singleton typeNode.range Type
 
-        ElmSyntax.TypeAnnotationVariable _ ->
+        ElmSyntax.TypeVariable _ ->
             RangeDict.singleton typeNode.range TypeVariable
 
-        ElmSyntax.TypeAnnotationParenthesized inParens ->
+        ElmSyntax.TypeParenthesized inParens ->
             typeAnnotationSyntaxKindMap inParens
 
-        ElmSyntax.TypeAnnotationTuple parts ->
+        ElmSyntax.TypeTuple parts ->
             parts.part0
                 |> typeAnnotationSyntaxKindMap
                 |> RangeDict.union
                     (parts.part1 |> typeAnnotationSyntaxKindMap)
 
-        ElmSyntax.TypeAnnotationTriple parts ->
+        ElmSyntax.TypeTriple parts ->
             parts.part0
                 |> typeAnnotationSyntaxKindMap
                 |> RangeDict.union
@@ -560,14 +535,14 @@ typeAnnotationSyntaxKindMap typeNode =
                 |> RangeDict.union
                     (parts.part2 |> typeAnnotationSyntaxKindMap)
 
-        ElmSyntax.TypeAnnotationConstruct typeConstruct ->
+        ElmSyntax.TypeConstruct typeConstruct ->
             (typeConstruct.reference |> qualifiedSyntaxKindMap Type)
                 |> RangeDict.union
                     (typeConstruct.arguments
                         |> RangeDict.unionFromListMap typeAnnotationSyntaxKindMap
                     )
 
-        ElmSyntax.TypeAnnotationRecord fields ->
+        ElmSyntax.TypeRecord fields ->
             fields
                 |> RangeDict.unionFromListMap
                     (\field ->
@@ -578,7 +553,7 @@ typeAnnotationSyntaxKindMap typeNode =
                                 KeySymbol
                     )
 
-        ElmSyntax.TypeAnnotationRecordExtension typeRecordExtension ->
+        ElmSyntax.TypeRecordExtension typeRecordExtension ->
             case typeRecordExtension.fields.value of
                 -- invalid syntax
                 [] ->
@@ -605,7 +580,7 @@ typeAnnotationSyntaxKindMap typeNode =
                             )
                             KeySymbol
 
-        ElmSyntax.TypeAnnotationFunction typeFunction ->
+        ElmSyntax.TypeFunction typeFunction ->
             RangeDict.union
                 (typeFunction.input |> typeAnnotationSyntaxKindMap)
                 (typeFunction.output |> typeAnnotationSyntaxKindMap)
@@ -616,7 +591,7 @@ typeAnnotationSyntaxKindMap typeNode =
 
 signatureSyntaxKindMap :
     { name : ElmSyntax.Node String
-    , type_ : ElmSyntax.Node ElmSyntax.TypeAnnotation
+    , type_ : ElmSyntax.Node ElmSyntax.Type
     }
     -> RangeDict SyntaxKind
 signatureSyntaxKindMap signature =
@@ -653,66 +628,37 @@ declarationSyntaxKindMap declarationNode =
                     (fnDeclaration.parameters |> RangeDict.unionFromListMap patternSyntaxKindMap)
                 |> RangeDict.insert fnDeclaration.implementationNameRange
                     VariableDeclaration
-                |> RangeDict.insert
-                    (let
-                        tokenBeforeEqualsEnd : ElmSyntax.Location
-                        tokenBeforeEqualsEnd =
-                            case fnDeclaration.parameters |> listLast of
-                                Just lastParameterNode ->
-                                    lastParameterNode.range.end
-
-                                Nothing ->
-                                    fnDeclaration.implementationNameRange.end
-                     in
-                     -- TODO add to AST
-                     { start = { column = tokenBeforeEqualsEnd.column + 1, line = tokenBeforeEqualsEnd.line }
-                     , end = { column = tokenBeforeEqualsEnd.column + 2, line = tokenBeforeEqualsEnd.line }
-                     }
-                    )
+                |> RangeDict.insert fnDeclaration.equalsKeySymbolRange
                     KeySymbol
 
-        ElmSyntax.DeclarationTypeAlias aliasTypeDeclaration ->
-            (case aliasTypeDeclaration.documentation of
+        ElmSyntax.DeclarationTypeAlias typeAliasDeclaration ->
+            (case typeAliasDeclaration.documentation of
                 Nothing ->
                     RangeDict.empty
 
                 Just documentationNode ->
                     commentSyntaxKindMap documentationNode
             )
-                |> RangeDict.union
-                    (aliasTypeDeclaration.type_ |> typeAnnotationSyntaxKindMap)
-                |> RangeDict.union
-                    (aliasTypeDeclaration.parameters
-                        |> RangeDict.mapFromList
-                            (\variableNode ->
-                                ( variableNode.range, Variable )
-                            )
-                    )
-                |> RangeDict.insert aliasTypeDeclaration.name.range
-                    Type
                 |> RangeDict.insert
-                    -- TODO add aliasKeywordRange to AST
                     { start = declarationNode.range.start
-                    , end = declarationNode.range.start |> locationAddColumn 10
+                    , end = declarationNode.range.start |> locationAddColumn 4
                     }
                     KeySymbol
-                |> RangeDict.insert
-                    (let
-                        tokenBeforeEqualsEnd : ElmSyntax.Location
-                        tokenBeforeEqualsEnd =
-                            case aliasTypeDeclaration.parameters |> listLast of
-                                Just lastParameter ->
-                                    lastParameter.range.end
-
-                                Nothing ->
-                                    aliasTypeDeclaration.name.range.end
-                     in
-                     -- TODO add to AST
-                     { start = { column = tokenBeforeEqualsEnd.column + 1, line = tokenBeforeEqualsEnd.line }
-                     , end = { column = tokenBeforeEqualsEnd.column + 2, line = tokenBeforeEqualsEnd.line }
-                     }
-                    )
+                |> RangeDict.insert typeAliasDeclaration.aliasKeywordRange
                     KeySymbol
+                |> RangeDict.insert typeAliasDeclaration.name.range
+                    Type
+                |> RangeDict.union
+                    (typeAliasDeclaration.parameters
+                        |> RangeDict.mapFromList
+                            (\variableNode ->
+                                ( variableNode.range, TypeVariable )
+                            )
+                    )
+                |> RangeDict.insert typeAliasDeclaration.equalsKeySymbolRange
+                    KeySymbol
+                |> RangeDict.union
+                    (typeAliasDeclaration.type_ |> typeAnnotationSyntaxKindMap)
 
         ElmSyntax.DeclarationChoiceType choiceTypeDeclaration ->
             (case choiceTypeDeclaration.documentation of
@@ -723,22 +669,19 @@ declarationSyntaxKindMap declarationNode =
                     commentSyntaxKindMap documentationNode
             )
                 |> RangeDict.union
-                    (choiceTypeDeclaration.variants
+                    (choiceTypeDeclaration.variant0.values
+                        |> RangeDict.unionFromListMap typeAnnotationSyntaxKindMap
+                        |> RangeDict.insert choiceTypeDeclaration.variant0.name.range
+                            Variant
+                    )
+                |> RangeDict.union
+                    (choiceTypeDeclaration.variant1Up
                         |> RangeDict.unionFromListMap
-                            (\variantNode ->
-                                let
-                                    variantNameRange : ElmSyntax.Range
-                                    variantNameRange =
-                                        variantNode.value.name.range
-                                in
-                                variantNode.value.values
+                            (\variant ->
+                                variant.values
                                     |> RangeDict.unionFromListMap typeAnnotationSyntaxKindMap
-                                    |> RangeDict.insert variantNameRange Variant
-                                    |> RangeDict.insert
-                                        -- TODO add to AST
-                                        { start = variantNameRange.start |> locationAddColumn -2
-                                        , end = variantNameRange.start |> locationAddColumn -1
-                                        }
+                                    |> RangeDict.insert variant.name.range Variant
+                                    |> RangeDict.insert variant.orKeySymbolRange
                                         KeySymbol
                             )
                     )
@@ -749,6 +692,8 @@ declarationSyntaxKindMap declarationNode =
                                 ( parameterNode.range, Variable )
                             )
                     )
+                |> RangeDict.insert choiceTypeDeclaration.equalsKeySymbolRange
+                    KeySymbol
                 |> RangeDict.insert
                     choiceTypeDeclaration.name.range
                     Type
@@ -784,7 +729,7 @@ declarationSyntaxKindMap declarationNode =
 {-| Assumes `elm-format`ed code
 -}
 for :
-    { source : String, syntax : ElmSyntax.Module }
+    ElmSyntax.Module
     ->
         List
             { range : ElmSyntax.Range
@@ -792,19 +737,15 @@ for :
             }
 for elmModule =
     let
-        rawSourceCodeLines : List String
-        rawSourceCodeLines =
-            elmModule.source |> String.lines
-
         segmentsReverse : List { range : ElmSyntax.Range, syntaxKind : SyntaxKind }
         segmentsReverse =
             RangeDict.unionFromListMap identity
-                [ elmModule.syntax.moduleDefinition |> moduleHeaderSyntaxKindMap
-                , elmModule.syntax.comments
+                [ elmModule.moduleDefinition |> moduleHeaderSyntaxKindMap
+                , elmModule.comments
                     |> RangeDict.unionFromListMap commentSyntaxKindMap
-                , elmModule.syntax.imports
+                , elmModule.imports
                     |> RangeDict.unionFromListMap importSyntaxKindMap
-                , elmModule.syntax.declarations
+                , elmModule.declarations
                     |> RangeDict.unionFromListMap declarationSyntaxKindMap
                 ]
                 |> RangeDict.foldl
@@ -941,17 +882,13 @@ importSyntaxKindMap importNode =
                 KeySymbol
             |> RangeDict.insert importNode.value.moduleName.range ModuleNameOrAlias
         )
-        (case importNode.value.moduleAlias of
+        (case importNode.value.alias of
             Nothing ->
                 RangeDict.empty
 
-            Just aliasNode ->
-                RangeDict.singleton aliasNode.range ModuleNameOrAlias
-                    |> RangeDict.insert
-                        -- TODO asKeywordRange add to AST
-                        { start = aliasNode.range.start |> locationAddColumn -3
-                        , end = aliasNode.range.start |> locationAddColumn -1
-                        }
+            Just importAlias ->
+                RangeDict.singleton importAlias.name.range ModuleNameOrAlias
+                    |> RangeDict.insert importAlias.asKeywordRange
                         KeySymbol
         )
 

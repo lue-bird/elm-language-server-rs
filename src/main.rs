@@ -226,7 +226,7 @@ async fn main() {
                 },
             })))
         }).request::<lsp_types::request::SemanticTokensFullRequest, _>(|state, semantic_tokens_arguments| {
-            let maybe_module_state =
+            let maybe_module_syntax =
                 semantic_tokens_arguments
                     .text_document
                     .uri
@@ -239,7 +239,7 @@ async fn main() {
                             .and_then(|module_state| {
                                 match module_state.syntax {
                                     Some(module_syntax) => {
-                                        Some((module_state.source, module_syntax))
+                                        Some(module_syntax)
                                     },
                                     None => {
                                         match elm::elm_parser_lenient_run(
@@ -251,37 +251,37 @@ async fn main() {
                                             },
                                             Some(parsed_elm_module) => {
                                                 module_state.syntax = Some(parsed_elm_module);
-                                                Some((module_state.source, parsed_elm_module))
+                                                Some(parsed_elm_module)
                                             },
                                         }
                                     },
                                 }
                             }),
                     );
-            let semantic_tokens = maybe_module_state.and_then(|(module_source, module_syntax)| {
+            let semantic_tokens = maybe_module_syntax.and_then(|module_syntax| {
                 let highlight_allocator = bumpalo::Bump::new();
                 Some(lsp_types::SemanticTokensResult::Tokens(lsp_types::SemanticTokens {
                     result_id: None,
-                    data: elm::elm_syntax_highlight_for(&highlight_allocator, elm::GeneratedSourceSyntax {
-                        syntax: module_syntax,
-                        source: elm::StringString::One(module_source),
-                    }).into_iter().scan(elm::ElmSyntaxLocation {
-                        line: 1,
-                        column: 1,
-                    }, |previous_start_location, segment| {
-                        let delta = elm::exports_location_delta(*previous_start_location, segment.range.start);
-                        let token = lsp_types::SemanticToken {
-                            delta_line: delta.line as u32,
-                            delta_start: delta.column as u32,
-                            length: (segment.range.end.column - segment.range.start.column) as u32,
-                            token_type: semantic_token_type_to_id(
-                                elm_syntax_highlight_syntax_kind_to_lsp_semantic_token_type(segment.syntax_kind),
-                            ),
-                            token_modifiers_bitset: 0_u32,
-                        };
-                        segment.range.start.clone_into(previous_start_location);
-                        Some(token)
-                    }).collect::<Vec<lsp_types::SemanticToken>>(),
+                    data: elm::elm_syntax_highlight_for(&highlight_allocator, module_syntax)
+                        .into_iter()
+                        .scan(elm::ElmSyntaxLocation {
+                            line: 1,
+                            column: 1,
+                        }, |previous_start_location, segment| {
+                            let delta = elm::exports_location_delta(*previous_start_location, segment.range.start);
+                            let token = lsp_types::SemanticToken {
+                                delta_line: delta.line as u32,
+                                delta_start: delta.column as u32,
+                                length: (segment.range.end.column - segment.range.start.column) as u32,
+                                token_type: semantic_token_type_to_id(
+                                    elm_syntax_highlight_syntax_kind_to_lsp_semantic_token_type(segment.syntax_kind),
+                                ),
+                                token_modifiers_bitset: 0_u32,
+                            };
+                            segment.range.start.clone_into(previous_start_location);
+                            Some(token)
+                        })
+                        .collect::<Vec<lsp_types::SemanticToken>>(),
                 }))
             });
             async move {

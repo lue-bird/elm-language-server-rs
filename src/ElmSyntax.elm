@@ -1,22 +1,21 @@
 module ElmSyntax exposing
-    ( ModuleName, Import
+    ( Module, ModuleName, Import
     , ModuleHeader, ModuleHeaderSpecific(..)
     , Exposing(..), Expose(..)
-    , Declaration(..), ChoiceTypeDeclaration, OperatorDeclaration, TypeAliasDeclaration, ValueOrFunctionDeclaration
-    , Pattern(..), Expression(..), LetDeclaration(..), StringQuotingStyle(..), TypeAnnotation(..)
+    , Declaration(..), ChoiceTypeDeclaration, OperatorDeclaration, InfixDirection(..), TypeAliasDeclaration, ValueOrFunctionDeclaration
+    , Pattern(..), Expression(..), LetDeclaration(..), StringQuotingStyle(..), Type(..)
     , Location, locationCompare, Range, rangeIncludesLocation, rangeEmpty, Node, nodeCombine, nodeMap, nodeRange, nodeValue
-    , InfixDirection(..), Module
     )
 
 {-| Elm syntax tree
 
-@docs File, ModuleName, Import
+@docs Module, ModuleName, Import
 @docs ModuleHeader, ModuleHeaderSpecific
 @docs Exposing, Expose
-@docs Declaration, ChoiceTypeDeclaration, OperatorDeclaration, TypeAliasDeclaration, ValueOrFunctionDeclaration
-@docs Pattern, Expression, LetDeclaration, StringQuotingStyle, TypeAnnotation
+@docs Declaration, ChoiceTypeDeclaration, OperatorDeclaration, InfixDirection, TypeAliasDeclaration, ValueOrFunctionDeclaration
+@docs Pattern, Expression, LetDeclaration, StringQuotingStyle, Type
 
-TODO extract those below into a separate module, as they are more generally applicable
+TODO extract those below into a separate module `TextGrid`, as they are more generally applicable
 
 @docs Location, locationCompare, Range, rangeIncludesLocation, rangeEmpty, Node, nodeCombine, nodeMap, nodeRange, nodeValue
 
@@ -103,7 +102,11 @@ type Expose
 -}
 type alias Import =
     { moduleName : Node ModuleName
-    , moduleAlias : Maybe (Node String)
+    , alias :
+        Maybe
+            { asKeywordRange : Range
+            , name : Node String
+            }
     , exposing_ : Maybe (Node Exposing)
     }
 
@@ -123,7 +126,7 @@ type Declaration
     | DeclarationChoiceType ChoiceTypeDeclaration
     | DeclarationPort
         { name : Node String
-        , type_ : Node TypeAnnotation
+        , type_ : Node Type
         }
     | DeclarationOperator OperatorDeclaration
 
@@ -141,15 +144,18 @@ type alias ChoiceTypeDeclaration =
     { documentation : Maybe (Node String)
     , name : Node String
     , parameters : List (Node String)
-    , -- TODO split into variant0 and variant1Up
-      variants :
+    , equalsKeySymbolRange : Range
+    , variant0 :
+        { name : Node String
+        , values : List (Node Type)
+        }
+    , variant1Up :
         List
-            -- TODO remove Node wrapping
-            (Node
-                { name : Node String
-                , values : List (Node TypeAnnotation)
-                }
-            )
+            { -- the vertical bar |
+              orKeySymbolRange : Range
+            , name : Node String
+            , values : List (Node Type)
+            }
     }
 
 
@@ -165,9 +171,11 @@ type alias ChoiceTypeDeclaration =
 -}
 type alias TypeAliasDeclaration =
     { documentation : Maybe (Node String)
+    , aliasKeywordRange : Range
     , name : Node String
     , parameters : List (Node String)
-    , type_ : Node TypeAnnotation
+    , equalsKeySymbolRange : Range
+    , type_ : Node Type
     }
 
 
@@ -200,11 +208,12 @@ type alias ValueOrFunctionDeclaration =
         Maybe
             { -- TODO only store name range
               name : Node String
-            , type_ : Node TypeAnnotation
+            , type_ : Node Type
             }
     , name : String
     , implementationNameRange : Range
     , parameters : List (Node Pattern)
+    , equalsKeySymbolRange : Range
     , result : Node Expression
     }
 
@@ -226,12 +235,12 @@ type alias ValueOrFunctionDeclaration =
   - `ExpressionIfThenElse`: `if a then b else c`
   - `ExpressionLetIn`: `let a = 4 in a`
   - `ExpressionCaseOf`: `case a of` followed by pattern matches
-  - `ExpressionLambda`: `(\a -> a)`
+  - `ExpressionLambda`: `\a -> a`
   - `ExpressionRecord`: `{ name = "text" }`
   - `ExpressionList`: `[ x, y ]`
   - `ExpressionRecordAccess`: `a.name`
   - `ExpressionRecordAccessFunction`: `.name`
-  - `ExpressionRecordUpdate`: `{ Some.record | name = "text" }`
+  - `ExpressionRecordUpdate`: `{ record | name = "text" }`
 
 -}
 type Expression
@@ -337,48 +346,51 @@ type LetDeclaration
         ValueOrFunctionDeclaration
     | LetDestructuring
         { pattern : Node Pattern
+        , equalsKeySymbolRange : Range
         , expression : Node Expression
         }
 
 
 {-| Custom type for different type annotations. For example:
 
-  - `TypeAnnotationVariable`: `a`
-  - `TypeAnnotationConstruct`: `Maybe (Int -> String)`
-  - `TypeAnnotationUnit`: `()`
-  - `TypeAnnotationParenthesized`: `(a -> b)`
-  - `TypeAnnotationRecord`: `{ name : String}`
-  - `TypeAnnotationRecordExtension`: `{ a | name : String}`
-  - `TypeAnnotationFunction`: `Int -> String`
+  - `TypeUnit`: `()`
+  - `TypeVariable`: `a`
+  - `TypeConstruct`: `Maybe (Int -> String)`
+  - `TypeParenthesized`: `a -> b`
+  - `TypeTuple`: `( a, b )`
+  - `TypeTriple`: `( a, b, c )`
+  - `TypeRecord`: `{ name : String}`
+  - `TypeRecordExtension`: `{ a | name : String}`
+  - `TypeFunction`: `Int -> String`
 
 TODO rename to Type(-)
 
 -}
-type TypeAnnotation
-    = TypeAnnotationVariable String
-    | TypeAnnotationConstruct
+type Type
+    = TypeUnit
+    | TypeVariable String
+    | TypeConstruct
         { reference : Node { qualification : ModuleName, name : String }
-        , arguments : List (Node TypeAnnotation)
+        , arguments : List (Node Type)
         }
-    | TypeAnnotationUnit
-    | TypeAnnotationParenthesized (Node TypeAnnotation)
-    | TypeAnnotationTuple
-        { part0 : Node TypeAnnotation
-        , part1 : Node TypeAnnotation
+    | TypeParenthesized (Node Type)
+    | TypeTuple
+        { part0 : Node Type
+        , part1 : Node Type
         }
-    | TypeAnnotationTriple
-        { part0 : Node TypeAnnotation
-        , part1 : Node TypeAnnotation
-        , part2 : Node TypeAnnotation
+    | TypeTriple
+        { part0 : Node Type
+        , part1 : Node Type
+        , part2 : Node Type
         }
-    | TypeAnnotationRecord
+    | TypeRecord
         (List
             { name : Node String
             , colonKeySymbolRange : Range
-            , value : Node TypeAnnotation
+            , value : Node Type
             }
         )
-    | TypeAnnotationRecordExtension
+    | TypeRecordExtension
         { recordVariable : Node String
         , fields :
             -- TODO remove Node wrapping
@@ -386,34 +398,34 @@ type TypeAnnotation
                 (List
                     { name : Node String
                     , colonKeySymbolRange : Range
-                    , value : Node TypeAnnotation
+                    , value : Node Type
                     }
                 )
         }
-    | TypeAnnotationFunction
-        { input : Node TypeAnnotation
+    | TypeFunction
+        { input : Node Type
         , arrowKeySymbolRange : Range
-        , output : Node TypeAnnotation
+        , output : Node Type
         }
 
 
 {-| Custom type for all patterns such as:
 
-  - `PatternIgnored`: `_` or `_name`
+  - `PatternIgnored`: `_`
   - `PatternUnit`: `()`
   - `PatternChar`: `'c'`
   - `PatternString`: `"hello"`
   - `PatternInt`: `42`
   - `PatternHex`: `0x11`
-  - `PatternTuple`: `(a, b)`
-  - `PatternTriple`: `(a, b, c)`
-  - `PatternRecord`: `{name, age}`
+  - `PatternTuple`: `( a, b )`
+  - `PatternTriple`: `( a, b, c )`
+  - `PatternRecord`: `{ name, age }`
   - `PatternListCons`: `x :: xs`
   - `PatternListExact`: `[ x, y ]`
   - `PatternVariable`: `x`
   - `PatternVariant`: `Just _`
   - `PatternAs`: `_ as x`
-  - `PatternParenthesized`: `( _ )`
+  - `PatternParenthesized`: `(_)`
 
 -}
 type Pattern

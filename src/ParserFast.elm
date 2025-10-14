@@ -8,7 +8,7 @@ module ParserFast exposing
     , map, validate, mapOrFail, lazy
     , map2, map2WithStartLocation, map2WithRange, map3, map3WithStartLocation, map3WithRange, map4, map4WithStartLocation, map4WithRange, map5, map5WithStartLocation, map5WithRange, map6, map6WithStartLocation, map7, map7WithRange, map8WithStartLocation, map9WithRange
     , loopWhileSucceeds, loopWhileSucceedsOntoResultFromParser, loopWhileSucceedsOntoResultFromParserRightToLeftStackUnsafe, loopWhileSucceedsRightToLeftStackUnsafe, loopUntil
-    , orSucceed, orSucceedWithLocation, mapOrSucceed, map2OrSucceed, map2WithRangeOrSucceed, map3OrSucceed, map4OrSucceed, oneOf2, oneOf2Map, oneOf2MapWithStartRowColumnAndEndRowColumn, oneOf2OrSucceed, oneOf3, oneOf4, oneOf5, oneOf7, oneOf9
+    , orSucceed, orSucceedWithLocation, mapOrSucceed, map2OrSucceed, map2WithRangeOrSucceed, map3OrSucceed, map3WithStartLocationOrSucceed, map4OrSucceed, oneOf2, oneOf2Map, oneOf2MapWithStartRowColumnAndEndRowColumn, oneOf2OrSucceed, oneOf3, oneOf4, oneOf5, oneOf7, oneOf9
     , withIndentSetToColumn, columnIndentAndThen, validateEndColumnIndentation
     , mapWithStartLocation, mapWithEndLocation, mapWithRange, offsetSourceAndThen, offsetSourceAndThenOrSucceed
     , problem
@@ -109,7 +109,7 @@ sample of what that code might look like:
 This parser will keep trying down the list of parsers until one of them starts committing.
 Once a path is chosen, it does not come back and try the others.
 
-@docs orSucceed, orSucceedWithLocation, mapOrSucceed, map2OrSucceed, map2WithRangeOrSucceed, map3OrSucceed, map4OrSucceed, oneOf2, oneOf2Map, oneOf2MapWithStartRowColumnAndEndRowColumn, oneOf2OrSucceed, oneOf3, oneOf4, oneOf5, oneOf7, oneOf9
+@docs orSucceed, orSucceedWithLocation, mapOrSucceed, map2OrSucceed, map2WithRangeOrSucceed, map3OrSucceed, map3WithStartLocationOrSucceed, map4OrSucceed, oneOf2, oneOf2Map, oneOf2MapWithStartRowColumnAndEndRowColumn, oneOf2OrSucceed, oneOf3, oneOf4, oneOf5, oneOf7, oneOf9
 
 
 # Indentation, Locations and source
@@ -1004,8 +1004,8 @@ map2OrSucceed func (Parser parseA) (Parser parseB) fallback =
     Parser
         (\s0 ->
             case parseA s0 of
-                Bad c1 x ->
-                    if c1 then
+                Bad committed () ->
+                    if committed then
                         Bad True ()
 
                     else
@@ -1026,8 +1026,8 @@ map2WithRangeOrSucceed func (Parser parseA) (Parser parseB) fallback =
     Parser
         (\s0 ->
             case parseA s0 of
-                Bad c1 x ->
-                    if c1 then
+                Bad committed x ->
+                    if committed then
                         Bad True ()
 
                     else
@@ -1048,8 +1048,8 @@ map3OrSucceed func (Parser parseA) (Parser parseB) (Parser parseC) fallback =
     Parser
         (\s0 ->
             case parseA s0 of
-                Bad c1 x ->
-                    if c1 then
+                Bad committed x ->
+                    if committed then
                         Bad True ()
 
                     else
@@ -1070,13 +1070,40 @@ map3OrSucceed func (Parser parseA) (Parser parseB) (Parser parseC) fallback =
         )
 
 
+map3WithStartLocationOrSucceed : (ElmSyntax.Location -> a -> b -> c -> value) -> Parser a -> Parser b -> Parser c -> value -> Parser value
+map3WithStartLocationOrSucceed func (Parser parseA) (Parser parseB) (Parser parseC) fallback =
+    Parser
+        (\s0 ->
+            case parseA s0 of
+                Bad committed () ->
+                    if committed then
+                        Bad True ()
+
+                    else
+                        Good fallback s0
+
+                Good a s1 ->
+                    case parseB s1 of
+                        Bad _ () ->
+                            Bad True ()
+
+                        Good b s2 ->
+                            case parseC s2 of
+                                Bad _ () ->
+                                    Bad True ()
+
+                                Good c s3 ->
+                                    Good (func { line = s0.line, column = s0.col } a b c) s3
+        )
+
+
 map4OrSucceed : (a -> b -> c -> d -> value) -> Parser a -> Parser b -> Parser c -> Parser d -> value -> Parser value
 map4OrSucceed func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parseD) fallback =
     Parser
         (\s0 ->
             case parseA s0 of
-                Bad c1 x ->
-                    if c1 then
+                Bad committed () ->
+                    if committed then
                         Bad True ()
 
                     else
