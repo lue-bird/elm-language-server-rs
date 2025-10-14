@@ -15,15 +15,9 @@ similar to elm-format.
 
 Some additional lenient parsing:
 
-  - `a != b` or `a !== b` → `a /= b`
+  - `a != b`   → `a /= b`  
 
-  - `a === b` → `a == b`
-
-  - `a ** b` → `a ^ b`
-
-  - `\a => b` or `\a. b` → `\a -> b`
-
-  - `case ... of a -> b` or `when ... is a. b` → `when ... is a -> b`
+  - `\a => b` → `\a -> b`
 
   - merges consecutive `,` in record, list or explicit exposing
 
@@ -34,8 +28,6 @@ Some additional lenient parsing:
   - removes remove extra `|` before first variant declaration
 
   - merges consecutive `->` in function type
-
-  - `port module` to `module` if no ports exist and the other way round
 
   - `(...)` → `(..)` in exposing and type expose that includes its variants
 
@@ -53,53 +45,9 @@ Some additional lenient parsing:
 
     → `{ name : value }`
 
-  - expands expression record field punning
-
-    `{ field }` → `{ field = field }`
-
-  - `->` to `=` in an expression declaration and let expression declaration
-
-    `function parameters -> result`
-
-    → `function parameters = result`
-
   - corrects names that collide with keywords
 
     `Html.Attributes.type` → `Html.Attributes.type_`
-
-  - allows omitting the name before the type in an expression declaration or let expression declaration
-
-        : Type
-        function parameters =
-            result
-
-    →
-
-        function : Type
-        function parameters =
-            result
-
-  - allows matching everything before
-
-        3 |> String.toInt case
-            Nothing ->
-                0
-
-            Just n ->
-                n
-
-    →
-
-        case 3 |> String.toInt of
-            Nothing ->
-                0
-
-            Just n ->
-                n
-
-  - moves import statements anywhere at the top level to the import section
-
-TODO remove all edits that change ranges, most notably field punning
 
 @docs Parser, run, module_
 
@@ -178,15 +126,7 @@ module_ =
             in
             { header =
                 moduleHeaderResult.syntax
-            , imports =
-                (declarationsResult.syntax
-                    |> List.concatMap .lateImports
-                    |> List.map
-                        (\lateImport ->
-                            { range = { start = importStartLocation, end = importStartLocation }, value = lateImport.value }
-                        )
-                )
-                    ++ importsResult.syntax
+            , imports = importsResult.syntax
             , declarations =
                 declarationsResult.syntax
                     |> List.map
@@ -219,22 +159,19 @@ module_ =
         (manyWithComments importFollowedByWhitespaceAndComments)
         (manyWithComments
             (topIndentedFollowedBy
-                (ParserFast.map3
-                    (\declarationParsed commentsAfter lateImportsResult ->
+                (ParserFast.map2
+                    (\declarationParsed commentsAfter ->
                         { comments =
                             declarationParsed.comments
                                 |> ropePrependTo commentsAfter
-                                |> ropePrependTo lateImportsResult.comments
                         , syntax =
                             { documentation = declarationParsed.syntax.documentation
                             , declaration = declarationParsed.syntax.declaration
-                            , lateImports = lateImportsResult.syntax
                             }
                         }
                     )
                     declaration
                     whitespaceAndComments
-                    (manyWithComments importFollowedByWhitespaceAndComments)
                 )
             )
         )
@@ -912,30 +849,6 @@ declaration =
             { syntax = Nothing, comments = ropeEmpty }
         )
         declarationAfterDocumentation
-        |> ParserFast.validate
-            (\result ->
-                case result.syntax.declaration.value of
-                    ElmSyntax.DeclarationValueOrFunction letFunctionDeclaration ->
-                        case letFunctionDeclaration.signature of
-                            Nothing ->
-                                True
-
-                            Just signatureNode ->
-                                letFunctionDeclaration.name
-                                    == signatureNode.name.value
-
-                    ElmSyntax.DeclarationTypeAlias _ ->
-                        True
-
-                    ElmSyntax.DeclarationChoiceType _ ->
-                        True
-
-                    ElmSyntax.DeclarationPort _ ->
-                        True
-
-                    ElmSyntax.DeclarationOperator _ ->
-                        True
-            )
 
 
 declarationAfterDocumentation :
@@ -945,7 +858,7 @@ declarationAfterDocumentation :
         )
 declarationAfterDocumentation =
     ParserFast.oneOf4
-        functionDeclarationWithoutDocumentation
+        valueOrFunctionDeclarationWithoutDocumentation
         typeOrTypeAliasDefinitionWithoutDocumentation
         portDeclarationWithoutDocumentation
         infixDeclaration
@@ -1131,147 +1044,107 @@ functionAfterDocumentation =
         )
 
 
-functionDeclarationWithoutDocumentation : Parser (WithComments (ElmSyntax.Node ElmSyntax.Declaration))
-functionDeclarationWithoutDocumentation =
-    ParserFast.oneOf2
-        (ParserFast.map6WithStartLocation
-            (\startNameStart startNameNode commentsAfterStartName maybeSignature parametersToEquals commentsAfterEqual result ->
-                case maybeSignature of
-                    Nothing ->
-                        { comments =
-                            commentsAfterStartName
-                                |> ropePrependTo parametersToEquals.comments
-                                |> ropePrependTo commentsAfterEqual
-                                |> ropePrependTo result.comments
-                        , syntax =
-                            { range = { start = startNameStart, end = result.syntax.range.end }
-                            , value =
-                                ElmSyntax.DeclarationValueOrFunction
-                                    { signature = Nothing
-                                    , name = startNameNode.value
-                                    , implementationNameRange = startNameNode.range
-                                    , parameters = parametersToEquals.parameters
-                                    , equalsKeySymbolRange =
-                                        parametersToEquals.equalsKeySymbolRange
-                                    , result = result.syntax
-                                    }
-                            }
+valueOrFunctionDeclarationWithoutDocumentation : Parser (WithComments (ElmSyntax.Node ElmSyntax.Declaration))
+valueOrFunctionDeclarationWithoutDocumentation =
+    ParserFast.map6WithStartLocation
+        (\startNameStart startNameNode commentsAfterStartName maybeSignature parametersToEquals commentsAfterEqual result ->
+            case maybeSignature of
+                Nothing ->
+                    { comments =
+                        commentsAfterStartName
+                            |> ropePrependTo parametersToEquals.comments
+                            |> ropePrependTo commentsAfterEqual
+                            |> ropePrependTo result.comments
+                    , syntax =
+                        { range = { start = startNameStart, end = result.syntax.range.end }
+                        , value =
+                            ElmSyntax.DeclarationValueOrFunction
+                                { signature = Nothing
+                                , name = startNameNode.value
+                                , implementationNameRange = startNameNode.range
+                                , parameters = parametersToEquals.parameters
+                                , equalsKeySymbolRange =
+                                    parametersToEquals.equalsKeySymbolRange
+                                , result = result.syntax
+                                }
                         }
-
-                    Just signature ->
-                        { comments =
-                            (commentsAfterStartName |> ropePrependTo signature.comments)
-                                |> ropePrependTo parametersToEquals.comments
-                                |> ropePrependTo commentsAfterEqual
-                                |> ropePrependTo result.comments
-                        , syntax =
-                            { range = { start = startNameStart, end = result.syntax.range.end }
-                            , value =
-                                ElmSyntax.DeclarationValueOrFunction
-                                    { signature =
-                                        Just
-                                            { name = startNameNode
-                                            , type_ = signature.type_
-                                            }
-                                    , name = signature.implementationName.value
-                                    , implementationNameRange =
-                                        signature.implementationName.range
-                                    , parameters = parametersToEquals.parameters
-                                    , equalsKeySymbolRange =
-                                        parametersToEquals.equalsKeySymbolRange
-                                    , result = result.syntax
-                                    }
-                            }
-                        }
-            )
-            functionNameNotInfixNode
-            whitespaceAndComments
-            (ParserFast.map4OrSucceed
-                (\commentsBeforeTypeAnnotation typeResult implementationName afterImplementationName ->
-                    Just
-                        { comments =
-                            commentsBeforeTypeAnnotation
-                                |> ropePrependTo typeResult.comments
-                                |> ropePrependTo implementationName.comments
-                                |> ropePrependTo afterImplementationName
-                        , implementationName = implementationName.syntax
-                        , type_ = typeResult.syntax
-                        }
-                )
-                (ParserFast.symbolFollowedBy ":" whitespaceAndComments)
-                type_
-                (whitespaceAndCommentsEndsTopIndentedFollowedBy
-                    nameLowercaseNode
-                )
-                whitespaceAndComments
-                Nothing
-            )
-            parameterPatternsEquals
-            whitespaceAndComments
-            expressionFollowedByWhitespaceAndComments
-            |> ParserFast.validate
-                (\result ->
-                    case result.syntax.value of
-                        ElmSyntax.DeclarationValueOrFunction letFunctionDeclaration ->
-                            case letFunctionDeclaration.signature of
-                                Nothing ->
-                                    True
-
-                                Just signatureNode ->
-                                    letFunctionDeclaration.name
-                                        == signatureNode.name.value
-
-                        ElmSyntax.DeclarationTypeAlias _ ->
-                            True
-
-                        ElmSyntax.DeclarationChoiceType _ ->
-                            True
-
-                        ElmSyntax.DeclarationPort _ ->
-                            True
-
-                        ElmSyntax.DeclarationOperator _ ->
-                            True
-                )
-        )
-        (ParserFast.map8WithStartLocation
-            (\start commentsBeforeTypeAnnotation typeResult commentsBetweenTypeAndName nameNode afterImplementationName parametersToEquals commentsAfterEqual result ->
-                { comments =
-                    commentsBeforeTypeAnnotation
-                        |> ropePrependTo typeResult.comments
-                        |> ropePrependTo commentsBetweenTypeAndName
-                        |> ropePrependTo afterImplementationName
-                        |> ropePrependTo parametersToEquals.comments
-                        |> ropePrependTo commentsAfterEqual
-                        |> ropePrependTo result.comments
-                , syntax =
-                    { range = { start = start, end = result.syntax |> ElmSyntax.nodeRange |> .end }
-                    , value =
-                        ElmSyntax.DeclarationValueOrFunction
-                            { signature =
-                                Just
-                                    { name = { range = { start = start, end = start }, value = nameNode |> ElmSyntax.nodeValue }
-                                    , type_ = typeResult.syntax
-                                    }
-                            , name = nameNode.value
-                            , implementationNameRange = nameNode.range
-                            , parameters = parametersToEquals.parameters
-                            , equalsKeySymbolRange =
-                                parametersToEquals.equalsKeySymbolRange
-                            , result = result.syntax
-                            }
                     }
-                }
+
+                Just signature ->
+                    { comments =
+                        (commentsAfterStartName |> ropePrependTo signature.comments)
+                            |> ropePrependTo parametersToEquals.comments
+                            |> ropePrependTo commentsAfterEqual
+                            |> ropePrependTo result.comments
+                    , syntax =
+                        { range = { start = startNameStart, end = result.syntax.range.end }
+                        , value =
+                            ElmSyntax.DeclarationValueOrFunction
+                                { signature =
+                                    Just
+                                        { name = startNameNode
+                                        , type_ = signature.type_
+                                        }
+                                , name = signature.implementationName.value
+                                , implementationNameRange =
+                                    signature.implementationName.range
+                                , parameters = parametersToEquals.parameters
+                                , equalsKeySymbolRange =
+                                    parametersToEquals.equalsKeySymbolRange
+                                , result = result.syntax
+                                }
+                        }
+                    }
+        )
+        functionNameNotInfixNode
+        whitespaceAndComments
+        (ParserFast.map4OrSucceed
+            (\commentsBeforeTypeAnnotation typeResult implementationName afterImplementationName ->
+                Just
+                    { comments =
+                        commentsBeforeTypeAnnotation
+                            |> ropePrependTo typeResult.comments
+                            |> ropePrependTo implementationName.comments
+                            |> ropePrependTo afterImplementationName
+                    , implementationName = implementationName.syntax
+                    , type_ = typeResult.syntax
+                    }
             )
             (ParserFast.symbolFollowedBy ":" whitespaceAndComments)
             type_
-            whitespaceAndCommentsEndsTopIndented
-            nameLowercaseNode
+            (whitespaceAndCommentsEndsTopIndentedFollowedBy
+                nameLowercaseNode
+            )
             whitespaceAndComments
-            parameterPatternsEquals
-            whitespaceAndComments
-            expressionFollowedByWhitespaceAndComments
+            Nothing
         )
+        parameterPatternsEquals
+        whitespaceAndComments
+        expressionFollowedByWhitespaceAndComments
+        |> ParserFast.validate
+            (\result ->
+                case result.syntax.value of
+                    ElmSyntax.DeclarationValueOrFunction letFunctionDeclaration ->
+                        case letFunctionDeclaration.signature of
+                            Nothing ->
+                                True
+
+                            Just signatureNode ->
+                                letFunctionDeclaration.name
+                                    == signatureNode.name.value
+
+                    ElmSyntax.DeclarationTypeAlias _ ->
+                        True
+
+                    ElmSyntax.DeclarationChoiceType _ ->
+                        True
+
+                    ElmSyntax.DeclarationPort _ ->
+                        True
+
+                    ElmSyntax.DeclarationOperator _ ->
+                        True
+            )
 
 
 parameterPatternsEquals :
@@ -3675,9 +3548,6 @@ infixOperatorAndThen extensionRightConstraints =
                 "==" ->
                     eqResult
 
-                "===" ->
-                    eqResult
-
                 "*" ->
                     mulResult
 
@@ -3708,9 +3578,6 @@ infixOperatorAndThen extensionRightConstraints =
                 "!=" ->
                     neqResult
 
-                "!==" ->
-                    neqResult
-
                 "//" ->
                     idivResult
 
@@ -3739,9 +3606,6 @@ infixOperatorAndThen extensionRightConstraints =
                     ltResult
 
                 "^" ->
-                    powResult
-
-                "**" ->
                     powResult
 
                 _ ->

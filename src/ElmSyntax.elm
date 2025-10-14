@@ -50,8 +50,6 @@ For example:
 
     import Foo.Bar ...
 
-    import ... as Something
-
     My.Module.something
 
     My.Module.SomeType
@@ -61,11 +59,10 @@ type alias ModuleName =
     List String
 
 
-{-| Type annotation for a file.
+{-| A file
 -}
 type alias Module =
-    { -- TODO rename to header
-      header : Node ModuleHeader
+    { header : Node ModuleHeader
     , imports : List (Node Import)
     , declarations :
         List
