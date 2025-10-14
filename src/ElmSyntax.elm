@@ -3,8 +3,8 @@ module ElmSyntax exposing
     , ModuleHeader, ModuleHeaderSpecific(..)
     , Exposing(..), Expose(..)
     , Declaration(..), ChoiceTypeDeclaration, OperatorDeclaration, InfixDirection(..), TypeAliasDeclaration, ValueOrFunctionDeclaration
-    , Pattern(..), Expression(..), LetDeclaration(..), StringQuotingStyle(..), Type(..)
-    , Location, locationCompare, Range, rangeIncludesLocation, rangeEmpty, Node, nodeCombine, nodeMap, nodeRange, nodeValue
+    , Pattern(..), Expression(..), LetDeclaration(..), StringQuotingStyle(..), IntBase(..), Type(..)
+    , Location, locationCompare, Range, rangeIncludesLocation, Node, nodeCombine, nodeRange, nodeValue
     )
 
 {-| Elm syntax tree
@@ -13,11 +13,11 @@ module ElmSyntax exposing
 @docs ModuleHeader, ModuleHeaderSpecific
 @docs Exposing, Expose
 @docs Declaration, ChoiceTypeDeclaration, OperatorDeclaration, InfixDirection, TypeAliasDeclaration, ValueOrFunctionDeclaration
-@docs Pattern, Expression, LetDeclaration, StringQuotingStyle, Type
+@docs Pattern, Expression, LetDeclaration, StringQuotingStyle, IntBase, Type
 
 TODO extract those below into a separate module `TextGrid`, as they are more generally applicable
 
-@docs Location, locationCompare, Range, rangeIncludesLocation, rangeEmpty, Node, nodeCombine, nodeMap, nodeRange, nodeValue
+@docs Location, locationCompare, Range, rangeIncludesLocation, Node, nodeCombine, nodeRange, nodeValue
 
 -}
 
@@ -202,7 +202,15 @@ type InfixDirection
     | Non
 
 
-{-| value/full function declaration
+{-| value/function declaration, for example
+
+    add2 n =
+        n + 2
+
+    hello : String
+    hello =
+        "Yahallo!"
+
 -}
 type alias ValueOrFunctionDeclaration =
     { signature :
@@ -247,9 +255,7 @@ type alias ValueOrFunctionDeclaration =
 -}
 type Expression
     = ExpressionUnit
-    | ExpressionInteger Int
-    | -- TODO join with Integer
-      ExpressionHex Int
+    | ExpressionInteger { value : Int, base : IntBase }
     | ExpressionFloat Float
     | ExpressionChar Char
     | ExpressionString { content : String, quotingStyle : StringQuotingStyle }
@@ -340,6 +346,11 @@ type Expression
                 , value : Node Expression
                 }
         }
+
+
+type IntBase
+    = IntBase10
+    | IntBase16
 
 
 {-| String literals can be single double-quoted (single line) and triple double-quoted (usually multi-line)?
@@ -443,36 +454,34 @@ type Type
 type Pattern
     = PatternIgnored
     | PatternUnit
+    | PatternVariable String
     | PatternChar Char
+    | PatternInt { value : Int, base : IntBase }
     | PatternString { content : String, quotingStyle : StringQuotingStyle }
-    | PatternInt Int
-    | -- TODO join with Int
-      PatternHex Int
+    | PatternRecord (List (Node String))
+    | PatternParenthesized (Node Pattern)
+    | PatternAs
+        { pattern : Node Pattern
+        , asKeywordRange : Range
+        , variable : Node String
+        }
     | PatternTuple { part0 : Node Pattern, part1 : Node Pattern }
     | PatternTriple
         { part0 : Node Pattern
         , part1 : Node Pattern
         , part2 : Node Pattern
         }
-    | PatternRecord (List (Node String))
     | PatternListCons
         { head : Node Pattern
         , consKeySymbolRange : Range
         , tail : Node Pattern
         }
     | PatternListExact (List (Node Pattern))
-    | PatternVariable String
     | PatternVariant
         { qualification : List String
         , name : String
         , values : List (Node Pattern)
         }
-    | PatternAs
-        { pattern : Node Pattern
-        , asKeywordRange : Range
-        , variable : Node String
-        }
-    | PatternParenthesized (Node Pattern)
 
 
 {-| An element of the AST (Abstract Syntax Tree).
@@ -490,13 +499,6 @@ type alias Node value =
 nodeCombine : (Node a -> Node b -> c) -> Node a -> Node b -> Node c
 nodeCombine f a b =
     { range = { start = a.range.start, end = b.range.end }, value = f a b }
-
-
-{-| Map the value within a node leaving the range untouched
--}
-nodeMap : (a -> b) -> Node a -> Node b
-nodeMap f node =
-    { range = node.range, value = f node.value }
 
 
 {-| Extract the range out of a `Node a`. Prefer `.range`
@@ -521,11 +523,6 @@ type alias Location =
     }
 
 
-locationStart : Location
-locationStart =
-    { line = 1, column = 1 }
-
-
 locationCompare : Location -> Location -> Basics.Order
 locationCompare a b =
     if a.line < b.line then
@@ -546,17 +543,26 @@ type alias Range =
     }
 
 
-{-| Useless [`Range`](#Range), pointing to a 0-width region at the very start.
-Avoid using this whenever you can
--}
-rangeEmpty : Range
-rangeEmpty =
-    { start = locationStart
-    , end = locationStart
-    }
-
-
 rangeIncludesLocation : Location -> Range -> Bool
 rangeIncludesLocation location range =
-    (locationCompare location range.start /= LT)
-        && (locationCompare location range.end /= GT)
+    -- can be optimized
+    (case locationCompare location range.start of
+        LT ->
+            False
+
+        EQ ->
+            True
+
+        GT ->
+            True
+    )
+        && (case locationCompare location range.end of
+                GT ->
+                    False
+
+                LT ->
+                    True
+
+                EQ ->
+                    True
+           )

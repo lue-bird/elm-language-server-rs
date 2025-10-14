@@ -2,7 +2,6 @@ module ElmSyntaxHighlight exposing (SyntaxKind(..), for)
 
 import ElmParserLenient
 import ElmSyntax
-import ParserFast
 import RangeDict exposing (RangeDict)
 
 
@@ -62,6 +61,7 @@ qualifiedSyntaxKindMap kind qualified =
 
 patternSyntaxKindMap : ElmSyntax.Node ElmSyntax.Pattern -> RangeDict SyntaxKind
 patternSyntaxKindMap patternNode =
+    -- IGNORE TCO
     case patternNode.value of
         ElmSyntax.PatternIgnored ->
             RangeDict.singleton patternNode.range KeySymbol
@@ -109,9 +109,6 @@ patternSyntaxKindMap patternNode =
         ElmSyntax.PatternInt _ ->
             RangeDict.singleton patternNode.range Number
 
-        ElmSyntax.PatternHex _ ->
-            RangeDict.singleton patternNode.range Number
-
         ElmSyntax.PatternTuple parts ->
             parts.part0
                 |> patternSyntaxKindMap
@@ -149,11 +146,14 @@ patternSyntaxKindMap patternNode =
                     }
             in
             RangeDict.union
-                (ElmSyntax.Node
+                ({ range =
                     { start = patternNode.range.start
-                    , end = patternNode.range.start |> locationAddColumn (qualified |> qualifiedRangeLength)
+                    , end =
+                        patternNode.range.start
+                            |> locationAddColumn (qualified |> qualifiedRangeLength)
                     }
-                    qualified
+                 , value = qualified
+                 }
                     |> qualifiedSyntaxKindMap Variant
                 )
                 (patternVariant.values
@@ -187,6 +187,7 @@ expressionSyntaxKindMap :
     ElmSyntax.Node ElmSyntax.Expression
     -> RangeDict SyntaxKind
 expressionSyntaxKindMap expressionNode =
+    -- IGNORE TCO
     case expressionNode.value of
         ElmSyntax.ExpressionUnit ->
             RangeDict.singleton expressionNode.range Variant
@@ -256,9 +257,6 @@ expressionSyntaxKindMap expressionNode =
         ElmSyntax.ExpressionInteger _ ->
             RangeDict.singleton expressionNode.range Number
 
-        ElmSyntax.ExpressionHex _ ->
-            RangeDict.singleton expressionNode.range Number
-
         ElmSyntax.ExpressionFloat _ ->
             RangeDict.singleton expressionNode.range Number
 
@@ -314,7 +312,7 @@ expressionSyntaxKindMap expressionNode =
                 |> RangeDict.union (parts.part2 |> expressionSyntaxKindMap)
 
         ElmSyntax.ExpressionParenthesized inner ->
-            inner |> expressionSyntaxKindMap
+            expressionSyntaxKindMap inner
 
         ElmSyntax.ExpressionLetIn letIn ->
             RangeDict.union
@@ -461,52 +459,6 @@ letDeclarationSyntaxKindMap letDeclarationNode =
                     |> RangeDict.insert fnDeclaration.equalsKeySymbolRange
                         KeySymbol
                 )
-
-
-stringLinesSlice : ElmSyntax.Range -> List String -> String
-stringLinesSlice rangeToExtract lines =
-    case List.drop (rangeToExtract.start.line - 1) lines of
-        [] ->
-            ""
-
-        firstLine :: rest ->
-            if rangeToExtract.start.line == rangeToExtract.end.line then
-                String.slice
-                    (rangeToExtract.start.column - 1)
-                    (rangeToExtract.end.column - 1)
-                    firstLine
-
-            else
-                let
-                    restLinesTaken : { linesTaken : String, lastLine : Maybe String }
-                    restLinesTaken =
-                        linesTake (rangeToExtract.end.line - rangeToExtract.start.line - 1) rest ""
-                in
-                String.dropLeft (rangeToExtract.start.column - 1) firstLine
-                    ++ restLinesTaken.linesTaken
-                    ++ (case restLinesTaken.lastLine of
-                            Just lastLine ->
-                                "\n" ++ String.left (rangeToExtract.end.column - 1) lastLine
-
-                            Nothing ->
-                                ""
-                       )
-
-
-linesTake : Int -> List String -> String -> { linesTaken : String, lastLine : Maybe String }
-linesTake n lines linesTaken =
-    if n <= 0 then
-        { linesTaken = linesTaken, lastLine = List.head lines }
-
-    else
-        case lines of
-            [] ->
-                { linesTaken = linesTaken, lastLine = Nothing }
-
-            line :: rest ->
-                linesTake (n - 1)
-                    rest
-                    (linesTaken ++ "\n" ++ line)
 
 
 typeAnnotationSyntaxKindMap : ElmSyntax.Node ElmSyntax.Type -> RangeDict SyntaxKind
@@ -873,25 +825,6 @@ importSyntaxKindMap importNode =
         )
 
 
-rangeAddRow : Int -> ElmSyntax.Range -> ElmSyntax.Range
-rangeAddRow rowPlus range =
-    { start = range.start |> locationAddRow rowPlus
-    , end = range.end |> locationAddRow rowPlus
-    }
-
-
-locationAddRow : Int -> ElmSyntax.Location -> ElmSyntax.Location
-locationAddRow rowPlus location =
-    { line = location.line + rowPlus, column = location.column }
-
-
-rangeAddColumn : Int -> ElmSyntax.Range -> ElmSyntax.Range
-rangeAddColumn columnPlus range =
-    { start = range.start |> locationAddColumn columnPlus
-    , end = range.end |> locationAddColumn columnPlus
-    }
-
-
 exposingSyntaxKindMap : ElmSyntax.Node ElmSyntax.Exposing -> RangeDict SyntaxKind
 exposingSyntaxKindMap exposingNode =
     let
@@ -933,31 +866,3 @@ exposingSyntaxKindMap exposingNode =
                                         Variant
                     )
                 |> RangeDict.insert exposingKeywordRange KeySymbol
-
-
-listFindMap : (a -> Maybe found) -> List a -> Maybe found
-listFindMap elementToMaybeFound list =
-    case list of
-        [] ->
-            Nothing
-
-        head :: tail ->
-            case head |> elementToMaybeFound of
-                Just found ->
-                    Just found
-
-                Nothing ->
-                    listFindMap elementToMaybeFound tail
-
-
-listLast : List a -> Maybe a
-listLast list =
-    case list of
-        [] ->
-            Nothing
-
-        [ onlyElement ] ->
-            Just onlyElement
-
-        _ :: el1 :: el2Up ->
-            listLast (el1 :: el2Up)

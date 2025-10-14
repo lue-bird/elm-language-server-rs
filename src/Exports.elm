@@ -6,8 +6,6 @@ import Elm.Project
 import Elm.Version
 import ElmSyntax
 import Json.Decode
-import Json.Encode
-import ParserFast
 
 
 elmJsonToProjectAndDependencySourceDirectories :

@@ -181,15 +181,12 @@ async fn main() {
                     Some(module_syntax) => {
                         if elm::elm_syntax_range_includes_location(
                             hover_location,
-                            elm::elm_syntax_node_range(module_syntax.module_definition),
+                            elm::elm_syntax_node_range(module_syntax.header),
                         ) {
                             Ok(Some(lsp_types::Hover {
                                 contents: lsp_types::HoverContents::Scalar(
                                     lsp_types::MarkedString::String(
-                                        format!(
-                                            "module info: {:?}",
-                                            elm::elm_syntax_node_value(module_syntax.module_definition)
-                                        ),
+                                        format!("module info: {:?}", elm::elm_syntax_node_value(module_syntax.header)),
                                     ),
                                 ),
                                 range: None,

@@ -1026,7 +1026,7 @@ map2WithRangeOrSucceed func (Parser parseA) (Parser parseB) fallback =
     Parser
         (\s0 ->
             case parseA s0 of
-                Bad committed x ->
+                Bad committed () ->
                     if committed then
                         Bad True ()
 
@@ -1048,7 +1048,7 @@ map3OrSucceed func (Parser parseA) (Parser parseB) (Parser parseC) fallback =
     Parser
         (\s0 ->
             case parseA s0 of
-                Bad committed x ->
+                Bad committed () ->
                     if committed then
                         Bad True ()
 
@@ -1611,7 +1611,7 @@ loopWhileSucceedsHelp ((Parser parseElement) as element) soFar reduce foldedToRe
                 foldedToRes
                 s1
 
-        Bad elementCommitted x ->
+        Bad elementCommitted () ->
             if elementCommitted then
                 Bad True ()
 
@@ -1639,7 +1639,7 @@ loopWhileSucceedsFromRightToLeftStackUnsafeHelp ((Parser parseElement) as elemen
                 tailBad ->
                     tailBad
 
-        Bad elementCommitted x ->
+        Bad elementCommitted () ->
             if elementCommitted then
                 Bad True ()
 
@@ -2622,15 +2622,16 @@ keywordRange kwd =
                 newOffset : Int
                 newOffset =
                     s.offset + kwdLength
-
-                newColumn : Int
-                newColumn =
-                    s.col + kwdLength
             in
             if
                 (String.slice s.offset newOffset s.src == kwd)
                     && not (isSubCharAlphaNumOrUnderscore newOffset s.src)
             then
+                let
+                    newColumn : Int
+                    newColumn =
+                        s.col + kwdLength
+                in
                 Good
                     { start = { line = s.line, column = s.col }
                     , end = { line = s.line, column = newColumn }
