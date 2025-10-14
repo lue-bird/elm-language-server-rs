@@ -1891,6 +1891,7 @@ typeRecordOrRecordExtension =
                                 FieldsAfterName fieldsAfterName ->
                                     ElmSyntax.TypeAnnotationRecord
                                         ({ name = firstNameNode
+                                         , colonKeySymbolRange = fieldsAfterName.firstFieldEqualsKeySymbolRange
                                          , value = fieldsAfterName.firstFieldValue
                                          }
                                             :: fieldsAfterName.tailFields
@@ -1942,8 +1943,8 @@ typeRecordOrRecordExtension =
                             )
                         )
                     )
-                    (ParserFast.map4
-                        (\commentsBeforeFirstFieldValue firstFieldValue commentsAfterFirstFieldValue tailFields ->
+                    (ParserFast.map4WithStartLocation
+                        (\colonKeySymbolStartRange commentsBeforeFirstFieldValue firstFieldValue commentsAfterFirstFieldValue tailFields ->
                             { comments =
                                 commentsBeforeFirstFieldValue
                                     |> ropePrependTo firstFieldValue.comments
@@ -1951,7 +1952,13 @@ typeRecordOrRecordExtension =
                                     |> ropePrependTo tailFields.comments
                             , syntax =
                                 FieldsAfterName
-                                    { firstFieldValue = firstFieldValue.syntax
+                                    { firstFieldEqualsKeySymbolRange =
+                                        { start = colonKeySymbolStartRange
+                                        , end =
+                                            colonKeySymbolStartRange
+                                                |> locationAddColumn 1
+                                        }
+                                    , firstFieldValue = firstFieldValue.syntax
                                     , tailFields = tailFields.syntax
                                     }
                             }
@@ -1984,15 +1991,18 @@ type RecordFieldsOrExtensionAfterName
         (ElmSyntax.Node
             (List
                 { name : ElmSyntax.Node String
+                , colonKeySymbolRange : ElmSyntax.Range
                 , value : ElmSyntax.Node ElmSyntax.TypeAnnotation
                 }
             )
         )
     | FieldsAfterName
-        { firstFieldValue : ElmSyntax.Node ElmSyntax.TypeAnnotation
+        { firstFieldEqualsKeySymbolRange : ElmSyntax.Range
+        , firstFieldValue : ElmSyntax.Node ElmSyntax.TypeAnnotation
         , tailFields :
             List
                 { name : ElmSyntax.Node String
+                , colonKeySymbolRange : ElmSyntax.Range
                 , value : ElmSyntax.Node ElmSyntax.TypeAnnotation
                 }
         }
@@ -2003,6 +2013,7 @@ recordFieldsType :
         (WithComments
             (List
                 { name : ElmSyntax.Node String
+                , colonKeySymbolRange : ElmSyntax.Range
                 , value : ElmSyntax.Node ElmSyntax.TypeAnnotation
                 }
             )
@@ -2050,26 +2061,43 @@ typeRecordFieldDefinitionFollowedByWhitespaceAndComments :
     Parser
         (WithComments
             { name : ElmSyntax.Node String
+            , colonKeySymbolRange : ElmSyntax.Range
             , value : ElmSyntax.Node ElmSyntax.TypeAnnotation
             }
         )
 typeRecordFieldDefinitionFollowedByWhitespaceAndComments =
     ParserFast.map5
-        (\name commentsAfterName commentsAfterColon value commentsAfterValue ->
+        (\name commentsAfterName fromColonKeySymbol value commentsAfterValue ->
             { comments =
                 commentsAfterName
-                    |> ropePrependTo commentsAfterColon
+                    |> ropePrependTo fromColonKeySymbol.comments
                     |> ropePrependTo value.comments
                     |> ropePrependTo commentsAfterValue
-            , syntax = { name = name, value = value.syntax }
+            , syntax =
+                { name = name
+                , colonKeySymbolRange =
+                    { start = fromColonKeySymbol.startLocation
+                    , end =
+                        fromColonKeySymbol.startLocation
+                            |> locationAddColumn 1
+                    }
+                , value = value.syntax
+                }
             }
         )
         nameLowercaseNodeUnderscoreSuffixingKeywords
         whitespaceAndComments
-        (ParserFast.oneOf2OrSucceed
-            (ParserFast.symbolFollowedBy ":" whitespaceAndComments)
-            (ParserFast.symbolFollowedBy "=" whitespaceAndComments)
-            ropeEmpty
+        (ParserFast.mapWithStartLocation
+            (\startLocation comments ->
+                { startLocation = startLocation
+                , comments = comments
+                }
+            )
+            (ParserFast.oneOf2OrSucceed
+                (ParserFast.symbolFollowedBy ":" whitespaceAndComments)
+                (ParserFast.symbolFollowedBy "=" whitespaceAndComments)
+                ropeEmpty
+            )
         )
         type_
         whitespaceAndComments
@@ -2486,25 +2514,8 @@ recordOrRecordUpdateContentsFollowedByCurlyEnd =
                                 FieldsFirstValue firstFieldValue ->
                                     ElmSyntax.ExpressionRecord
                                         ({ name = firstFieldNameOrUpdatedRecordVariable
-                                         , value = firstFieldValue
-                                         }
-                                            :: tailFields.syntax
-                                        )
-
-                                FieldsFirstValuePunned () ->
-                                    ElmSyntax.ExpressionRecord
-                                        ({ name = firstFieldNameOrUpdatedRecordVariable
-                                         , value =
-                                            { range =
-                                                { start = firstFieldNameOrUpdatedRecordVariable.range.end
-                                                , end = firstFieldNameOrUpdatedRecordVariable.range.end
-                                                }
-                                            , value =
-                                                ElmSyntax.ExpressionReference
-                                                    { qualification = []
-                                                    , name = firstFieldNameOrUpdatedRecordVariable.value
-                                                    }
-                                            }
+                                         , equalsKeySymbolRange = firstFieldValue.equalsKeySymbolRange
+                                         , value = firstFieldValue.value
                                          }
                                             :: tailFields.syntax
                                         )
@@ -2528,31 +2539,29 @@ recordOrRecordUpdateContentsFollowedByCurlyEnd =
                             recordSetterNodeFollowedByWhitespaceAndComments
                         )
                     )
-                    (ParserFast.map2
-                        (\commentsBefore maybeValueResult ->
-                            case maybeValueResult of
-                                Nothing ->
-                                    { comments = commentsBefore
-                                    , syntax = FieldsFirstValuePunned ()
+                    (ParserFast.map2WithStartLocation
+                        (\equalsKeySymbolStartLocation commentsBefore valueResult ->
+                            { comments =
+                                commentsBefore
+                                    |> ropePrependTo valueResult.comments
+                            , syntax =
+                                FieldsFirstValue
+                                    { equalsKeySymbolRange =
+                                        { start = equalsKeySymbolStartLocation
+                                        , end =
+                                            equalsKeySymbolStartLocation
+                                                |> locationAddColumn 1
+                                        }
+                                    , value = valueResult.syntax
                                     }
-
-                                Just expressionResult ->
-                                    { comments =
-                                        commentsBefore
-                                            |> ropePrependTo expressionResult.comments
-                                    , syntax = FieldsFirstValue expressionResult.syntax
-                                    }
+                            }
                         )
                         (ParserFast.oneOf2OrSucceed
                             (ParserFast.symbolFollowedBy ":" whitespaceAndComments)
                             (ParserFast.symbolFollowedBy "=" whitespaceAndComments)
                             ropeEmpty
                         )
-                        (ParserFast.mapOrSucceed
-                            Just
-                            expressionFollowedByWhitespaceAndComments
-                            Nothing
-                        )
+                        expressionFollowedByWhitespaceAndComments
                     )
                 )
                 recordFields
@@ -2577,10 +2586,13 @@ recordOrRecordUpdateContentsFollowedByCurlyEnd =
 type RecordFieldsOrUpdateAfterName
     = RecordUpdateFirstSetter
         { name : ElmSyntax.Node String
+        , equalsKeySymbolRange : ElmSyntax.Range
         , value : ElmSyntax.Node ElmSyntax.Expression
         }
-    | FieldsFirstValue (ElmSyntax.Node ElmSyntax.Expression)
-    | FieldsFirstValuePunned ()
+    | FieldsFirstValue
+        { equalsKeySymbolRange : ElmSyntax.Range
+        , value : ElmSyntax.Node ElmSyntax.Expression
+        }
 
 
 recordFields :
@@ -2588,6 +2600,7 @@ recordFields :
         (WithComments
             (List
                 { name : ElmSyntax.Node String
+                , equalsKeySymbolRange : ElmSyntax.Range
                 , value : ElmSyntax.Node ElmSyntax.Expression
                 }
             )
@@ -2618,55 +2631,42 @@ recordSetterNodeFollowedByWhitespaceAndComments :
     Parser
         (WithComments
             { name : ElmSyntax.Node String
+            , equalsKeySymbolRange : ElmSyntax.Range
             , value : ElmSyntax.Node ElmSyntax.Expression
             }
         )
 recordSetterNodeFollowedByWhitespaceAndComments =
     ParserFast.map4WithRange
-        (\range nameNode commentsAfterName commentsAfterEquals maybeValueResult ->
-            -- This extra whitespace is just included for compatibility with earlier version
-            -- TODO for v8: remove
-            case maybeValueResult of
-                Nothing ->
-                    { comments =
-                        commentsAfterName |> ropePrependTo commentsAfterEquals
-                    , syntax =
-                        { name = nameNode
-                        , value =
-                            { range =
-                                { start = nameNode |> ElmSyntax.nodeRange |> .end
-                                , end = nameNode |> ElmSyntax.nodeRange |> .end
-                                }
-                            , value =
-                                ElmSyntax.ExpressionReference
-                                    { qualification = []
-                                    , name = nameNode.value
-                                    }
-                            }
-                        }
+        (\range nameNode commentsAfterName fromEqualsKeySymbol valueResult ->
+            { comments =
+                commentsAfterName
+                    |> ropePrependTo fromEqualsKeySymbol.comments
+                    |> ropePrependTo valueResult.comments
+            , syntax =
+                { name = nameNode
+                , equalsKeySymbolRange =
+                    { start = fromEqualsKeySymbol.startLocation
+                    , end =
+                        fromEqualsKeySymbol.startLocation
+                            |> locationAddColumn 1
                     }
-
-                Just expressionResult ->
-                    { comments =
-                        commentsAfterName
-                            |> ropePrependTo commentsAfterEquals
-                            |> ropePrependTo expressionResult.comments
-                    , syntax =
-                        { name = nameNode, value = expressionResult.syntax }
-                    }
+                , value = valueResult.syntax
+                }
+            }
         )
         nameLowercaseNodeUnderscoreSuffixingKeywords
         whitespaceAndComments
-        (ParserFast.oneOf2OrSucceed
-            (ParserFast.symbolFollowedBy ":" whitespaceAndComments)
-            (ParserFast.symbolFollowedBy "=" whitespaceAndComments)
-            ropeEmpty
+        (ParserFast.mapWithStartLocation
+            (\startLocation comments ->
+                { startLocation = startLocation, comments = comments }
+            )
+            (ParserFast.oneOf2OrSucceed
+                (ParserFast.symbolFollowedBy ":" whitespaceAndComments)
+                (ParserFast.symbolFollowedBy "=" whitespaceAndComments)
+                ropeEmpty
+            )
         )
-        (ParserFast.mapOrSucceed
-            Just
-            expressionFollowedByWhitespaceAndComments
-            Nothing
-        )
+        expressionFollowedByWhitespaceAndComments
 
 
 expressionString : Parser (WithComments (ElmSyntax.Node ElmSyntax.Expression))

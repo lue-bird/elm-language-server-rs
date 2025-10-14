@@ -299,6 +299,7 @@ type Expression
     | ExpressionRecord
         (List
             { name : Node String
+            , equalsKeySymbolRange : Range
             , value : Node Expression
             }
         )
@@ -314,6 +315,7 @@ type Expression
           fields :
             List
                 { name : Node String
+                , equalsKeySymbolRange : Range
                 , value : Node Expression
                 }
         }
@@ -372,6 +374,7 @@ type TypeAnnotation
     | TypeAnnotationRecord
         (List
             { name : Node String
+            , colonKeySymbolRange : Range
             , value : Node TypeAnnotation
             }
         )
@@ -382,6 +385,7 @@ type TypeAnnotation
             Node
                 (List
                     { name : Node String
+                    , colonKeySymbolRange : Range
                     , value : Node TypeAnnotation
                     }
                 )

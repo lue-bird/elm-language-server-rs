@@ -10,7 +10,7 @@ module ParserFast exposing
     , loopWhileSucceeds, loopWhileSucceedsOntoResultFromParser, loopWhileSucceedsOntoResultFromParserRightToLeftStackUnsafe, loopWhileSucceedsRightToLeftStackUnsafe, loopUntil
     , orSucceed, orSucceedWithLocation, mapOrSucceed, map2OrSucceed, map2WithRangeOrSucceed, map3OrSucceed, map4OrSucceed, oneOf2, oneOf2Map, oneOf2MapWithStartRowColumnAndEndRowColumn, oneOf2OrSucceed, oneOf3, oneOf4, oneOf5, oneOf7, oneOf9
     , withIndentSetToColumn, columnIndentAndThen, validateEndColumnIndentation
-    , mapWithEndLocation, mapWithRange, offsetSourceAndThen, offsetSourceAndThenOrSucceed
+    , mapWithStartLocation, mapWithEndLocation, mapWithRange, offsetSourceAndThen, offsetSourceAndThenOrSucceed
     , problem
     )
 
@@ -115,7 +115,7 @@ Once a path is chosen, it does not come back and try the others.
 # Indentation, Locations and source
 
 @docs withIndentSetToColumn, columnIndentAndThen, validateEndColumnIndentation
-@docs mapWithEndLocation, mapWithRange, offsetSourceAndThen, offsetSourceAndThenOrSucceed
+@docs mapWithStartLocation, mapWithEndLocation, mapWithRange, offsetSourceAndThen, offsetSourceAndThenOrSucceed
 @docs problem
 
 -}
@@ -2894,6 +2894,22 @@ mapWithEndLocation combineStartAndResult (Parser parse) =
             case parse s0 of
                 Good a s1 ->
                     Good (combineStartAndResult { line = s1.line, column = s1.col } a) s1
+
+                Bad committed x ->
+                    Bad committed x
+        )
+
+
+mapWithStartLocation :
+    (ElmSyntax.Location -> a -> b)
+    -> Parser a
+    -> Parser b
+mapWithStartLocation combineStartAndResult (Parser parse) =
+    Parser
+        (\s0 ->
+            case parse s0 of
+                Good a s1 ->
+                    Good (combineStartAndResult { line = s0.line, column = s0.col } a) s1
 
                 Bad committed x ->
                     Bad committed x

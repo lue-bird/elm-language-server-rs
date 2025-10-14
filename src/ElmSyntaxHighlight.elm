@@ -324,7 +324,7 @@ expressionSyntaxKindMap expressionNode =
                 (letIn.result |> expressionSyntaxKindMap)
                 |> RangeDict.insert
                     { start = expressionNode.range.start
-                    , end = { line = expressionNode.range.start.line, column = expressionNode.range.start.column + 3 }
+                    , end = expressionNode.range.start |> locationAddColumn 3
                     }
                     KeySymbol
                 |> RangeDict.insert letIn.inKeywordRange
@@ -346,7 +346,7 @@ expressionSyntaxKindMap expressionNode =
                 )
                 |> RangeDict.insert
                     { start = expressionNode.range.start
-                    , end = { line = expressionNode.range.start.line, column = expressionNode.range.start.column + 4 }
+                    , end = expressionNode.range.start |> locationAddColumn 4
                     }
                     Flow
                 |> RangeDict.insert caseOf.ofKeywordRange
@@ -375,12 +375,7 @@ expressionSyntaxKindMap expressionNode =
                         field.value
                             |> expressionSyntaxKindMap
                             |> RangeDict.insert field.name.range Field
-                            |> RangeDict.insert
-                                (-- TODO add to AST
-                                 { start = field.name.range.end |> locationAddColumn 1
-                                 , end = field.name.range.end |> locationAddColumn 2
-                                 }
-                                )
+                            |> RangeDict.insert field.equalsKeySymbolRange
                                 KeySymbol
                     )
 
@@ -420,12 +415,7 @@ expressionSyntaxKindMap expressionNode =
                         field.value
                             |> expressionSyntaxKindMap
                             |> RangeDict.insert field.name.range Field
-                            |> RangeDict.insert
-                                (-- TODO add to AST
-                                 { start = field.name.range.end |> locationAddColumn 1
-                                 , end = field.name.range.end |> locationAddColumn 2
-                                 }
-                                )
+                            |> RangeDict.insert field.equalsKeySymbolRange
                                 KeySymbol
                     )
                 |> RangeDict.insert recordUpdate.recordVariable.range Variable
@@ -439,97 +429,6 @@ nameIsUppercase string =
 
         Nothing ->
             False
-
-
-tokenFindRangeIn :
-    ElmSyntax.Range
-    ->
-        { rawSourceCode : List String
-        , commentRanges : List ElmSyntax.Range
-        }
-    -> String
-    -> Maybe ElmSyntax.Range
-tokenFindRangeIn searchRange context token =
-    let
-        searchLines : List String
-        searchLines =
-            context.rawSourceCode
-                |> stringLinesSlice searchRange
-                |> String.lines
-
-        operatorStartLocationFound : Maybe ElmSyntax.Location
-        operatorStartLocationFound =
-            searchLines
-                |> List.indexedMap Tuple.pair
-                |> listFindMap
-                    (\( searchLineIndex, searchLine ) ->
-                        String.indexes token searchLine
-                            |> listFindMap
-                                (\operatorOffset ->
-                                    let
-                                        operatorStartLocation : ElmSyntax.Location
-                                        operatorStartLocation =
-                                            case searchLineIndex of
-                                                0 ->
-                                                    { line = searchRange.start.line
-                                                    , column = searchRange.start.column + operatorOffset
-                                                    }
-
-                                                searchLineAfterFirstIndex ->
-                                                    { line = searchRange.start.line + searchLineAfterFirstIndex
-                                                    , column = operatorOffset + 1
-                                                    }
-
-                                        isPartOfComment : Bool
-                                        isPartOfComment =
-                                            List.any
-                                                (\commentRange ->
-                                                    rangeContainsLocation operatorStartLocation commentRange
-                                                )
-                                                context.commentRanges
-                                    in
-                                    if isPartOfComment then
-                                        Nothing
-
-                                    else
-                                        Just operatorStartLocation
-                                )
-                    )
-    in
-    case operatorStartLocationFound of
-        Just operatorStartLocation ->
-            Just
-                { start = operatorStartLocation
-                , end =
-                    { line = operatorStartLocation.line
-                    , column = operatorStartLocation.column + String.length token
-                    }
-                }
-
-        -- there's a bug somewhere
-        Nothing ->
-            Nothing
-
-
-rangeContainsLocation : ElmSyntax.Location -> ElmSyntax.Range -> Bool
-rangeContainsLocation location range =
-    case ElmSyntax.locationCompare range.start location of
-        GT ->
-            False
-
-        EQ ->
-            False
-
-        LT ->
-            case ElmSyntax.locationCompare range.end location of
-                GT ->
-                    True
-
-                LT ->
-                    False
-
-                EQ ->
-                    False
 
 
 letDeclarationSyntaxKindMap :
@@ -547,6 +446,7 @@ letDeclarationSyntaxKindMap letDeclarationNode =
                         tokenBeforeEqualsEnd =
                             letDestructuring.pattern.range.end
                      in
+                     -- TODO add to AST
                      { start = { column = tokenBeforeEqualsEnd.column + 1, line = tokenBeforeEqualsEnd.line }
                      , end = { column = tokenBeforeEqualsEnd.column + 2, line = tokenBeforeEqualsEnd.line }
                      }
@@ -578,6 +478,7 @@ letDeclarationSyntaxKindMap letDeclarationNode =
                                     Nothing ->
                                         fnDeclaration.implementationNameRange.end
                          in
+                         -- TODO add to AST
                          { start = { column = tokenBeforeEqualsEnd.column + 1, line = tokenBeforeEqualsEnd.line }
                          , end = { column = tokenBeforeEqualsEnd.column + 2, line = tokenBeforeEqualsEnd.line }
                          }
@@ -673,12 +574,7 @@ typeAnnotationSyntaxKindMap typeNode =
                         field.value
                             |> typeAnnotationSyntaxKindMap
                             |> RangeDict.insert field.name.range Field
-                            |> RangeDict.insert
-                                (-- TODO add to AST
-                                 { start = field.name.range.end |> locationAddColumn 1
-                                 , end = field.name.range.end |> locationAddColumn 2
-                                 }
-                                )
+                            |> RangeDict.insert field.colonKeySymbolRange
                                 KeySymbol
                     )
 
@@ -691,7 +587,14 @@ typeAnnotationSyntaxKindMap typeNode =
 
                 additionalField0 :: additionalField1Up ->
                     (additionalField0 :: additionalField1Up)
-                        |> RangeDict.unionFromListMap (\field -> field.value |> typeAnnotationSyntaxKindMap)
+                        |> RangeDict.unionFromListMap
+                            (\field ->
+                                field.value
+                                    |> typeAnnotationSyntaxKindMap
+                                    |> RangeDict.insert field.name.range Field
+                                    |> RangeDict.insert field.colonKeySymbolRange
+                                        KeySymbol
+                            )
                         |> RangeDict.insert typeRecordExtension.recordVariable.range
                             Variable
                         |> RangeDict.insert
@@ -761,6 +664,7 @@ declarationSyntaxKindMap declarationNode =
                                 Nothing ->
                                     fnDeclaration.implementationNameRange.end
                      in
+                     -- TODO add to AST
                      { start = { column = tokenBeforeEqualsEnd.column + 1, line = tokenBeforeEqualsEnd.line }
                      , end = { column = tokenBeforeEqualsEnd.column + 2, line = tokenBeforeEqualsEnd.line }
                      }
@@ -784,12 +688,12 @@ declarationSyntaxKindMap declarationNode =
                                 ( variableNode.range, Variable )
                             )
                     )
-                |> RangeDict.insert
-                    aliasTypeDeclaration.name.range
+                |> RangeDict.insert aliasTypeDeclaration.name.range
                     Type
                 |> RangeDict.insert
+                    -- TODO add aliasKeywordRange to AST
                     { start = declarationNode.range.start
-                    , end = { line = declarationNode.range.start.line, column = declarationNode.range.start.column + 10 }
+                    , end = declarationNode.range.start |> locationAddColumn 10
                     }
                     KeySymbol
                 |> RangeDict.insert
@@ -803,6 +707,7 @@ declarationSyntaxKindMap declarationNode =
                                 Nothing ->
                                     aliasTypeDeclaration.name.range.end
                      in
+                     -- TODO add to AST
                      { start = { column = tokenBeforeEqualsEnd.column + 1, line = tokenBeforeEqualsEnd.line }
                      , end = { column = tokenBeforeEqualsEnd.column + 2, line = tokenBeforeEqualsEnd.line }
                      }
@@ -830,8 +735,9 @@ declarationSyntaxKindMap declarationNode =
                                     |> RangeDict.unionFromListMap typeAnnotationSyntaxKindMap
                                     |> RangeDict.insert variantNameRange Variant
                                     |> RangeDict.insert
-                                        { start = { column = variantNameRange.start.column - 2, line = variantNameRange.start.line }
-                                        , end = { column = variantNameRange.start.column - 1, line = variantNameRange.start.line }
+                                        -- TODO add to AST
+                                        { start = variantNameRange.start |> locationAddColumn -2
+                                        , end = variantNameRange.start |> locationAddColumn -1
                                         }
                                         KeySymbol
                             )
@@ -849,9 +755,8 @@ declarationSyntaxKindMap declarationNode =
                 |> RangeDict.insert
                     { start = declarationNode.range.start
                     , end =
-                        { line = declarationNode.range.start.line
-                        , column = declarationNode.range.start.column + 4
-                        }
+                        declarationNode.range.start
+                            |> locationAddColumn 4
                     }
                     KeySymbol
 
@@ -861,14 +766,19 @@ declarationSyntaxKindMap declarationNode =
                 |> RangeDict.insert
                     { start = declarationNode.range.start
                     , end =
-                        { line = declarationNode.range.start.line
-                        , column = declarationNode.range.start.column + 4
-                        }
+                        declarationNode.range.start
+                            |> locationAddColumn 4
                     }
                     KeySymbol
 
         ElmSyntax.DeclarationOperator _ ->
-            RangeDict.empty
+            RangeDict.singleton
+                { start = declarationNode.range.start
+                , end =
+                    declarationNode.range.start
+                        |> locationAddColumn 4
+                }
+                KeySymbol
 
 
 {-| Assumes `elm-format`ed code
@@ -933,9 +843,8 @@ moduleHeaderSyntaxKindMap moduleHeaderNode =
                     RangeDict.singleton
                         { start = moduleHeaderNode.range.start
                         , end =
-                            { line = moduleHeaderNode.range.start.line
-                            , column = moduleHeaderNode.range.start.column + 6
-                            }
+                            moduleHeaderNode.range.start
+                                |> locationAddColumn 6
                         }
                         KeySymbol
 
@@ -943,26 +852,22 @@ moduleHeaderSyntaxKindMap moduleHeaderNode =
                     RangeDict.singleton
                         { start = moduleHeaderNode.range.start
                         , end =
-                            { line = moduleHeaderNode.range.start.line
-                            , column = moduleHeaderNode.range.start.column + 4
-                            }
+                            moduleHeaderNode.range.start
+                                |> locationAddColumn 4
                         }
                         KeySymbol
-                        |> RangeDict.insert
-                            portModuleHeaderSpecific.moduleKeywordRange
+                        |> RangeDict.insert portModuleHeaderSpecific.moduleKeywordRange
                             KeySymbol
 
                 Just (ElmSyntax.ModuleHeaderSpecificEffect effectModuleHeaderSpecific) ->
                     RangeDict.singleton
                         { start = moduleHeaderNode.range.start
                         , end =
-                            { line = moduleHeaderNode.range.start.line
-                            , column = moduleHeaderNode.range.start.column + 6
-                            }
+                            moduleHeaderNode.range.start
+                                |> locationAddColumn 6
                         }
                         KeySymbol
-                        |> RangeDict.insert
-                            effectModuleHeaderSpecific.moduleKeywordRange
+                        |> RangeDict.insert effectModuleHeaderSpecific.moduleKeywordRange
                             KeySymbol
             )
 
@@ -1030,9 +935,8 @@ importSyntaxKindMap importNode =
             |> RangeDict.insert
                 { start = importNode.range.start
                 , end =
-                    { line = importNode.range.start.line
-                    , column = importNode.range.start.column + 6
-                    }
+                    importNode.range.start
+                        |> locationAddColumn 6
                 }
                 KeySymbol
             |> RangeDict.insert importNode.value.moduleName.range ModuleNameOrAlias
@@ -1044,14 +948,9 @@ importSyntaxKindMap importNode =
             Just aliasNode ->
                 RangeDict.singleton aliasNode.range ModuleNameOrAlias
                     |> RangeDict.insert
-                        { start =
-                            { column = aliasNode.range.start.column - 3
-                            , line = aliasNode.range.start.line
-                            }
-                        , end =
-                            { column = aliasNode.range.start.column - 1
-                            , line = aliasNode.range.start.line
-                            }
+                        -- TODO asKeywordRange add to AST
+                        { start = aliasNode.range.start |> locationAddColumn -3
+                        , end = aliasNode.range.start |> locationAddColumn -1
                         }
                         KeySymbol
         )
@@ -1081,19 +980,15 @@ exposingSyntaxKindMap exposingNode =
     let
         exposingKeywordRange : ElmSyntax.Range
         exposingKeywordRange =
-            { start =
-                { column = exposingNode.range.start.column
-                , line = exposingNode.range.start.line
-                }
+            { start = exposingNode.range.start
             , end =
-                { column = exposingNode.range.start.column + 8
-                , line = exposingNode.range.start.line
-                }
+                exposingNode.range.start |> locationAddColumn 8
             }
     in
     case exposingNode.value of
-        ElmSyntax.ExposingAll _ ->
+        ElmSyntax.ExposingAll ellipsisKeySymbolRange ->
             RangeDict.singleton exposingKeywordRange KeySymbol
+                |> RangeDict.insert ellipsisKeySymbolRange KeySymbol
 
         ElmSyntax.ExposingExplicit exposedMembers ->
             exposedMembers
