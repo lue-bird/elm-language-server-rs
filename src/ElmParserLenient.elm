@@ -795,22 +795,26 @@ declaration :
         , declaration : ElmSyntax.Node ElmSyntax.Declaration
         }
 declaration =
-    ParserFast.map2
-        (\documentation afterDocumentation ->
-            { comments =
-                documentation.comments
-                    |> ropePrependTo afterDocumentation.comments
-            , documentation = documentation.syntax
-            , declaration = afterDocumentation.syntax
-            }
-        )
-        (ParserFast.map2OrSucceed
-            (\documentation comments ->
-                { syntax = Just documentation, comments = comments }
+    ParserFast.oneOf2Map
+        identity
+        (ParserFast.map3
+            (\documentation commentsBeforeDeclaration declarationResult ->
+                { comments =
+                    commentsBeforeDeclaration
+                        |> ropePrependTo declarationResult.comments
+                , documentation = Just documentation
+                , declaration = declarationResult.syntax
+                }
             )
             documentationComment
             whitespaceAndCommentsEndsTopIndented
-            { syntax = Nothing, comments = ropeEmpty }
+            declarationAfterDocumentation
+        )
+        (\declarationResult ->
+            { comments = declarationResult.comments
+            , documentation = Nothing
+            , declaration = declarationResult.syntax
+            }
         )
         declarationAfterDocumentation
 
@@ -935,10 +939,10 @@ valueOrFunctionDeclarationWithoutDocumentation =
         functionNameNotInfixNode
         whitespaceAndComments
         (ParserFast.map4OrSucceed
-            (\commentsBeforeTypeAnnotation typeResult implementationName afterImplementationName ->
+            (\commentsBeforeType typeResult implementationName afterImplementationName ->
                 Just
                     { comments =
-                        commentsBeforeTypeAnnotation
+                        commentsBeforeType
                             |> ropePrependTo typeResult.comments
                             |> ropePrependTo implementationName.comments
                             |> ropePrependTo afterImplementationName
@@ -1070,21 +1074,21 @@ infixDirection =
 portDeclarationWithoutDocumentation : Parser (WithComments (ElmSyntax.Node ElmSyntax.Declaration))
 portDeclarationWithoutDocumentation =
     ParserFast.map5
-        (\commentsAfterPort nameNode commentsAfterName commentsAfterColon typeAnnotationResult ->
+        (\commentsAfterPort nameNode commentsAfterName commentsAfterColon typeResult ->
             { comments =
                 commentsAfterPort
                     |> ropePrependTo commentsAfterName
                     |> ropePrependTo commentsAfterColon
-                    |> ropePrependTo typeAnnotationResult.comments
+                    |> ropePrependTo typeResult.comments
             , syntax =
                 { range =
                     { start = { line = nameNode.range.start.line, column = 1 }
-                    , end = typeAnnotationResult.syntax.range.end
+                    , end = typeResult.syntax.range.end
                     }
                 , value =
                     ElmSyntax.DeclarationPort
                         { name = nameNode
-                        , type_ = typeAnnotationResult.syntax
+                        , type_ = typeResult.syntax
                         }
                 }
             }
@@ -1171,13 +1175,13 @@ choiceTypeOrTypeAliasDeclarationWithoutDocumentation =
 typeAliasDeclarationWithoutDocumentationAfterTypePrefix : Parser (WithComments TypeOrTypeAliasDeclarationWithoutDocumentation)
 typeAliasDeclarationWithoutDocumentationAfterTypePrefix =
     ParserFast.map6WithStartLocation
-        (\aliasKeywordStartLocation commentsAfterAlias name commentsAfterName parametersToEquals commentsAfterEqual typeAnnotationResult ->
+        (\aliasKeywordStartLocation commentsAfterAlias name commentsAfterName parametersToEquals commentsAfterEqual typeResult ->
             { comments =
                 commentsAfterAlias
                     |> ropePrependTo commentsAfterName
                     |> ropePrependTo parametersToEquals.comments
                     |> ropePrependTo commentsAfterEqual
-                    |> ropePrependTo typeAnnotationResult.comments
+                    |> ropePrependTo typeResult.comments
             , syntax =
                 TypeAliasDeclarationWithoutDocumentation
                     { aliasKeywordRange =
@@ -1190,7 +1194,7 @@ typeAliasDeclarationWithoutDocumentationAfterTypePrefix =
                     , parameters = parametersToEquals.parameters
                     , equalsKeySymbolRange =
                         parametersToEquals.equalsKeySymbolRange
-                    , type_ = typeAnnotationResult.syntax
+                    , type_ = typeResult.syntax
                     }
             }
         )
@@ -1289,11 +1293,11 @@ variantDeclarationFollowedByWhitespaceAndComments =
         (manyWithCommentsReverse
             (positivelyIndentedFollowedBy
                 (ParserFast.map2
-                    (\typeAnnotationResult commentsAfter ->
+                    (\typeResult commentsAfter ->
                         { comments =
-                            typeAnnotationResult.comments
+                            typeResult.comments
                                 |> ropePrependTo commentsAfter
-                        , syntax = typeAnnotationResult.syntax
+                        , syntax = typeResult.syntax
                         }
                     )
                     typeNotSpaceSeparated
@@ -1353,13 +1357,13 @@ type_ =
         )
         (ParserFast.symbolFollowedBy "->"
             (ParserFast.map4WithStartLocation
-                (\arrowKeySymbolEndLocation commentsAfterArrow commentsWithExtraArrow typeAnnotationResult commentsAfterType ->
+                (\arrowKeySymbolEndLocation commentsAfterArrow commentsWithExtraArrow typeResult commentsAfterType ->
                     { comments =
                         commentsAfterArrow
                             |> ropePrependTo commentsWithExtraArrow
-                            |> ropePrependTo typeAnnotationResult.comments
+                            |> ropePrependTo typeResult.comments
                             |> ropePrependTo commentsAfterType
-                    , syntax = typeAnnotationResult.syntax
+                    , syntax = typeResult.syntax
                     , arrowKeySymbolEndLocation = arrowKeySymbolEndLocation
                     }
                 )
@@ -1416,42 +1420,98 @@ typeNotFunction =
 
 typeUnitOrParenthesizedOrTupleOrTriple : Parser (WithComments (ElmSyntax.Node ElmSyntax.Type))
 typeUnitOrParenthesizedOrTupleOrTriple =
-    -- TODO support Tuple
-    -- TODO support Triple
     ParserFast.symbolFollowedBy "("
         (ParserFast.oneOf2
             (ParserFast.symbolWithEndLocation ")"
-                (\end ->
+                (\unitEnd ->
                     { comments = ropeEmpty
                     , syntax =
-                        { range = { start = { line = end.line, column = end.column - 2 }, end = end }
+                        { range =
+                            { start = unitEnd |> locationAddColumn -2
+                            , end = unitEnd
+                            }
                         , value = ElmSyntax.TypeUnit
                         }
                     }
                 )
             )
-            (ParserFast.map3WithRange
-                (\rangeAfterOpeningParens commentsBeforeFirstPart inParens commentsAfterFirstPart ->
+            (ParserFast.map4WithRange
+                (\rangeAfterOpeningParen commentsBeforeFirstPart firstPart commentsAfterFirstPart lastToSecondPart ->
                     { comments =
                         commentsBeforeFirstPart
-                            |> ropePrependTo inParens.comments
+                            |> ropePrependTo firstPart.comments
                             |> ropePrependTo commentsAfterFirstPart
+                            |> ropePrependTo lastToSecondPart.comments
                     , syntax =
                         { range =
-                            { start =
-                                { line = rangeAfterOpeningParens.start.line
-                                , column = rangeAfterOpeningParens.start.column - 1
-                                }
-                            , end = rangeAfterOpeningParens.end
+                            { start = rangeAfterOpeningParen.start |> locationAddColumn -1
+                            , end = rangeAfterOpeningParen.end
                             }
-                        , value = ElmSyntax.TypeParenthesized inParens.syntax
+                        , value =
+                            case lastToSecondPart.syntax of
+                                Nothing ->
+                                    ElmSyntax.TypeParenthesized firstPart.syntax
+
+                                Just firstAndMaybeThirdPart ->
+                                    case firstAndMaybeThirdPart.maybeThirdPart of
+                                        Nothing ->
+                                            ElmSyntax.TypeTuple
+                                                { part0 = firstPart.syntax
+                                                , part1 = firstAndMaybeThirdPart.secondPart
+                                                }
+
+                                        Just thirdPart ->
+                                            ElmSyntax.TypeTriple
+                                                { part0 = firstPart.syntax
+                                                , part1 = firstAndMaybeThirdPart.secondPart
+                                                , part2 = thirdPart
+                                                }
                         }
                     }
                 )
                 whitespaceAndComments
                 type_
-                (whitespaceAndComments
-                    |> ParserFast.followedBySymbol ")"
+                whitespaceAndComments
+                (ParserFast.oneOf2
+                    (ParserFast.symbol ")"
+                        { comments = ropeEmpty, syntax = Nothing }
+                    )
+                    (ParserFast.symbolFollowedBy ","
+                        (ParserFast.map4
+                            (\commentsBefore secondPartResult commentsAfter maybeThirdPartResult ->
+                                { comments =
+                                    commentsBefore
+                                        |> ropePrependTo secondPartResult.comments
+                                        |> ropePrependTo commentsAfter
+                                , syntax = Just { maybeThirdPart = maybeThirdPartResult.syntax, secondPart = secondPartResult.syntax }
+                                }
+                            )
+                            whitespaceAndComments
+                            type_
+                            whitespaceAndComments
+                            (ParserFast.oneOf2
+                                (ParserFast.symbol ")"
+                                    { comments = ropeEmpty, syntax = Nothing }
+                                )
+                                (ParserFast.symbolFollowedBy ","
+                                    (ParserFast.map3
+                                        (\commentsBefore thirdPartResult commentsAfter ->
+                                            { comments =
+                                                commentsBefore
+                                                    |> ropePrependTo thirdPartResult.comments
+                                                    |> ropePrependTo commentsAfter
+                                            , syntax = Just thirdPartResult.syntax
+                                            }
+                                        )
+                                        whitespaceAndComments
+                                        type_
+                                        whitespaceAndComments
+                                        |> ParserFast.followedBySymbol ")"
+                                    )
+                                )
+                            )
+                        )
+                    )
                 )
             )
         )
@@ -1832,11 +1892,11 @@ typeConstructWithArgumentsFollowedByWhitespaceAndComments =
         (manyWithCommentsReverse
             (positivelyIndentedFollowedBy
                 (ParserFast.map2
-                    (\typeAnnotationResult commentsAfter ->
+                    (\typeResult commentsAfter ->
                         { comments =
-                            typeAnnotationResult.comments
+                            typeResult.comments
                                 |> ropePrependTo commentsAfter
-                        , syntax = typeAnnotationResult.syntax
+                        , syntax = typeResult.syntax
                         }
                     )
                     typeNotSpaceSeparated
@@ -1908,6 +1968,15 @@ followedByMultiRecordAccess beforeRecordAccesses =
             }
         )
         Basics.identity
+
+
+multiRecordAccessMap : (List (ElmSyntax.Node String) -> res) -> ParserFast.Parser res
+multiRecordAccessMap fieldsToRes =
+    ParserFast.loopWhileSucceeds
+        (ParserFast.symbolFollowedBy "." nameLowercaseNode)
+        []
+        (::)
+        (\reversed -> fieldsToRes (List.reverse reversed))
 
 
 precedence1ApR : InfixOperatorInfo
@@ -2682,7 +2751,7 @@ letFunctionFollowedByOptimisticLayout =
                                     { signature =
                                         Just
                                             { name = startNameNode
-                                            , type_ = signature.typeAnnotation
+                                            , type_ = signature.type_
                                             }
                                     , name = signature.implementationName.value
                                     , implementationNameRange =
@@ -2698,15 +2767,15 @@ letFunctionFollowedByOptimisticLayout =
             nameLowercaseNodeUnderscoreSuffixingKeywords
             whitespaceAndComments
             (ParserFast.map4OrSucceed
-                (\commentsBeforeTypeAnnotation typeAnnotationResult implementationName afterImplementationName ->
+                (\commentsBeforeType typeResult implementationName afterImplementationName ->
                     Just
                         { comments =
-                            commentsBeforeTypeAnnotation
-                                |> ropePrependTo typeAnnotationResult.comments
+                            commentsBeforeType
+                                |> ropePrependTo typeResult.comments
                                 |> ropePrependTo implementationName.comments
                                 |> ropePrependTo afterImplementationName
                         , implementationName = implementationName.syntax
-                        , typeAnnotation = typeAnnotationResult.syntax
+                        , type_ = typeResult.syntax
                         }
                 )
                 (ParserFast.symbolFollowedBy ":" whitespaceAndComments)
@@ -2737,9 +2806,9 @@ letFunctionFollowedByOptimisticLayout =
                 )
         )
         (ParserFast.map8WithStartLocation
-            (\start commentsBeforeTypeAnnotation typeResult commentsBetweenTypeAndName nameNode afterImplementationName parametersToEquals commentsAfterEqual result ->
+            (\start commentsBeforeType typeResult commentsBetweenTypeAndName nameNode afterImplementationName parametersToEquals commentsAfterEqual result ->
                 { comments =
-                    commentsBeforeTypeAnnotation
+                    commentsBeforeType
                         |> ropePrependTo typeResult.comments
                         |> ropePrependTo commentsBetweenTypeAndName
                         |> ropePrependTo afterImplementationName
@@ -3009,8 +3078,6 @@ rangeMoveStartLeftByOneColumn range =
 
 expressionStartingWithParensOpeningIfNecessaryFollowedByRecordAccess : Parser (WithComments (ElmSyntax.Node ElmSyntax.Expression))
 expressionStartingWithParensOpeningIfNecessaryFollowedByRecordAccess =
-    -- TODO support Tuple
-    -- TODO support Triple
     ParserFast.symbolFollowedBy "("
         (ParserFast.oneOf3
             (ParserFast.symbolWithEndLocation ")"
@@ -3049,28 +3116,128 @@ allowedPrefixOperatorFollowedByClosingParensOneOf =
 
 expressionParenthesizedOrTupleOrTripleAfterOpeningParens : Parser (WithComments (ElmSyntax.Node ElmSyntax.Expression))
 expressionParenthesizedOrTupleOrTripleAfterOpeningParens =
-    ParserFast.map2WithRange
-        (\rangeAfterOpeningParens commentsBeforeFirstPart firstPart ->
+    ParserFast.map4WithRange
+        (\rangeAfterOpeningParens commentsBeforeFirstPart firstPart commentsAfterFirstPart tailParts ->
             { comments =
                 commentsBeforeFirstPart
                     |> ropePrependTo firstPart.comments
+                    |> ropePrependTo commentsAfterFirstPart
+                    |> ropePrependTo tailParts.comments
             , syntax =
-                { range =
-                    { start =
-                        { line = rangeAfterOpeningParens.start.line
-                        , column = rangeAfterOpeningParens.start.column - 1
+                case tailParts.syntax of
+                    TupledParenthesizedFollowedByRecordAccesses recordAccesses ->
+                        case recordAccesses of
+                            [] ->
+                                { range =
+                                    { start = { line = rangeAfterOpeningParens.start.line, column = rangeAfterOpeningParens.start.column - 1 }
+                                    , end = rangeAfterOpeningParens.end
+                                    }
+                                , value = ElmSyntax.ExpressionParenthesized firstPart.syntax
+                                }
+
+                            firstRecordAccess :: _ ->
+                                let
+                                    range : TextGrid.Range
+                                    range =
+                                        { start = rangeAfterOpeningParens.start |> locationAddColumn -1
+                                        , end = firstRecordAccess.range.start |> locationAddColumn -1
+                                        }
+
+                                    parenthesizedNode : ElmSyntax.Node ElmSyntax.Expression
+                                    parenthesizedNode =
+                                        { range = range
+                                        , value = ElmSyntax.ExpressionParenthesized firstPart.syntax
+                                        }
+                                in
+                                recordAccesses
+                                    |> List.foldl
+                                        (\fieldNode leftNode ->
+                                            { range =
+                                                { start = leftNode.range.start, end = fieldNode.range.end }
+                                            , value =
+                                                ElmSyntax.ExpressionRecordAccess
+                                                    { record = leftNode
+                                                    , field = fieldNode
+                                                    }
+                                            }
+                                        )
+                                        parenthesizedNode
+
+                    TupledTwoOrThree ( secondPart, maybeThirdPart ) ->
+                        { range =
+                            { start = { line = rangeAfterOpeningParens.start.line, column = rangeAfterOpeningParens.start.column - 1 }
+                            , end = rangeAfterOpeningParens.end
+                            }
+                        , value =
+                            case maybeThirdPart of
+                                Nothing ->
+                                    ElmSyntax.ExpressionTuple
+                                        { part0 = firstPart.syntax
+                                        , part1 = secondPart
+                                        }
+
+                                Just thirdPart ->
+                                    ElmSyntax.ExpressionTriple
+                                        { part0 = firstPart.syntax
+                                        , part1 = secondPart
+                                        , part2 = thirdPart
+                                        }
                         }
-                    , end = rangeAfterOpeningParens.end
-                    }
-                , value = ElmSyntax.ExpressionParenthesized firstPart.syntax
-                }
             }
         )
         whitespaceAndComments
-        (expressionFollowedByWhitespaceAndComments
-            |> ParserFast.followedBySymbol ")"
+        expression
+        whitespaceAndComments
+        (ParserFast.oneOf2
+            (ParserFast.symbolFollowedBy ")"
+                (multiRecordAccessMap
+                    (\recordAccesses -> { comments = ropeEmpty, syntax = TupledParenthesizedFollowedByRecordAccesses recordAccesses })
+                )
+            )
+            (ParserFast.symbolFollowedBy ","
+                (ParserFast.map4
+                    (\commentsBefore partResult commentsAfter maybeThirdPart ->
+                        { comments =
+                            commentsBefore
+                                |> ropePrependTo partResult.comments
+                                |> ropePrependTo commentsAfter
+                                |> ropePrependTo maybeThirdPart.comments
+                        , syntax = TupledTwoOrThree ( partResult.syntax, maybeThirdPart.syntax )
+                        }
+                    )
+                    whitespaceAndComments
+                    expression
+                    whitespaceAndComments
+                    (ParserFast.oneOf2
+                        (ParserFast.symbol ")" { comments = ropeEmpty, syntax = Nothing })
+                        (ParserFast.symbolFollowedBy ","
+                            (ParserFast.map3
+                                (\commentsBefore partResult commentsAfter ->
+                                    { comments =
+                                        commentsBefore
+                                            |> ropePrependTo partResult.comments
+                                            |> ropePrependTo commentsAfter
+                                    , syntax = Just partResult.syntax
+                                    }
+                                )
+                                whitespaceAndComments
+                                expression
+                                whitespaceAndComments
+                                |> ParserFast.followedBySymbol ")"
+                            )
+                        )
+                    )
+                )
+            )
         )
-        |> followedByMultiRecordAccess
+
+
+type Tupled
+    = TupledParenthesizedFollowedByRecordAccesses (List (ElmSyntax.Node String))
+    | TupledTwoOrThree
+        ( ElmSyntax.Node ElmSyntax.Expression
+        , Maybe (ElmSyntax.Node ElmSyntax.Expression)
+        )
 
 
 
@@ -3715,8 +3882,6 @@ pattern =
 
 patternUnitOrParenthesizedOrTupleOrTriple : Parser (WithComments (ElmSyntax.Node ElmSyntax.Pattern))
 patternUnitOrParenthesizedOrTupleOrTriple =
-    -- TODO support Tuple
-    -- TODO support Triple
     ParserFast.symbolFollowedBy "("
         (ParserFast.map2WithRange
             (\range commentsBeforeHead contentResult ->
@@ -3730,21 +3895,75 @@ patternUnitOrParenthesizedOrTupleOrTriple =
                 }
             )
             whitespaceAndComments
-            -- yes, (  ) is a valid pattern in elm but not a valid type or expression
+            -- yes, (  ) is a valid pattern but not a valid type or expression
             (ParserFast.oneOf2
                 (ParserFast.symbol ")" { comments = ropeEmpty, syntax = ElmSyntax.PatternUnit })
-                (ParserFast.map2
-                    (\headResult commentsAfterHead ->
+                (ParserFast.map3
+                    (\headResult commentsAfterHead tailResult ->
                         { comments =
                             headResult.comments
                                 |> ropePrependTo commentsAfterHead
+                                |> ropePrependTo tailResult.comments
                         , syntax =
-                            ElmSyntax.PatternParenthesized headResult.syntax
+                            case tailResult.syntax of
+                                Nothing ->
+                                    ElmSyntax.PatternParenthesized headResult.syntax
+
+                                Just secondAndMaybeThirdPart ->
+                                    case secondAndMaybeThirdPart.maybeThirdPart of
+                                        Nothing ->
+                                            ElmSyntax.PatternTuple
+                                                { part0 = headResult.syntax
+                                                , part1 = secondAndMaybeThirdPart.secondPart
+                                                }
+
+                                        Just thirdPart ->
+                                            ElmSyntax.PatternTriple
+                                                { part0 = headResult.syntax
+                                                , part1 = secondAndMaybeThirdPart.secondPart
+                                                , part2 = thirdPart
+                                                }
                         }
                     )
                     pattern
-                    (whitespaceAndComments
-                        |> ParserFast.followedBySymbol ")"
+                    whitespaceAndComments
+                    (ParserFast.oneOf2
+                        (ParserFast.symbol ")" { comments = ropeEmpty, syntax = Nothing })
+                        (ParserFast.symbolFollowedBy ","
+                            (ParserFast.map4
+                                (\commentsBefore secondPart commentsAfter maybeThirdPart ->
+                                    { comments =
+                                        commentsBefore
+                                            |> ropePrependTo secondPart.comments
+                                            |> ropePrependTo commentsAfter
+                                            |> ropePrependTo maybeThirdPart.comments
+                                    , syntax = Just { maybeThirdPart = maybeThirdPart.syntax, secondPart = secondPart.syntax }
+                                    }
+                                )
+                                whitespaceAndComments
+                                pattern
+                                whitespaceAndComments
+                                (ParserFast.oneOf2
+                                    (ParserFast.symbol ")" { comments = ropeEmpty, syntax = Nothing })
+                                    (ParserFast.symbolFollowedBy ","
+                                        (ParserFast.map3
+                                            (\commentsBefore thirdPart commentsAfter ->
+                                                { comments =
+                                                    commentsBefore
+                                                        |> ropePrependTo thirdPart.comments
+                                                        |> ropePrependTo commentsAfter
+                                                , syntax = Just thirdPart.syntax
+                                                }
+                                            )
+                                            whitespaceAndComments
+                                            pattern
+                                            whitespaceAndComments
+                                            |> ParserFast.followedBySymbol ")"
+                                        )
+                                    )
+                                )
+                            )
+                        )
                     )
                 )
             )
@@ -4155,13 +4374,9 @@ ifKeywordUnderscoreSuffix name =
         "port" ->
             "port_"
 
-        --"infixr"
-        --"infixl"
         "type" ->
             "type_"
 
-        -- "infix" Apparently this is not a reserved keyword
-        -- "alias" Apparently this is not a reserved keyword
         "where" ->
             "where_"
 
