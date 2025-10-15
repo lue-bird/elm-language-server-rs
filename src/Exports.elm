@@ -4,7 +4,6 @@ import Elm.Constraint
 import Elm.Package
 import Elm.Project
 import Elm.Version
-import ElmSyntax
 import Json.Decode
 import TextGrid
 

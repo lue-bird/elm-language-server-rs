@@ -18,7 +18,7 @@ module ElmSyntax exposing
 
 -}
 
-import TextGrid exposing (Range)
+import TextGrid
 
 
 {-| module header. For example:
@@ -34,9 +34,9 @@ type alias ModuleHeader =
 
 
 type ModuleHeaderSpecific
-    = ModuleHeaderSpecificPort { moduleKeywordRange : Range }
+    = ModuleHeaderSpecificPort { moduleKeywordRange : TextGrid.Range }
     | ModuleHeaderSpecificEffect
-        { moduleKeywordRange : Range
+        { moduleKeywordRange : TextGrid.Range
         , command : Maybe (Node String)
         , subscription : Maybe (Node String)
         }
@@ -80,7 +80,7 @@ For example:
 
 -}
 type Exposing
-    = ExposingAll Range
+    = ExposingAll TextGrid.Range
     | ExposingExplicit (List (Node Expose))
 
 
@@ -92,7 +92,7 @@ type Expose
     | ExposeTypeName String
     | ExposeChoiceType
         { name : String
-        , openRange : Range
+        , openRange : TextGrid.Range
         }
 
 
@@ -105,7 +105,7 @@ type alias Import =
     { moduleName : Node ModuleName
     , alias :
         Maybe
-            { asKeywordRange : Range
+            { asKeywordRange : TextGrid.Range
             , name : Node String
             }
     , exposing_ : Maybe (Node Exposing)
@@ -146,7 +146,7 @@ type Declaration
 type alias ChoiceTypeDeclaration =
     { name : Node String
     , parameters : List (Node String)
-    , equalsKeySymbolRange : Range
+    , equalsKeySymbolRange : TextGrid.Range
     , variant0 :
         { name : Node String
         , values : List (Node Type)
@@ -154,7 +154,7 @@ type alias ChoiceTypeDeclaration =
     , variant1Up :
         List
             { -- the vertical bar |
-              orKeySymbolRange : Range
+              orKeySymbolRange : TextGrid.Range
             , name : Node String
             , values : List (Node Type)
             }
@@ -172,10 +172,10 @@ type alias ChoiceTypeDeclaration =
 
 -}
 type alias TypeAliasDeclaration =
-    { aliasKeywordRange : Range
+    { aliasKeywordRange : TextGrid.Range
     , name : Node String
     , parameters : List (Node String)
-    , equalsKeySymbolRange : Range
+    , equalsKeySymbolRange : TextGrid.Range
     , type_ : Node Type
     }
 
@@ -218,9 +218,9 @@ type alias ValueOrFunctionDeclaration =
             , type_ : Node Type
             }
     , name : String
-    , implementationNameRange : Range
+    , implementationNameRange : TextGrid.Range
     , parameters : List (Node Pattern)
-    , equalsKeySymbolRange : Range
+    , equalsKeySymbolRange : TextGrid.Range
     , result : Node Expression
     }
 
@@ -284,42 +284,42 @@ type Expression
       ExpressionReference { qualification : ModuleName, name : String }
     | ExpressionIfThenElse
         { condition : Node Expression
-        , thenKeywordRange : Range
+        , thenKeywordRange : TextGrid.Range
         , onTrue : Node Expression
-        , elseKeywordRange : Range
+        , elseKeywordRange : TextGrid.Range
         , onFalse : Node Expression
         }
     | ExpressionLetIn
         { declaration0 : Node LetDeclaration
         , declaration1Up : List (Node LetDeclaration)
-        , inKeywordRange : Range
+        , inKeywordRange : TextGrid.Range
         , result : Node Expression
         }
     | ExpressionCaseOf
         { matched : Node Expression
-        , ofKeywordRange : Range
+        , ofKeywordRange : TextGrid.Range
         , case0 :
             { pattern : Node Pattern
-            , arrowKeySymbolRange : Range
+            , arrowKeySymbolRange : TextGrid.Range
             , result : Node Expression
             }
         , case1Up :
             List
                 { pattern : Node Pattern
-                , arrowKeySymbolRange : Range
+                , arrowKeySymbolRange : TextGrid.Range
                 , result : Node Expression
                 }
         }
     | ExpressionLambda
         { parameter0 : Node Pattern
         , parameter1Up : List (Node Pattern)
-        , arrowKeySymbolRange : Range
+        , arrowKeySymbolRange : TextGrid.Range
         , result : Node Expression
         }
     | ExpressionRecord
         (List
             { name : Node String
-            , equalsKeySymbolRange : Range
+            , equalsKeySymbolRange : TextGrid.Range
             , value : Node Expression
             }
         )
@@ -332,16 +332,16 @@ type Expression
     | ExpressionRecordUpdate
         { recordVariable : Node String
         , -- vertical bar |
-          barKeySymbolRange : Range
+          barKeySymbolRange : TextGrid.Range
         , field0 :
             { name : Node String
-            , equalsKeySymbolRange : Range
+            , equalsKeySymbolRange : TextGrid.Range
             , value : Node Expression
             }
         , field1Up :
             List
                 { name : Node String
-                , equalsKeySymbolRange : Range
+                , equalsKeySymbolRange : TextGrid.Range
                 , value : Node Expression
                 }
         }
@@ -366,7 +366,7 @@ type LetDeclaration
     = LetValueOrFunctionDeclaration ValueOrFunctionDeclaration
     | LetDestructuring
         { pattern : Node Pattern
-        , equalsKeySymbolRange : Range
+        , equalsKeySymbolRange : TextGrid.Range
         , expression : Node Expression
         }
 
@@ -404,29 +404,29 @@ type Type
     | TypeRecord
         (List
             { name : Node String
-            , colonKeySymbolRange : Range
+            , colonKeySymbolRange : TextGrid.Range
             , value : Node Type
             }
         )
     | TypeRecordExtension
         { recordVariable : Node String
         , -- vertical bar |
-          barKeySymbolRange : Range
+          barKeySymbolRange : TextGrid.Range
         , field0 :
             { name : Node String
-            , colonKeySymbolRange : Range
+            , colonKeySymbolRange : TextGrid.Range
             , value : Node Type
             }
         , field1Up :
             List
                 { name : Node String
-                , colonKeySymbolRange : Range
+                , colonKeySymbolRange : TextGrid.Range
                 , value : Node Type
                 }
         }
     | TypeFunction
         { input : Node Type
-        , arrowKeySymbolRange : Range
+        , arrowKeySymbolRange : TextGrid.Range
         , output : Node Type
         }
 
@@ -461,7 +461,7 @@ type Pattern
     | PatternParenthesized (Node Pattern)
     | PatternAs
         { pattern : Node Pattern
-        , asKeywordRange : Range
+        , asKeywordRange : TextGrid.Range
         , variable : Node String
         }
     | PatternTuple { part0 : Node Pattern, part1 : Node Pattern }
@@ -472,7 +472,7 @@ type Pattern
         }
     | PatternListCons
         { head : Node Pattern
-        , consKeySymbolRange : Range
+        , consKeySymbolRange : TextGrid.Range
         , tail : Node Pattern
         }
     | PatternListExact (List (Node Pattern))
@@ -485,12 +485,12 @@ type Pattern
 
 {-| An element of the AST (Abstract Syntax Tree).
 
-The purpose of this type is to add the information of the [`Range`](#Range), i.e. where in the source code the
+The purpose of this type is to add the information of the [`Range`](TextGrid#Range), i.e. where in the source code the
 element of the tree was found.
 
 -}
 type alias Node value =
-    { range : Range, value : value }
+    { range : TextGrid.Range, value : value }
 
 
 {-| Combine two nodes, constructing a new node which will have the outer most range of the child nodes
