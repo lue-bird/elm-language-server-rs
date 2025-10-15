@@ -477,8 +477,11 @@ type Pattern
         }
     | PatternListExact (List (Node Pattern))
     | PatternVariant
-        { qualification : List String
-        , name : String
+        { reference :
+            Node
+                { qualification : ModuleName
+                , name : String
+                }
         , values : List (Node Pattern)
         }
 

@@ -4153,8 +4153,7 @@ qualifiedPatternWithConsumeValues =
                 { range = range
                 , value =
                     ElmSyntax.PatternVariant
-                        { qualification = referenceNode.value.qualification
-                        , name = referenceNode.value.name
+                        { reference = referenceNode
                         , values = valuesReverse.syntax
                         }
                 }
@@ -4200,16 +4199,20 @@ qualifiedPatternWithoutConsumeArgs =
                 { range = range
                 , value =
                     ElmSyntax.PatternVariant
-                        (case after of
-                            Nothing ->
-                                { qualification = [], name = firstName, values = [] }
+                        { reference =
+                            { range = range
+                            , value =
+                                case after of
+                                    Nothing ->
+                                        { qualification = [], name = firstName }
 
-                            Just ( qualificationAfter, unqualified ) ->
-                                { qualification = firstName :: qualificationAfter
-                                , name = unqualified
-                                , values = []
-                                }
-                        )
+                                    Just ( qualificationAfter, unqualified ) ->
+                                        { qualification = firstName :: qualificationAfter
+                                        , name = unqualified
+                                        }
+                            }
+                        , values = []
+                        }
                 }
             }
         )
