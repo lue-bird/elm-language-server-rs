@@ -121,6 +121,7 @@ Once a path is chosen, it does not come back and try the others.
 -}
 
 import ElmSyntax
+import TextGrid
 import Unicode
 
 
@@ -379,7 +380,7 @@ map2 func (Parser parseA) (Parser parseB) =
         )
 
 
-map2WithStartLocation : (ElmSyntax.Location -> a -> b -> value) -> Parser a -> Parser b -> Parser value
+map2WithStartLocation : (TextGrid.Location -> a -> b -> value) -> Parser a -> Parser b -> Parser value
 map2WithStartLocation func (Parser parseA) (Parser parseB) =
     Parser
         (\s0 ->
@@ -397,7 +398,7 @@ map2WithStartLocation func (Parser parseA) (Parser parseB) =
         )
 
 
-map2WithRange : (ElmSyntax.Range -> a -> b -> value) -> Parser a -> Parser b -> Parser value
+map2WithRange : (TextGrid.Range -> a -> b -> value) -> Parser a -> Parser b -> Parser value
 map2WithRange func (Parser parseA) (Parser parseB) =
     Parser
         (\s0 ->
@@ -438,7 +439,7 @@ map3 func (Parser parseA) (Parser parseB) (Parser parseC) =
         )
 
 
-map3WithRange : (ElmSyntax.Range -> a -> b -> c -> value) -> Parser a -> Parser b -> Parser c -> Parser value
+map3WithRange : (TextGrid.Range -> a -> b -> c -> value) -> Parser a -> Parser b -> Parser c -> Parser value
 map3WithRange func (Parser parseA) (Parser parseB) (Parser parseC) =
     Parser
         (\s0 ->
@@ -489,7 +490,7 @@ map4 func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parseD) =
         )
 
 
-map4WithRange : (ElmSyntax.Range -> a -> b -> c -> d -> value) -> Parser a -> Parser b -> Parser c -> Parser d -> Parser value
+map4WithRange : (TextGrid.Range -> a -> b -> c -> d -> value) -> Parser a -> Parser b -> Parser c -> Parser d -> Parser value
 map4WithRange func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parseD) =
     Parser
         (\s0 ->
@@ -517,7 +518,7 @@ map4WithRange func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parse
         )
 
 
-map4WithStartLocation : (ElmSyntax.Location -> a -> b -> c -> d -> value) -> Parser a -> Parser b -> Parser c -> Parser d -> Parser value
+map4WithStartLocation : (TextGrid.Location -> a -> b -> c -> d -> value) -> Parser a -> Parser b -> Parser c -> Parser d -> Parser value
 map4WithStartLocation func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parseD) =
     Parser
         (\s0 ->
@@ -545,7 +546,7 @@ map4WithStartLocation func (Parser parseA) (Parser parseB) (Parser parseC) (Pars
         )
 
 
-map3WithStartLocation : (ElmSyntax.Location -> a -> b -> c -> value) -> Parser a -> Parser b -> Parser c -> Parser value
+map3WithStartLocation : (TextGrid.Location -> a -> b -> c -> value) -> Parser a -> Parser b -> Parser c -> Parser value
 map3WithStartLocation func (Parser parseA) (Parser parseB) (Parser parseC) =
     Parser
         (\s0 ->
@@ -601,7 +602,7 @@ map5 func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parseD) (Parse
         )
 
 
-map5WithStartLocation : (ElmSyntax.Location -> a -> b -> c -> d -> e -> value) -> Parser a -> Parser b -> Parser c -> Parser d -> Parser e -> Parser value
+map5WithStartLocation : (TextGrid.Location -> a -> b -> c -> d -> e -> value) -> Parser a -> Parser b -> Parser c -> Parser d -> Parser e -> Parser value
 map5WithStartLocation func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parseD) (Parser parseE) =
     Parser
         (\s0 ->
@@ -634,7 +635,7 @@ map5WithStartLocation func (Parser parseA) (Parser parseB) (Parser parseC) (Pars
         )
 
 
-map5WithRange : (ElmSyntax.Range -> a -> b -> c -> d -> e -> value) -> Parser a -> Parser b -> Parser c -> Parser d -> Parser e -> Parser value
+map5WithRange : (TextGrid.Range -> a -> b -> c -> d -> e -> value) -> Parser a -> Parser b -> Parser c -> Parser d -> Parser e -> Parser value
 map5WithRange func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parseD) (Parser parseE) =
     Parser
         (\s0 ->
@@ -705,7 +706,7 @@ map6 func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parseD) (Parse
         )
 
 
-map6WithStartLocation : (ElmSyntax.Location -> a -> b -> c -> d -> e -> f -> value) -> Parser a -> Parser b -> Parser c -> Parser d -> Parser e -> Parser f -> Parser value
+map6WithStartLocation : (TextGrid.Location -> a -> b -> c -> d -> e -> f -> value) -> Parser a -> Parser b -> Parser c -> Parser d -> Parser e -> Parser f -> Parser value
 map6WithStartLocation func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parseD) (Parser parseE) (Parser parseF) =
     Parser
         (\s0 ->
@@ -786,7 +787,7 @@ map7 func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parseD) (Parse
         )
 
 
-map7WithRange : (ElmSyntax.Range -> a -> b -> c -> d -> e -> f -> g -> value) -> Parser a -> Parser b -> Parser c -> Parser d -> Parser e -> Parser f -> Parser g -> Parser value
+map7WithRange : (TextGrid.Range -> a -> b -> c -> d -> e -> f -> g -> value) -> Parser a -> Parser b -> Parser c -> Parser d -> Parser e -> Parser f -> Parser g -> Parser value
 map7WithRange func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parseD) (Parser parseE) (Parser parseF) (Parser parseG) =
     Parser
         (\s0 ->
@@ -829,7 +830,7 @@ map7WithRange func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parse
         )
 
 
-map8WithStartLocation : (ElmSyntax.Location -> a -> b -> c -> d -> e -> f -> g -> h -> value) -> Parser a -> Parser b -> Parser c -> Parser d -> Parser e -> Parser f -> Parser g -> Parser h -> Parser value
+map8WithStartLocation : (TextGrid.Location -> a -> b -> c -> d -> e -> f -> g -> h -> value) -> Parser a -> Parser b -> Parser c -> Parser d -> Parser e -> Parser f -> Parser g -> Parser h -> Parser value
 map8WithStartLocation func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parseD) (Parser parseE) (Parser parseF) (Parser parseG) (Parser parseH) =
     Parser
         (\s0 ->
@@ -877,7 +878,7 @@ map8WithStartLocation func (Parser parseA) (Parser parseB) (Parser parseC) (Pars
         )
 
 
-map9WithRange : (ElmSyntax.Range -> a -> b -> c -> d -> e -> f -> g -> h -> i -> value) -> Parser a -> Parser b -> Parser c -> Parser d -> Parser e -> Parser f -> Parser g -> Parser h -> Parser i -> Parser value
+map9WithRange : (TextGrid.Range -> a -> b -> c -> d -> e -> f -> g -> h -> i -> value) -> Parser a -> Parser b -> Parser c -> Parser d -> Parser e -> Parser f -> Parser g -> Parser h -> Parser i -> Parser value
 map9WithRange func (Parser parseA) (Parser parseB) (Parser parseC) (Parser parseD) (Parser parseE) (Parser parseF) (Parser parseG) (Parser parseH) (Parser parseI) =
     Parser
         (\s0 ->
@@ -965,7 +966,7 @@ orSucceed (Parser attempt) fallbackResult =
         )
 
 
-orSucceedWithLocation : Parser a -> (ElmSyntax.Location -> a) -> Parser a
+orSucceedWithLocation : Parser a -> (TextGrid.Location -> a) -> Parser a
 orSucceedWithLocation (Parser attempt) fallbackResult =
     Parser
         (\s ->
@@ -1021,7 +1022,7 @@ map2OrSucceed func (Parser parseA) (Parser parseB) fallback =
         )
 
 
-map2WithRangeOrSucceed : (ElmSyntax.Range -> a -> b -> value) -> Parser a -> Parser b -> value -> Parser value
+map2WithRangeOrSucceed : (TextGrid.Range -> a -> b -> value) -> Parser a -> Parser b -> value -> Parser value
 map2WithRangeOrSucceed func (Parser parseA) (Parser parseB) fallback =
     Parser
         (\s0 ->
@@ -1070,7 +1071,7 @@ map3OrSucceed func (Parser parseA) (Parser parseB) (Parser parseC) fallback =
         )
 
 
-map3WithStartLocationOrSucceed : (ElmSyntax.Location -> a -> b -> c -> value) -> Parser a -> Parser b -> Parser c -> value -> Parser value
+map3WithStartLocationOrSucceed : (TextGrid.Location -> a -> b -> c -> value) -> Parser a -> Parser b -> Parser c -> value -> Parser value
 map3WithStartLocationOrSucceed func (Parser parseA) (Parser parseB) (Parser parseC) fallback =
     Parser
         (\s0 ->
@@ -1763,7 +1764,7 @@ loopUntilHelp ((Parser parseEnd) as endParser) ((Parser parseElement) as element
         ParserFast.integerDecimalMapWithRange (\_ n -> n)
 
 -}
-integerDecimalMapWithRange : (ElmSyntax.Range -> Int -> res) -> Parser res
+integerDecimalMapWithRange : (TextGrid.Range -> Int -> res) -> Parser res
 integerDecimalMapWithRange rangeAndIntToRes =
     Parser
         (\s0 ->
@@ -1816,7 +1817,7 @@ integerDecimalMapWithRange rangeAndIntToRes =
         ParserFast.integerDecimalOrHexadecimalMapWithRange (\_ n -> n) (\_ n -> n)
 
 -}
-integerDecimalOrHexadecimalMapWithRange : (ElmSyntax.Range -> Int -> res) -> (ElmSyntax.Range -> Int -> res) -> Parser res
+integerDecimalOrHexadecimalMapWithRange : (TextGrid.Range -> Int -> res) -> (TextGrid.Range -> Int -> res) -> Parser res
 integerDecimalOrHexadecimalMapWithRange rangeAndIntDecimalToRes rangeAndIntHexadecimalToRes =
     Parser
         (\s0 ->
@@ -1834,7 +1835,7 @@ integerDecimalOrHexadecimalMapWithRange rangeAndIntDecimalToRes rangeAndIntHexad
                     newColumn =
                         s0.col + (s1.offsetAndInt.offset - s0.offset)
 
-                    range : ElmSyntax.Range
+                    range : TextGrid.Range
                     range =
                         { start = { line = s0.line, column = s0.col }
                         , end = { line = s0.line, column = newColumn }
@@ -1876,7 +1877,7 @@ integerDecimalOrHexadecimalMapWithRange rangeAndIntDecimalToRes rangeAndIntHexad
         ParserFast.integerDecimalOrHexadecimalMapWithRange (\_ n -> n) (\_ n -> n) (\_ n -> n)
 
 -}
-floatOrIntegerDecimalOrHexadecimalMapWithRange : (ElmSyntax.Range -> Float -> res) -> (ElmSyntax.Range -> Int -> res) -> (ElmSyntax.Range -> Int -> res) -> Parser res
+floatOrIntegerDecimalOrHexadecimalMapWithRange : (TextGrid.Range -> Float -> res) -> (TextGrid.Range -> Int -> res) -> (TextGrid.Range -> Int -> res) -> Parser res
 floatOrIntegerDecimalOrHexadecimalMapWithRange rangeAndFloatToRes rangeAndIntDecimalToRes rangeAndIntHexadecimalToRes =
     Parser
         (\s0 ->
@@ -1900,7 +1901,7 @@ floatOrIntegerDecimalOrHexadecimalMapWithRange rangeAndFloatToRes rangeAndIntDec
                         newColumn =
                             s0.col + (s1.offsetAndInt.offset - s0.offset)
 
-                        range : ElmSyntax.Range
+                        range : TextGrid.Range
                         range =
                             { start = { line = s0.line, column = s0.col }
                             , end = { line = s0.line, column = newColumn }
@@ -2423,7 +2424,7 @@ followedBySymbol str (Parser parsePrevious) =
         )
 
 
-symbolWithEndLocation : String -> (ElmSyntax.Location -> res) -> Parser res
+symbolWithEndLocation : String -> (TextGrid.Location -> res) -> Parser res
 symbolWithEndLocation str endLocationToRes =
     let
         strLength : Int
@@ -2457,7 +2458,7 @@ symbolWithEndLocation str endLocationToRes =
         )
 
 
-symbolWithRange : String -> (ElmSyntax.Range -> res) -> Parser res
+symbolWithRange : String -> (TextGrid.Range -> res) -> Parser res
 symbolWithRange str startAndEndLocationToRes =
     let
         strLength : Int
@@ -2609,7 +2610,7 @@ keyword kwd res =
         )
 
 
-keywordRange : String -> Parser ElmSyntax.Range
+keywordRange : String -> Parser TextGrid.Range
 keywordRange kwd =
     let
         kwdLength : Int
@@ -2751,7 +2752,7 @@ charStringIsUtf16HighSurrogate charString =
     charString |> String.any Unicode.isUtf16Surrogate
 
 
-whileMapWithRange : (Char -> Bool) -> (ElmSyntax.Range -> String -> res) -> Parser res
+whileMapWithRange : (Char -> Bool) -> (TextGrid.Range -> String -> res) -> Parser res
 whileMapWithRange isGood rangeAndConsumedStringToRes =
     Parser
         (\s0 ->
@@ -2897,7 +2898,7 @@ withIndentSetToColumn (Parser parse) =
 
 
 mapWithRange :
-    (ElmSyntax.Range -> a -> b)
+    (TextGrid.Range -> a -> b)
     -> Parser a
     -> Parser b
 mapWithRange combineStartAndResult (Parser parse) =
@@ -2913,7 +2914,7 @@ mapWithRange combineStartAndResult (Parser parse) =
 
 
 mapWithEndLocation :
-    (ElmSyntax.Location -> a -> b)
+    (TextGrid.Location -> a -> b)
     -> Parser a
     -> Parser b
 mapWithEndLocation combineStartAndResult (Parser parse) =
@@ -2929,7 +2930,7 @@ mapWithEndLocation combineStartAndResult (Parser parse) =
 
 
 mapWithStartLocation :
-    (ElmSyntax.Location -> a -> b)
+    (TextGrid.Location -> a -> b)
     -> Parser a
     -> Parser b
 mapWithStartLocation combineStartAndResult (Parser parse) =
@@ -3047,7 +3048,7 @@ whileAtMost3WithoutLinebreakAnd2PartUtf16ToResultAndThen charAsStringIsOkay cons
         )
 
 
-whileAtMost3WithoutLinebreakAnd2PartUtf16ValidateMapWithRangeBacktrackableFollowedBySymbol : (ElmSyntax.Range -> String -> res) -> (String -> Bool) -> (String -> Bool) -> String -> Parser res
+whileAtMost3WithoutLinebreakAnd2PartUtf16ValidateMapWithRangeBacktrackableFollowedBySymbol : (TextGrid.Range -> String -> res) -> (String -> Bool) -> (String -> Bool) -> String -> Parser res
 whileAtMost3WithoutLinebreakAnd2PartUtf16ValidateMapWithRangeBacktrackableFollowedBySymbol whileRangeAndContentToRes whileCharIsOkay whileResultIsOkay mandatoryFinalSymbol =
     let
         mandatoryFinalSymbolLength : Int
@@ -3106,7 +3107,7 @@ whileAtMost3WithoutLinebreakAnd2PartUtf16ValidateMapWithRangeBacktrackableFollow
 
 
 ifFollowedByWhileValidateMapWithRangeWithoutLinebreak :
-    (ElmSyntax.Range -> String -> res)
+    (TextGrid.Range -> String -> res)
     -> (Char -> Bool)
     -> (Char -> Bool)
     -> (String -> Bool)
@@ -3166,7 +3167,7 @@ ifFollowedByWhileWithoutLinebreak firstIsOkay afterFirstIsOkay =
 
 
 ifFollowedByWhileMapWithRangeWithoutLinebreak :
-    (ElmSyntax.Range -> String -> res)
+    (TextGrid.Range -> String -> res)
     -> (Char -> Bool)
     -> (Char -> Bool)
     -> Parser res
@@ -3228,7 +3229,7 @@ ifFollowedByWhileMapWithoutLinebreak consumedStringToRes firstIsOkay afterFirstI
 
 {-| Parse multi-line comments that can itself contain other arbitrary multi-comments inside.
 -}
-nestableMultiCommentMapWithRange : (ElmSyntax.Range -> String -> res) -> ( Char, String ) -> ( Char, String ) -> Parser res
+nestableMultiCommentMapWithRange : (TextGrid.Range -> String -> res) -> ( Char, String ) -> ( Char, String ) -> Parser res
 nestableMultiCommentMapWithRange rangeContentToRes ( openChar, openTail ) ( closeChar, closeTail ) =
     let
         open : String

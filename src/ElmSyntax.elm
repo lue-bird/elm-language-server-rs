@@ -4,7 +4,7 @@ module ElmSyntax exposing
     , Exposing(..), Expose(..)
     , Declaration(..), ChoiceTypeDeclaration, OperatorDeclaration, InfixDirection(..), TypeAliasDeclaration, ValueOrFunctionDeclaration
     , Pattern(..), Expression(..), LetDeclaration(..), StringQuotingStyle(..), IntBase(..), Type(..)
-    , Location, locationCompare, Range, rangeIncludesLocation, Node, nodeCombine
+    , Node, nodeCombine
     )
 
 {-| Elm syntax tree
@@ -14,12 +14,11 @@ module ElmSyntax exposing
 @docs Exposing, Expose
 @docs Declaration, ChoiceTypeDeclaration, OperatorDeclaration, InfixDirection, TypeAliasDeclaration, ValueOrFunctionDeclaration
 @docs Pattern, Expression, LetDeclaration, StringQuotingStyle, IntBase, Type
-
-TODO extract those below into a separate module `TextGrid`, as they are more generally applicable
-
-@docs Location, locationCompare, Range, rangeIncludesLocation, Node, nodeCombine
+@docs Node, nodeCombine
 
 -}
+
+import TextGrid exposing (Range)
 
 
 {-| module header. For example:
@@ -499,56 +498,3 @@ type alias Node value =
 nodeCombine : (Node a -> Node b -> c) -> Node a -> Node b -> Node c
 nodeCombine f a b =
     { range = { start = a.range.start, end = b.range.end }, value = f a b }
-
-
-{-| Source location. Starts at 1 for the first line and 1 for the first character in the line
--}
-type alias Location =
-    { line : Int
-    , column : Int
-    }
-
-
-locationCompare : Location -> Location -> Basics.Order
-locationCompare a b =
-    if a.line < b.line then
-        LT
-
-    else if a.line > b.line then
-        GT
-
-    else
-        Basics.compare a.column b.column
-
-
-{-| Range for a piece of code with a start and end
--}
-type alias Range =
-    { start : Location
-    , end : Location
-    }
-
-
-rangeIncludesLocation : Location -> Range -> Bool
-rangeIncludesLocation location range =
-    -- can be optimized
-    (case locationCompare location range.start of
-        LT ->
-            False
-
-        EQ ->
-            True
-
-        GT ->
-            True
-    )
-        && (case locationCompare location range.end of
-                GT ->
-                    False
-
-                LT ->
-                    True
-
-                EQ ->
-                    True
-           )

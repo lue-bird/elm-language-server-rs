@@ -1,7 +1,7 @@
 module RangeDict exposing (RangeDict(..), empty, foldl, insert, justValuesMap, mapFromList, singleton, toListMap, union, unionFromListMap)
 
 import Dict exposing (Dict)
-import ElmSyntax
+import TextGrid
 
 
 type RangeDict v
@@ -13,14 +13,14 @@ empty =
     RangeDict Dict.empty
 
 
-singleton : ElmSyntax.Range -> v -> RangeDict v
+singleton : TextGrid.Range -> v -> RangeDict v
 singleton range value =
     RangeDict (Dict.singleton (rangeToComparable range) value)
 
 
 {-| Indirect conversion from a list to key-value pairs to avoid successive List.map calls.
 -}
-mapFromList : (a -> ( ElmSyntax.Range, v )) -> List a -> RangeDict v
+mapFromList : (a -> ( TextGrid.Range, v )) -> List a -> RangeDict v
 mapFromList toAssociation list =
     List.foldl
         (\element acc ->
@@ -43,12 +43,12 @@ unionFromListMap elementToDict list =
             empty
 
 
-insert : ElmSyntax.Range -> v -> RangeDict v -> RangeDict v
+insert : TextGrid.Range -> v -> RangeDict v -> RangeDict v
 insert range value (RangeDict rangeDict) =
     RangeDict (Dict.insert (rangeToComparable range) value rangeDict)
 
 
-justValuesMap : (ElmSyntax.Range -> value -> Maybe valueMapped) -> RangeDict value -> RangeDict valueMapped
+justValuesMap : (TextGrid.Range -> value -> Maybe valueMapped) -> RangeDict value -> RangeDict valueMapped
 justValuesMap rangeAndValueMap rangeDict =
     rangeDict
         |> foldl
@@ -63,7 +63,7 @@ justValuesMap rangeAndValueMap rangeDict =
             empty
 
 
-toListMap : (ElmSyntax.Range -> value -> element) -> RangeDict value -> List element
+toListMap : (TextGrid.Range -> value -> element) -> RangeDict value -> List element
 toListMap rangeAndValueToElement rangeDict =
     rangeDict
         |> foldr
@@ -73,14 +73,14 @@ toListMap rangeAndValueToElement rangeDict =
             []
 
 
-foldr : (ElmSyntax.Range -> v -> folded -> folded) -> folded -> RangeDict v -> folded
+foldr : (TextGrid.Range -> v -> folded -> folded) -> folded -> RangeDict v -> folded
 foldr reduce initialFolded (RangeDict rangeDict) =
     rangeDict
         |> Dict.foldr (\range value -> reduce (rangeFromTupleTuple range) value)
             initialFolded
 
 
-foldl : (ElmSyntax.Range -> v -> folded -> folded) -> folded -> RangeDict v -> folded
+foldl : (TextGrid.Range -> v -> folded -> folded) -> folded -> RangeDict v -> folded
 foldl reduce initialFolded (RangeDict rangeDict) =
     rangeDict
         |> Dict.foldl (\range value -> reduce (rangeFromTupleTuple range) value)
@@ -92,18 +92,18 @@ union (RangeDict aRangeDict) (RangeDict bRangeDict) =
     RangeDict (Dict.union aRangeDict bRangeDict)
 
 
-rangeToComparable : ElmSyntax.Range -> ( ( Int, Int ), ( Int, Int ) )
+rangeToComparable : TextGrid.Range -> ( ( Int, Int ), ( Int, Int ) )
 rangeToComparable range =
     ( ( range.start.line, range.start.column )
     , ( range.end.line, range.end.column )
     )
 
 
-rangeFromTupleTuple : ( ( Int, Int ), ( Int, Int ) ) -> ElmSyntax.Range
+rangeFromTupleTuple : ( ( Int, Int ), ( Int, Int ) ) -> TextGrid.Range
 rangeFromTupleTuple ( start, end ) =
     { start = start |> locationFromTuple, end = end |> locationFromTuple }
 
 
-locationFromTuple : ( Int, Int ) -> ElmSyntax.Location
+locationFromTuple : ( Int, Int ) -> TextGrid.Location
 locationFromTuple ( line, column ) =
     { line = line, column = column }

@@ -173,20 +173,17 @@ async fn main() {
                             },
                         }
                     }));
-            let hover_location: elm::ElmSyntaxLocation =
-                lsp_position_to_elm_syntax_location(hover_arguments.text_document_position_params.position);
+            let hover_location: elm::TextGridLocation =
+                lsp_position_to_text_grid_location(hover_arguments.text_document_position_params.position);
             async move {
                 match maybe_module_syntax {
                     None => Ok(None),
                     Some(module_syntax) => {
-                        if elm::elm_syntax_range_includes_location(
-                            hover_location,
-                            elm::elm_syntax_node_range(module_syntax.header),
-                        ) {
+                        if elm::text_grid_range_includes_location(hover_location, module_syntax.header.range) {
                             Ok(Some(lsp_types::Hover {
                                 contents: lsp_types::HoverContents::Scalar(
                                     lsp_types::MarkedString::String(
-                                        format!("module info: {:?}", elm::elm_syntax_node_value(module_syntax.header)),
+                                        format!("module info: {:?}", module_syntax.header.value),
                                     ),
                                 ),
                                 range: None,
@@ -261,7 +258,7 @@ async fn main() {
                     result_id: None,
                     data: elm::elm_syntax_highlight_for(&highlight_allocator, module_syntax)
                         .into_iter()
-                        .scan(elm::ElmSyntaxLocation {
+                        .scan(elm::TextGridLocation {
                             line: 1,
                             column: 1,
                         }, |previous_start_location, segment| {
@@ -404,7 +401,7 @@ fn elm_syntax_highlight_syntax_kind_to_lsp_semantic_token_type(
     }
 }
 
-fn lsp_position_to_elm_syntax_location(lsp_position: lsp_types::Position) -> elm::ElmSyntaxLocation {
+fn lsp_position_to_text_grid_location(lsp_position: lsp_types::Position) -> elm::TextGridLocation {
     elm::GeneratedColumnLine {
         line: (lsp_position.line + 1) as i64,
         column: (lsp_position.character + 1) as i64,

@@ -6,6 +6,7 @@ import Elm.Project
 import Elm.Version
 import ElmSyntax
 import Json.Decode
+import TextGrid
 
 
 elmJsonToProjectAndDependencySourceDirectories :
@@ -83,8 +84,8 @@ packageSourceDirectoryPath info =
 {-| The resulting column is the 0-based char offset after the resulting number of lines
 -}
 locationDelta :
-    ElmSyntax.Location
-    -> ElmSyntax.Location
+    TextGrid.Location
+    -> TextGrid.Location
     -> { line : Int, column : Int }
 locationDelta earlier later =
     if earlier.line == later.line then

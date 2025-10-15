@@ -3,6 +3,7 @@ module ElmSyntaxHighlight exposing (SyntaxKind(..), for)
 import ElmParserLenient
 import ElmSyntax
 import RangeDict exposing (RangeDict)
+import TextGrid
 
 
 type SyntaxKind
@@ -20,7 +21,7 @@ type SyntaxKind
     | KeySymbol
 
 
-locationAddColumn : Int -> ElmSyntax.Location -> ElmSyntax.Location
+locationAddColumn : Int -> TextGrid.Location -> TextGrid.Location
 locationAddColumn columnPlus location =
     { line = location.line
     , column = location.column + columnPlus
@@ -653,12 +654,12 @@ for :
     ElmSyntax.Module
     ->
         List
-            { range : ElmSyntax.Range
+            { range : TextGrid.Range
             , syntaxKind : SyntaxKind
             }
 for elmModule =
     let
-        segmentsReverse : List { range : ElmSyntax.Range, syntaxKind : SyntaxKind }
+        segmentsReverse : List { range : TextGrid.Range, syntaxKind : SyntaxKind }
         segmentsReverse =
             RangeDict.unionFromListMap identity
                 [ elmModule.header |> moduleHeaderSyntaxKindMap
@@ -828,7 +829,7 @@ importSyntaxKindMap importNode =
 exposingSyntaxKindMap : ElmSyntax.Node ElmSyntax.Exposing -> RangeDict SyntaxKind
 exposingSyntaxKindMap exposingNode =
     let
-        exposingKeywordRange : ElmSyntax.Range
+        exposingKeywordRange : TextGrid.Range
         exposingKeywordRange =
             { start = exposingNode.range.start
             , end =

@@ -77,6 +77,7 @@ or reparse only the touched declarations on save.
 
 import ElmSyntax
 import ParserFast
+import TextGrid
 import Unicode
 
 
@@ -857,7 +858,7 @@ type TypeOrTypeAliasDeclarationWithoutDocumentation
     = ChoiceTypeDeclarationWithoutDocumentation
         { name : ElmSyntax.Node String
         , parameters : List (ElmSyntax.Node String)
-        , equalsKeySymbolRange : ElmSyntax.Range
+        , equalsKeySymbolRange : TextGrid.Range
         , variant0 :
             { name : ElmSyntax.Node String
             , values : List (ElmSyntax.Node ElmSyntax.Type)
@@ -865,16 +866,16 @@ type TypeOrTypeAliasDeclarationWithoutDocumentation
         , variant1UpReverse :
             List
                 { -- the vertical bar |
-                  orKeySymbolRange : ElmSyntax.Range
+                  orKeySymbolRange : TextGrid.Range
                 , name : ElmSyntax.Node String
                 , values : List (ElmSyntax.Node ElmSyntax.Type)
                 }
         }
     | TypeAliasDeclarationWithoutDocumentation
-        { aliasKeywordRange : ElmSyntax.Range
+        { aliasKeywordRange : TextGrid.Range
         , name : ElmSyntax.Node String
         , parameters : List (ElmSyntax.Node String)
-        , equalsKeySymbolRange : ElmSyntax.Range
+        , equalsKeySymbolRange : TextGrid.Range
         , type_ : ElmSyntax.Node ElmSyntax.Type
         }
 
@@ -984,7 +985,7 @@ valueOrFunctionDeclarationWithoutDocumentation =
 
 parameterPatternsEquals :
     Parser
-        { equalsKeySymbolRange : ElmSyntax.Range
+        { equalsKeySymbolRange : TextGrid.Range
         , comments : Comments
         , parameters : List (ElmSyntax.Node ElmSyntax.Pattern)
         }
@@ -1107,7 +1108,7 @@ choiceTypeOrTypeAliasDeclarationWithoutDocumentation =
             case afterStart.syntax of
                 ChoiceTypeDeclarationWithoutDocumentation typeDeclarationAfterDocumentation ->
                     let
-                        end : ElmSyntax.Location
+                        end : TextGrid.Location
                         end =
                             case typeDeclarationAfterDocumentation.variant1UpReverse of
                                 lastVariant :: _ ->
@@ -1304,7 +1305,7 @@ variantDeclarationFollowedByWhitespaceAndComments =
 
 typeParameterListEquals :
     Parser
-        { equalsKeySymbolRange : ElmSyntax.Range
+        { equalsKeySymbolRange : TextGrid.Range
         , comments : Comments
         , parameters : List (ElmSyntax.Node String)
         }
@@ -1614,26 +1615,26 @@ typeRecordEmpty =
 
 type RecordFieldsOrExtensionAfterName
     = RecordExtensionExpressionAfterName
-        { barKeySymbolRange : ElmSyntax.Range
+        { barKeySymbolRange : TextGrid.Range
         , field0 :
             { name : ElmSyntax.Node String
-            , colonKeySymbolRange : ElmSyntax.Range
+            , colonKeySymbolRange : TextGrid.Range
             , value : ElmSyntax.Node ElmSyntax.Type
             }
         , field1Up :
             List
                 { name : ElmSyntax.Node String
-                , colonKeySymbolRange : ElmSyntax.Range
+                , colonKeySymbolRange : TextGrid.Range
                 , value : ElmSyntax.Node ElmSyntax.Type
                 }
         }
     | FieldsAfterName
-        { firstFieldEqualsKeySymbolRange : ElmSyntax.Range
+        { firstFieldEqualsKeySymbolRange : TextGrid.Range
         , firstFieldValue : ElmSyntax.Node ElmSyntax.Type
         , tailFields :
             List
                 { name : ElmSyntax.Node String
-                , colonKeySymbolRange : ElmSyntax.Range
+                , colonKeySymbolRange : TextGrid.Range
                 , value : ElmSyntax.Node ElmSyntax.Type
                 }
         }
@@ -1644,7 +1645,7 @@ recordFieldsType :
         (WithComments
             (List
                 { name : ElmSyntax.Node String
-                , colonKeySymbolRange : ElmSyntax.Range
+                , colonKeySymbolRange : TextGrid.Range
                 , value : ElmSyntax.Node ElmSyntax.Type
                 }
             )
@@ -1692,7 +1693,7 @@ typeRecordFieldDefinitionFollowedByWhitespaceAndComments :
     Parser
         (WithComments
             { name : ElmSyntax.Node String
-            , colonKeySymbolRange : ElmSyntax.Range
+            , colonKeySymbolRange : TextGrid.Range
             , value : ElmSyntax.Node ElmSyntax.Type
             }
         )
@@ -1786,7 +1787,7 @@ typeConstructWithArgumentsFollowedByWhitespaceAndComments =
     ParserFast.map3
         (\nameNode commentsAfterName argsReverse ->
             let
-                range : ElmSyntax.Range
+                range : TextGrid.Range
                 range =
                     case argsReverse.syntax of
                         [] ->
@@ -2227,15 +2228,15 @@ recordOrRecordUpdateContentsFollowedByCurlyEnd =
 
 type RecordFieldsOrUpdateAfterName
     = RecordUpdateFirstSetter
-        { barKeySymbolRange : ElmSyntax.Range
+        { barKeySymbolRange : TextGrid.Range
         , field :
             { name : ElmSyntax.Node String
-            , equalsKeySymbolRange : ElmSyntax.Range
+            , equalsKeySymbolRange : TextGrid.Range
             , value : ElmSyntax.Node ElmSyntax.Expression
             }
         }
     | FieldsFirstValue
-        { equalsKeySymbolRange : ElmSyntax.Range
+        { equalsKeySymbolRange : TextGrid.Range
         , value : ElmSyntax.Node ElmSyntax.Expression
         }
 
@@ -2245,7 +2246,7 @@ recordFields :
         (WithComments
             (List
                 { name : ElmSyntax.Node String
-                , equalsKeySymbolRange : ElmSyntax.Range
+                , equalsKeySymbolRange : TextGrid.Range
                 , value : ElmSyntax.Node ElmSyntax.Expression
                 }
             )
@@ -2276,7 +2277,7 @@ recordSetterNodeFollowedByWhitespaceAndComments :
     Parser
         (WithComments
             { name : ElmSyntax.Node String
-            , equalsKeySymbolRange : ElmSyntax.Range
+            , equalsKeySymbolRange : TextGrid.Range
             , value : ElmSyntax.Node ElmSyntax.Expression
             }
         )
@@ -2397,7 +2398,7 @@ expressionLambdaFollowedByWhitespaceAndComments =
         expressionFollowedByWhitespaceAndComments
 
 
-locationAddColumn : Int -> ElmSyntax.Location -> ElmSyntax.Location
+locationAddColumn : Int -> TextGrid.Location -> TextGrid.Location
 locationAddColumn columnPlus location =
     { line = location.line
     , column = location.column + columnPlus
@@ -2451,12 +2452,12 @@ casesFollowedByWhitespaceAndComments :
     Parser
         (WithComments
             ( { pattern : ElmSyntax.Node ElmSyntax.Pattern
-              , arrowKeySymbolRange : ElmSyntax.Range
+              , arrowKeySymbolRange : TextGrid.Range
               , result : ElmSyntax.Node ElmSyntax.Expression
               }
             , List
                 { pattern : ElmSyntax.Node ElmSyntax.Pattern
-                , arrowKeySymbolRange : ElmSyntax.Range
+                , arrowKeySymbolRange : TextGrid.Range
                 , result : ElmSyntax.Node ElmSyntax.Expression
                 }
             )
@@ -2491,7 +2492,7 @@ caseStatementFollowedByWhitespaceAndComments :
     Parser
         (WithComments
             { pattern : ElmSyntax.Node ElmSyntax.Pattern
-            , arrowKeySymbolRange : ElmSyntax.Range
+            , arrowKeySymbolRange : TextGrid.Range
             , result : ElmSyntax.Node ElmSyntax.Expression
             }
         )
@@ -2999,7 +3000,7 @@ expressionRecordAccessFunction =
         )
 
 
-rangeMoveStartLeftByOneColumn : ElmSyntax.Range -> ElmSyntax.Range
+rangeMoveStartLeftByOneColumn : TextGrid.Range -> TextGrid.Range
 rangeMoveStartLeftByOneColumn range =
     { start = { line = range.start.line, column = range.start.column - 1 }
     , end = range.end
@@ -3919,7 +3920,7 @@ qualifiedPatternWithConsumeValues =
     ParserFast.map3
         (\referenceNode afterStartName valuesReverse ->
             let
-                range : ElmSyntax.Range
+                range : TextGrid.Range
                 range =
                     case valuesReverse.syntax of
                         [] ->
@@ -4273,7 +4274,7 @@ charToHex c =
             15
 
 
-characterLiteralMapWithRange : (ElmSyntax.Range -> Char -> res) -> Parser res
+characterLiteralMapWithRange : (TextGrid.Range -> Char -> res) -> Parser res
 characterLiteralMapWithRange rangeAndCharToRes =
     ParserFast.symbolFollowedBy "'"
         (ParserFast.oneOf2MapWithStartRowColumnAndEndRowColumn
@@ -4298,7 +4299,7 @@ characterLiteralMapWithRange rangeAndCharToRes =
 
 
 singleOrTripleQuotedStringLiteralMapWithRange :
-    (ElmSyntax.Range
+    (TextGrid.Range
      -> { content : String, quotingStyle : ElmSyntax.StringQuotingStyle }
      -> res
     )
@@ -4417,7 +4418,7 @@ nameLowercaseNodeUnderscoreSuffixingKeywords =
         Unicode.unicodeIsAlphaNumOrUnderscoreFast
 
 
-nameLowercaseMapWithRange : (ElmSyntax.Range -> String -> res) -> Parser res
+nameLowercaseMapWithRange : (TextGrid.Range -> String -> res) -> Parser res
 nameLowercaseMapWithRange rangeAndNameToResult =
     ParserFast.ifFollowedByWhileValidateMapWithRangeWithoutLinebreak
         rangeAndNameToResult
@@ -4451,7 +4452,7 @@ nameUppercase =
         Unicode.unicodeIsAlphaNumOrUnderscoreFast
 
 
-nameUppercaseMapWithRange : (ElmSyntax.Range -> String -> res) -> Parser res
+nameUppercaseMapWithRange : (TextGrid.Range -> String -> res) -> Parser res
 nameUppercaseMapWithRange rangeAndNameToRes =
     ParserFast.ifFollowedByWhileMapWithRangeWithoutLinebreak rangeAndNameToRes
         Unicode.unicodeIsUpperFast
