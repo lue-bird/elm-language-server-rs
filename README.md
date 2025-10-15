@@ -9,10 +9,11 @@ A minimal LSP language server for [elm](https://elm-lang.org/), written in a bit
 - getting to know the language server protocol :)
 
 ## not planned
-- inline GLSL blocks
+- support for elm version <= 0.18
 - type inference
-- `elm.json` help
 - directly integrating `elm-review` or `elm-format`
+- `elm.json` help
+- inline GLSL blocks
 
 ## current issues (TODO investigate)
 - high idle memory footprint (around 600MB for a somewhat small project alone).
