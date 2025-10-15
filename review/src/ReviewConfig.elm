@@ -80,9 +80,9 @@ config =
 
     -- ## simplify/refactor
     , NoUnused.Dependencies.rule
-     , NoUnused.Exports.rule  
+    , NoUnused.Exports.rule  
          |> Review.Rule.ignoreErrorsForFiles 
-            [ "src/ElmParserLenient.elm", "src/Exports.elm" ]
+            [ "src/TextGrid", "src/ElmSyntax", "src/ElmParserLenient.elm", "src/Exports.elm", "src/ElmSyntaxHighlight.elm" ]
     , NoUnused.Parameters.rule
     , NoUnused.Patterns.rule
     , NoUnused.Variables.rule
