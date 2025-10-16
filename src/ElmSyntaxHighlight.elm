@@ -1,5 +1,6 @@
 module ElmSyntaxHighlight exposing (SyntaxKind(..), for)
 
+import Dict
 import ElmParserLenient
 import ElmSyntax
 import RangeDict exposing (RangeDict)
@@ -42,12 +43,11 @@ qualifiedSyntaxKindMap kind qualified =
             RangeDict.singleton qualified.range kind
 
         _ ->
-            RangeDict.empty
-                |> RangeDict.insert
-                    { start = qualified.range.start
-                    , end = qualified.range.end |> locationAddColumn (-(qualified.value.name |> String.length) - 1)
-                    }
-                    ModuleNameOrAlias
+            RangeDict.singleton
+                { start = qualified.range.start
+                , end = qualified.range.end |> locationAddColumn (-(qualified.value.name |> String.length) - 1)
+                }
+                ModuleNameOrAlias
                 |> RangeDict.insert
                     { start = qualified.range.end |> locationAddColumn (-(qualified.value.name |> String.length) - 1)
                     , end = qualified.range.end |> locationAddColumn -(qualified.value.name |> String.length)
@@ -113,25 +113,31 @@ patternSyntaxKindMap patternNode =
         ElmSyntax.PatternTuple parts ->
             parts.part0
                 |> patternSyntaxKindMap
-                |> RangeDict.union
+                |> Dict.union
                     (parts.part1 |> patternSyntaxKindMap)
 
         ElmSyntax.PatternTriple parts ->
             parts.part0
                 |> patternSyntaxKindMap
-                |> RangeDict.union
+                |> Dict.union
                     (parts.part1 |> patternSyntaxKindMap)
-                |> RangeDict.union
+                |> Dict.union
                     (parts.part2 |> patternSyntaxKindMap)
 
         ElmSyntax.PatternRecord fieldVariables ->
             fieldVariables
-                |> RangeDict.mapFromList (\variable -> ( variable.range, Variable ))
+                |> RangeDict.mapFromList
+                    (\variable ->
+                        ( variable.range
+                        , -- both property and binding. Field punning sucks
+                          Variable
+                        )
+                    )
 
         ElmSyntax.PatternListCons listCons ->
-            RangeDict.union
-                (listCons.head |> patternSyntaxKindMap)
-                (listCons.tail |> patternSyntaxKindMap)
+            listCons.head
+                |> patternSyntaxKindMap
+                |> Dict.union (listCons.tail |> patternSyntaxKindMap)
                 |> RangeDict.insert listCons.consKeySymbolRange
                     Variant
 
@@ -139,7 +145,7 @@ patternSyntaxKindMap patternNode =
             elements |> RangeDict.unionFromListMap patternSyntaxKindMap
 
         ElmSyntax.PatternVariant patternVariant ->
-            RangeDict.union
+            Dict.union
                 (patternVariant.reference
                     |> qualifiedSyntaxKindMap Variant
                 )
@@ -169,7 +175,7 @@ expressionSyntaxKindMap expressionNode =
 
         ElmSyntax.ExpressionCall call ->
             (call.called |> expressionSyntaxKindMap)
-                |> RangeDict.union
+                |> Dict.union
                     ((call.argument0 :: call.argument1Up)
                         |> RangeDict.unionFromListMap
                             (\part -> part |> expressionSyntaxKindMap)
@@ -179,7 +185,7 @@ expressionSyntaxKindMap expressionNode =
             let
                 leftRightSyntaxKindMap : RangeDict SyntaxKind
                 leftRightSyntaxKindMap =
-                    RangeDict.union
+                    Dict.union
                         (infixOperation.left |> expressionSyntaxKindMap)
                         (infixOperation.right |> expressionSyntaxKindMap)
             in
@@ -210,8 +216,8 @@ expressionSyntaxKindMap expressionNode =
         ElmSyntax.ExpressionIfThenElse ifThenElse ->
             ifThenElse.condition
                 |> expressionSyntaxKindMap
-                |> RangeDict.union (ifThenElse.onTrue |> expressionSyntaxKindMap)
-                |> RangeDict.union (ifThenElse.onFalse |> expressionSyntaxKindMap)
+                |> Dict.union (ifThenElse.onTrue |> expressionSyntaxKindMap)
+                |> Dict.union (ifThenElse.onFalse |> expressionSyntaxKindMap)
                 |> RangeDict.insert
                     { start = expressionNode.range.start
                     , end =
@@ -278,19 +284,19 @@ expressionSyntaxKindMap expressionNode =
         ElmSyntax.ExpressionTuple parts ->
             parts.part0
                 |> expressionSyntaxKindMap
-                |> RangeDict.union (parts.part1 |> expressionSyntaxKindMap)
+                |> Dict.union (parts.part1 |> expressionSyntaxKindMap)
 
         ElmSyntax.ExpressionTriple parts ->
             parts.part0
                 |> expressionSyntaxKindMap
-                |> RangeDict.union (parts.part1 |> expressionSyntaxKindMap)
-                |> RangeDict.union (parts.part2 |> expressionSyntaxKindMap)
+                |> Dict.union (parts.part1 |> expressionSyntaxKindMap)
+                |> Dict.union (parts.part2 |> expressionSyntaxKindMap)
 
         ElmSyntax.ExpressionParenthesized inner ->
             expressionSyntaxKindMap inner
 
         ElmSyntax.ExpressionLetIn letIn ->
-            RangeDict.union
+            Dict.union
                 ((letIn.declaration0 :: letIn.declaration1Up)
                     |> RangeDict.unionFromListMap letDeclarationSyntaxKindMap
                 )
@@ -304,12 +310,12 @@ expressionSyntaxKindMap expressionNode =
                     KeySymbol
 
         ElmSyntax.ExpressionCaseOf caseOf ->
-            RangeDict.union
+            Dict.union
                 (caseOf.matched |> expressionSyntaxKindMap)
                 ((caseOf.case0 :: caseOf.case1Up)
                     |> RangeDict.unionFromListMap
                         (\syntaxCase ->
-                            RangeDict.union
+                            Dict.union
                                 (syntaxCase.pattern |> patternSyntaxKindMap)
                                 (syntaxCase.result |> expressionSyntaxKindMap)
                                 |> RangeDict.insert
@@ -326,7 +332,7 @@ expressionSyntaxKindMap expressionNode =
                     Flow
 
         ElmSyntax.ExpressionLambda lambda ->
-            RangeDict.union
+            Dict.union
                 ((lambda.parameter0 :: lambda.parameter1Up)
                     |> RangeDict.unionFromListMap patternSyntaxKindMap
                 )
@@ -411,29 +417,33 @@ letDeclarationSyntaxKindMap :
 letDeclarationSyntaxKindMap letDeclarationNode =
     case letDeclarationNode.value of
         ElmSyntax.LetDestructuring letDestructuring ->
-            RangeDict.union
+            Dict.union
                 (letDestructuring.pattern |> patternSyntaxKindMap)
                 (letDestructuring.expression |> expressionSyntaxKindMap)
                 |> RangeDict.insert letDestructuring.equalsKeySymbolRange
                     KeySymbol
 
         ElmSyntax.LetValueOrFunctionDeclaration fnDeclaration ->
-            RangeDict.union
-                (case fnDeclaration.signature of
-                    Just functionSignature ->
-                        functionSignature |> signatureSyntaxKindMap
+            let
+                implementationSyntaxKindMap : RangeDict SyntaxKind
+                implementationSyntaxKindMap =
+                    fnDeclaration.parameters
+                        |> RangeDict.unionFromListMap patternSyntaxKindMap
+                        |> RangeDict.insert fnDeclaration.equalsKeySymbolRange
+                            KeySymbol
+                        |> Dict.union
+                            (fnDeclaration.result |> expressionSyntaxKindMap)
+                        |> RangeDict.insert fnDeclaration.implementationNameRange
+                            Variable
+            in
+            case fnDeclaration.signature of
+                Just functionSignature ->
+                    functionSignature
+                        |> signatureSyntaxKindMap
+                        |> Dict.union implementationSyntaxKindMap
 
-                    Nothing ->
-                        RangeDict.empty
-                )
-                (RangeDict.union
-                    (fnDeclaration.result |> expressionSyntaxKindMap)
-                    (fnDeclaration.parameters |> RangeDict.unionFromListMap patternSyntaxKindMap)
-                    |> RangeDict.insert fnDeclaration.implementationNameRange
-                        Variable
-                    |> RangeDict.insert fnDeclaration.equalsKeySymbolRange
-                        KeySymbol
-                )
+                Nothing ->
+                    implementationSyntaxKindMap
 
 
 typeAnnotationSyntaxKindMap : ElmSyntax.Node ElmSyntax.Type -> RangeDict SyntaxKind
@@ -452,21 +462,21 @@ typeAnnotationSyntaxKindMap typeNode =
         ElmSyntax.TypeTuple parts ->
             parts.part0
                 |> typeAnnotationSyntaxKindMap
-                |> RangeDict.union
+                |> Dict.union
                     (parts.part1 |> typeAnnotationSyntaxKindMap)
 
         ElmSyntax.TypeTriple parts ->
             parts.part0
                 |> typeAnnotationSyntaxKindMap
-                |> RangeDict.union
+                |> Dict.union
                     (parts.part1 |> typeAnnotationSyntaxKindMap)
-                |> RangeDict.union
+                |> Dict.union
                     (parts.part2 |> typeAnnotationSyntaxKindMap)
 
         ElmSyntax.TypeConstruct typeConstruct ->
             typeConstruct.reference
                 |> qualifiedSyntaxKindMap Type
-                |> RangeDict.union
+                |> Dict.union
                     (typeConstruct.arguments
                         |> RangeDict.unionFromListMap typeAnnotationSyntaxKindMap
                     )
@@ -503,7 +513,7 @@ typeAnnotationSyntaxKindMap typeNode =
                 |> RangeDict.insert
                     typeFunction.arrowKeySymbolRange
                     KeySymbol
-                |> RangeDict.union
+                |> Dict.union
                     (typeFunction.output |> typeAnnotationSyntaxKindMap)
 
 
@@ -525,21 +535,26 @@ declarationSyntaxKindMap :
 declarationSyntaxKindMap declarationNode =
     case declarationNode.value of
         ElmSyntax.DeclarationValueOrFunction fnDeclaration ->
-            (case fnDeclaration.signature of
+            let
+                implementationSyntaxKindMap : RangeDict SyntaxKind
+                implementationSyntaxKindMap =
+                    fnDeclaration.parameters
+                        |> RangeDict.unionFromListMap patternSyntaxKindMap
+                        |> RangeDict.insert fnDeclaration.equalsKeySymbolRange
+                            KeySymbol
+                        |> Dict.union
+                            (fnDeclaration.result |> expressionSyntaxKindMap)
+                        |> RangeDict.insert fnDeclaration.implementationNameRange
+                            VariableDeclaration
+            in
+            case fnDeclaration.signature of
                 Just functionSignature ->
-                    functionSignature |> signatureSyntaxKindMap
+                    functionSignature
+                        |> signatureSyntaxKindMap
+                        |> Dict.union implementationSyntaxKindMap
 
                 Nothing ->
-                    RangeDict.empty
-            )
-                |> RangeDict.insert fnDeclaration.implementationNameRange
-                    VariableDeclaration
-                |> RangeDict.union
-                    (fnDeclaration.parameters |> RangeDict.unionFromListMap patternSyntaxKindMap)
-                |> RangeDict.insert fnDeclaration.equalsKeySymbolRange
-                    KeySymbol
-                |> RangeDict.union
-                    (fnDeclaration.result |> expressionSyntaxKindMap)
+                    implementationSyntaxKindMap
 
         ElmSyntax.DeclarationTypeAlias typeAliasDeclaration ->
             RangeDict.singleton
@@ -551,7 +566,7 @@ declarationSyntaxKindMap declarationNode =
                     KeySymbol
                 |> RangeDict.insert typeAliasDeclaration.name.range
                     Type
-                |> RangeDict.union
+                |> Dict.union
                     (typeAliasDeclaration.parameters
                         |> RangeDict.mapFromList
                             (\variableNode ->
@@ -560,7 +575,7 @@ declarationSyntaxKindMap declarationNode =
                     )
                 |> RangeDict.insert typeAliasDeclaration.equalsKeySymbolRange
                     KeySymbol
-                |> RangeDict.union
+                |> Dict.union
                     (typeAliasDeclaration.type_ |> typeAnnotationSyntaxKindMap)
 
         ElmSyntax.DeclarationChoiceType choiceTypeDeclaration ->
@@ -568,7 +583,7 @@ declarationSyntaxKindMap declarationNode =
                 |> RangeDict.unionFromListMap typeAnnotationSyntaxKindMap
                 |> RangeDict.insert choiceTypeDeclaration.variant0.name.range
                     Variant
-                |> RangeDict.union
+                |> Dict.union
                     (choiceTypeDeclaration.variant1Up
                         |> RangeDict.unionFromListMap
                             (\variant ->
@@ -579,7 +594,7 @@ declarationSyntaxKindMap declarationNode =
                                         KeySymbol
                             )
                     )
-                |> RangeDict.union
+                |> Dict.union
                     (choiceTypeDeclaration.parameters
                         |> RangeDict.mapFromList
                             (\parameterNode ->
@@ -607,7 +622,7 @@ declarationSyntaxKindMap declarationNode =
                         |> locationAddColumn 4
                 }
                 KeySymbol
-                |> RangeDict.union
+                |> Dict.union
                     (signature |> signatureSyntaxKindMap)
 
         ElmSyntax.DeclarationOperator _ ->
@@ -632,27 +647,30 @@ for :
 for elmModule =
     elmModule.header
         |> moduleHeaderSyntaxKindMap
-        |> RangeDict.union
+        |> Dict.union
             (elmModule.comments
                 |> RangeDict.unionFromListMap commentSyntaxKindMap
             )
-        |> RangeDict.union
+        |> Dict.union
             (elmModule.imports
                 |> RangeDict.unionFromListMap importSyntaxKindMap
             )
-        |> RangeDict.union
+        |> Dict.union
             (elmModule.declarations
                 |> RangeDict.unionFromListMap
                     (\declarationWithDocumentation ->
-                        (case declarationWithDocumentation.documentation of
+                        let
+                            undocumentedSyntaxKindMap : RangeDict SyntaxKind
+                            undocumentedSyntaxKindMap =
+                                declarationWithDocumentation.declaration |> declarationSyntaxKindMap
+                        in
+                        case declarationWithDocumentation.documentation of
                             Nothing ->
-                                RangeDict.empty
+                                undocumentedSyntaxKindMap
 
                             Just documentationNode ->
                                 commentSyntaxKindMap documentationNode
-                        )
-                            |> RangeDict.union
-                                (declarationWithDocumentation.declaration |> declarationSyntaxKindMap)
+                                    |> Dict.union undocumentedSyntaxKindMap
                     )
             )
         |> RangeDict.toListMap
@@ -667,7 +685,7 @@ moduleHeaderSyntaxKindMap moduleHeaderNode =
         |> exposingSyntaxKindMap
         |> RangeDict.insert moduleHeaderNode.value.moduleName.range
             ModuleNameOrAlias
-        |> RangeDict.union
+        |> Dict.union
             (case moduleHeaderNode.value.specific of
                 Nothing ->
                     RangeDict.singleton
@@ -749,15 +767,15 @@ plainCommentSyntaxKindMap commentNode =
                         }
                         Comment
             )
-            RangeDict.empty
+            Dict.empty
 
 
 importSyntaxKindMap : ElmSyntax.Node ElmSyntax.Import -> RangeDict SyntaxKind
 importSyntaxKindMap importNode =
-    RangeDict.union
+    Dict.union
         ((case importNode.value.exposing_ of
             Nothing ->
-                RangeDict.empty
+                Dict.empty
 
             Just exposing_ ->
                 exposing_ |> exposingSyntaxKindMap
@@ -773,7 +791,7 @@ importSyntaxKindMap importNode =
         )
         (case importNode.value.alias of
             Nothing ->
-                RangeDict.empty
+                Dict.empty
 
             Just importAlias ->
                 RangeDict.singleton importAlias.name.range ModuleNameOrAlias
@@ -803,7 +821,15 @@ exposingSyntaxKindMap exposingNode =
                     (\exposedMemberNode ->
                         case exposedMemberNode.value of
                             ElmSyntax.ExposeOperator _ ->
-                                RangeDict.empty
+                                RangeDict.singleton
+                                    { start =
+                                        exposedMemberNode.range.start
+                                            |> locationAddColumn 1
+                                    , end =
+                                        exposedMemberNode.range.end
+                                            |> locationAddColumn -1
+                                    }
+                                    KeySymbol
 
                             ElmSyntax.ExposeVariable _ ->
                                 RangeDict.singleton exposedMemberNode.range

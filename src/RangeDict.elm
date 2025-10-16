@@ -1,21 +1,16 @@
-module RangeDict exposing (RangeDict(..), empty, foldl, insert, justValuesMap, mapFromList, singleton, toListMap, union, unionFromListMap)
+module RangeDict exposing (RangeDict, insert, mapFromList, singleton, toListMap, unionFromListMap)
 
 import Dict exposing (Dict)
 import TextGrid
 
 
-type RangeDict v
-    = RangeDict (Dict ( ( Int, Int ), ( Int, Int ) ) v)
-
-
-empty : RangeDict v_
-empty =
-    RangeDict Dict.empty
+type alias RangeDict value =
+    Dict ( ( Int, Int ), ( Int, Int ) ) value
 
 
 singleton : TextGrid.Range -> v -> RangeDict v
 singleton range value =
-    RangeDict (Dict.singleton (rangeToComparable range) value)
+    Dict.singleton (rangeToComparable range) value
 
 
 {-| Indirect conversion from a list to key-value pairs to avoid successive List.map calls.
@@ -32,64 +27,30 @@ mapFromList toAssociation list =
         )
         Dict.empty
         list
-        |> RangeDict
 
 
 unionFromListMap : (element -> RangeDict value) -> List element -> RangeDict value
 unionFromListMap elementToDict list =
     list
         |> List.foldl
-            (\el soFar -> union (el |> elementToDict) soFar)
-            empty
+            (\el soFar -> Dict.union (el |> elementToDict) soFar)
+            Dict.empty
 
 
 insert : TextGrid.Range -> v -> RangeDict v -> RangeDict v
-insert range value (RangeDict rangeDict) =
-    RangeDict (Dict.insert (rangeToComparable range) value rangeDict)
-
-
-justValuesMap : (TextGrid.Range -> value -> Maybe valueMapped) -> RangeDict value -> RangeDict valueMapped
-justValuesMap rangeAndValueMap rangeDict =
-    rangeDict
-        |> foldl
-            (\range value soFar ->
-                case rangeAndValueMap range value of
-                    Nothing ->
-                        soFar
-
-                    Just valueMapped ->
-                        soFar |> insert range valueMapped
-            )
-            empty
+insert range value rangeDict =
+    Dict.insert (rangeToComparable range) value rangeDict
 
 
 toListMap : (TextGrid.Range -> value -> element) -> RangeDict value -> List element
 toListMap rangeAndValueToElement rangeDict =
     rangeDict
-        |> foldr
+        |> Dict.foldr
             (\range value soFar ->
-                rangeAndValueToElement range value :: soFar
+                rangeAndValueToElement (range |> rangeFromComparable) value
+                    :: soFar
             )
             []
-
-
-foldr : (TextGrid.Range -> v -> folded -> folded) -> folded -> RangeDict v -> folded
-foldr reduce initialFolded (RangeDict rangeDict) =
-    rangeDict
-        |> Dict.foldr (\range value -> reduce (rangeFromTupleTuple range) value)
-            initialFolded
-
-
-foldl : (TextGrid.Range -> v -> folded -> folded) -> folded -> RangeDict v -> folded
-foldl reduce initialFolded (RangeDict rangeDict) =
-    rangeDict
-        |> Dict.foldl (\range value -> reduce (rangeFromTupleTuple range) value)
-            initialFolded
-
-
-union : RangeDict v -> RangeDict v -> RangeDict v
-union (RangeDict aRangeDict) (RangeDict bRangeDict) =
-    RangeDict (Dict.union aRangeDict bRangeDict)
 
 
 rangeToComparable : TextGrid.Range -> ( ( Int, Int ), ( Int, Int ) )
@@ -99,11 +60,11 @@ rangeToComparable range =
     )
 
 
-rangeFromTupleTuple : ( ( Int, Int ), ( Int, Int ) ) -> TextGrid.Range
-rangeFromTupleTuple ( start, end ) =
-    { start = start |> locationFromTuple, end = end |> locationFromTuple }
+rangeFromComparable : ( ( Int, Int ), ( Int, Int ) ) -> TextGrid.Range
+rangeFromComparable ( start, end ) =
+    { start = start |> locationFromComparable, end = end |> locationFromComparable }
 
 
-locationFromTuple : ( Int, Int ) -> TextGrid.Location
-locationFromTuple ( line, column ) =
+locationFromComparable : ( Int, Int ) -> TextGrid.Location
+locationFromComparable ( line, column ) =
     { line = line, column = column }
