@@ -1,5 +1,5 @@
 module ElmSyntax exposing
-    ( Module, ModuleName, Import
+    ( Module, Import
     , ModuleHeader, ModuleHeaderSpecific(..)
     , Exposing(..), Expose(..)
     , Declaration(..), ChoiceTypeDeclaration, OperatorDeclaration, InfixDirection(..), TypeAliasDeclaration, ValueOrFunctionDeclaration
@@ -9,7 +9,7 @@ module ElmSyntax exposing
 
 {-| Elm syntax tree
 
-@docs Module, ModuleName, Import
+@docs Module, Import
 @docs ModuleHeader, ModuleHeaderSpecific
 @docs Exposing, Expose
 @docs Declaration, ChoiceTypeDeclaration, OperatorDeclaration, InfixDirection, TypeAliasDeclaration, ValueOrFunctionDeclaration
@@ -27,7 +27,7 @@ import TextGrid
 
 -}
 type alias ModuleHeader =
-    { moduleName : Node ModuleName
+    { moduleName : Node String
     , exposing_ : Node Exposing
     , specific : Maybe ModuleHeaderSpecific
     }
@@ -40,22 +40,6 @@ type ModuleHeaderSpecific
         , command : Maybe (Node String)
         , subscription : Maybe (Node String)
         }
-
-
-{-| Used for imports, module names, and for qualification.
-For example:
-
-    module ElmSyntax ...
-
-    import Foo.Bar ...
-
-    My.Module.something
-
-    My.Module.SomeType
-
--}
-type alias ModuleName =
-    List String
 
 
 {-| A file
@@ -90,8 +74,8 @@ type Expose
     = ExposeOperator String
     | ExposeVariable String
     | ExposeTypeName String
-    | ExposeChoiceType
-        { name : String
+    | ExposeChoiceTypeIncludingVariants
+        { name : Node String
         , openRange : TextGrid.Range
         }
 
@@ -102,7 +86,7 @@ type Expose
 
 -}
 type alias Import =
-    { moduleName : Node ModuleName
+    { moduleName : Node String
     , alias :
         Maybe
             { asKeywordRange : TextGrid.Range
@@ -281,7 +265,7 @@ type Expression
         , right : Node Expression
         }
     | -- TODO split into ExpressionReference and ExpressionReferenceVariantOrRecordTypeAliasCOnstructor
-      ExpressionReference { qualification : ModuleName, name : String }
+      ExpressionReference { qualification : String, name : String }
     | ExpressionIfThenElse
         { condition : Node Expression
         , thenKeywordRange : TextGrid.Range
@@ -388,7 +372,7 @@ type Type
     = TypeUnit
     | TypeVariable String
     | TypeConstruct
-        { reference : Node { qualification : ModuleName, name : String }
+        { reference : Node { qualification : String, name : String }
         , arguments : List (Node Type)
         }
     | TypeParenthesized (Node Type)
@@ -479,7 +463,7 @@ type Pattern
     | PatternVariant
         { reference :
             Node
-                { qualification : ModuleName
+                { qualification : String
                 , name : String
                 }
         , values : List (Node Pattern)

@@ -5,8 +5,9 @@ module ElmParserLenient exposing
     , moduleHeader, import_, declarations, declaration
     , type_, pattern, expression
     , multiLineComment, singleLineComment, whitespaceAndComments
-    , moduleName, nameLowercase, nameUppercase
+    , nameLowercase, nameUppercase
     , RopeFilled(..)
+    , nameUppercaseWithDots
     )
 
 {-| Like [`Elm.Parser`](https://elm-lang.org/packages/stil4m/elm-syntax/latest/Elm-Parser)
@@ -160,19 +161,36 @@ module_ =
         )
 
 
-{-| [`Parser`](#Parser) for an [`ElmSyntax.ModuleName`](ElmSyntax#ModuleName)
+{-| [`Parser`](#Parser) for qualification or a module name, for example
+
+    List.NonEmpty
+    import ... as LNE
+
 -}
-moduleName : Parser (ElmSyntax.Node ElmSyntax.ModuleName)
-moduleName =
+nameUppercaseWithDots : Parser (ElmSyntax.Node String)
+nameUppercaseWithDots =
     ParserFast.map2WithRange
-        (\range head tail ->
-            { range = range, value = head :: tail }
+        (\range headPart tailParts ->
+            { range = range
+            , value =
+                if tailParts |> String.isEmpty then
+                    headPart
+
+                else
+                    headPart ++ "." ++ tailParts
+            }
         )
         nameUppercase
         (ParserFast.loopWhileSucceedsRightToLeftStackUnsafe
             (ParserFast.symbolFollowedBy "." nameUppercase)
-            []
-            (::)
+            ""
+            (\headPart tailParts ->
+                if tailParts |> String.isEmpty then
+                    headPart
+
+                else
+                    headPart ++ "." ++ tailParts
+            )
         )
 
 
@@ -340,7 +358,11 @@ typeExpose =
                     { comments = commentsBeforeMaybeOpen |> ropePrependTo open.comments
                     , syntax =
                         { range = { start = typeExposeNameNode.range.start, end = open.syntax.end }
-                        , value = ElmSyntax.ExposeChoiceType { name = typeExposeNameNode.value, openRange = open.syntax }
+                        , value =
+                            ElmSyntax.ExposeChoiceTypeIncludingVariants
+                                { name = typeExposeNameNode
+                                , openRange = open.syntax
+                                }
                         }
                     }
         )
@@ -523,7 +545,7 @@ effectModuleHeader =
         (ParserFast.keywordFollowedBy "effect" whitespaceAndComments)
         (ParserFast.keywordRange "module")
         whitespaceAndComments
-        moduleName
+        nameUppercaseWithDots
         whitespaceAndComments
         effectWhereClauses
         whitespaceAndComments
@@ -549,7 +571,7 @@ normalModuleHeader =
             }
         )
         (ParserFast.keywordFollowedBy "module" whitespaceAndComments)
-        moduleName
+        nameUppercaseWithDots
         whitespaceAndComments
         moduleHeaderExposing
 
@@ -583,7 +605,7 @@ portModuleHeader =
         (ParserFast.keywordFollowedBy "port" whitespaceAndComments)
         (ParserFast.keywordRange "module")
         whitespaceAndComments
-        moduleName
+        nameUppercaseWithDots
         whitespaceAndComments
         moduleHeaderExposing
 
@@ -669,7 +691,7 @@ importFollowedByWhitespaceAndComments =
                             }
         )
         (ParserFast.keywordFollowedBy "import" whitespaceAndComments)
-        moduleName
+        nameUppercaseWithDots
         whitespaceAndComments
         (ParserFast.map3WithStartLocationOrSucceed
             (\asKeywordStartLocation commentsBeforeAs nameNode commentsAfter ->
@@ -1800,14 +1822,14 @@ typeConstructWithoutArguments =
     ParserFast.map2WithRange
         (\range startName afterStartName ->
             let
-                name : { qualification : ElmSyntax.ModuleName, name : String }
+                name : { qualification : String, name : String }
                 name =
                     case afterStartName of
                         Nothing ->
-                            { qualification = [], name = startName }
+                            { qualification = "", name = startName }
 
                         Just ( qualificationAfterStartName, unqualified ) ->
-                            { qualification = startName :: qualificationAfterStartName
+                            { qualification = startName ++ "." ++ qualificationAfterStartName
                             , name = unqualified
                             }
             in
@@ -1826,16 +1848,23 @@ typeConstructWithoutArguments =
         maybeDotNamesUppercaseTuple
 
 
-maybeDotNamesUppercaseTuple : Parser (Maybe ( List String, String ))
+maybeDotNamesUppercaseTuple : Parser (Maybe ( String, String ))
 maybeDotNamesUppercaseTuple =
     ParserFast.map2OrSucceed
         (\firstName afterFirstName ->
             case afterFirstName of
                 Nothing ->
-                    Just ( [], firstName )
+                    Just ( "", firstName )
 
                 Just ( qualificationAfter, unqualified ) ->
-                    Just ( firstName :: qualificationAfter, unqualified )
+                    Just
+                        ( if qualificationAfter |> String.isEmpty then
+                            firstName
+
+                          else
+                            firstName ++ "." ++ qualificationAfter
+                        , unqualified
+                        )
         )
         (ParserFast.symbolFollowedBy "." nameUppercase)
         (ParserFast.lazy (\() -> maybeDotNamesUppercaseTuple))
@@ -1871,19 +1900,22 @@ typeConstructWithArgumentsFollowedByWhitespaceAndComments =
         )
         (ParserFast.map2WithRange
             (\range startName afterStartName ->
-                let
-                    name : { qualification : ElmSyntax.ModuleName, name : String }
-                    name =
-                        case afterStartName of
-                            Nothing ->
-                                { qualification = [], name = startName }
+                { range = range
+                , value =
+                    case afterStartName of
+                        Nothing ->
+                            { qualification = "", name = startName }
 
-                            Just ( qualificationAfterStartName, unqualified ) ->
-                                { qualification = startName :: qualificationAfterStartName
-                                , name = unqualified
-                                }
-                in
-                { range = range, value = name }
+                        Just ( qualificationAfterStartName, unqualified ) ->
+                            { qualification =
+                                if qualificationAfterStartName |> String.isEmpty then
+                                    startName
+
+                                else
+                                    startName ++ "." ++ qualificationAfterStartName
+                            , name = unqualified
+                            }
+                }
             )
             nameUppercase
             maybeDotNamesUppercaseTuple
@@ -2991,18 +3023,23 @@ negationAfterMinus =
 expressionQualifiedOrVariantOrRecordConstructorReferenceFollowedByRecordAccess : Parser (WithComments (ElmSyntax.Node ElmSyntax.Expression))
 expressionQualifiedOrVariantOrRecordConstructorReferenceFollowedByRecordAccess =
     ParserFast.map2WithRange
-        (\range firstName after ->
+        (\range startName after ->
             { comments = ropeEmpty
             , syntax =
                 { range = range
                 , value =
                     case after of
                         Nothing ->
-                            ElmSyntax.ExpressionReference { qualification = [], name = firstName }
+                            ElmSyntax.ExpressionReference { qualification = "", name = startName }
 
-                        Just ( qualificationAfter, unqualified ) ->
+                        Just ( qualificationAfterStartName, unqualified ) ->
                             ElmSyntax.ExpressionReference
-                                { qualification = firstName :: qualificationAfter
+                                { qualification =
+                                    if qualificationAfterStartName |> String.isEmpty then
+                                        startName
+
+                                    else
+                                        startName ++ "." ++ qualificationAfterStartName
                                 , name = unqualified
                                 }
                 }
@@ -3013,25 +3050,31 @@ expressionQualifiedOrVariantOrRecordConstructorReferenceFollowedByRecordAccess =
         |> followedByMultiRecordAccess
 
 
-maybeDotReferenceExpressionTuple : Parser (Maybe ( List String, String ))
+maybeDotReferenceExpressionTuple : Parser (Maybe ( String, String ))
 maybeDotReferenceExpressionTuple =
     ParserFast.orSucceed
         (ParserFast.symbolFollowedBy "."
             (ParserFast.oneOf2Map
                 Just
                 (ParserFast.map2
-                    (\firstName after ->
+                    (\startName after ->
                         case after of
                             Nothing ->
-                                ( [], firstName )
+                                ( "", startName )
 
-                            Just ( qualificationAfter, unqualified ) ->
-                                ( firstName :: qualificationAfter, unqualified )
+                            Just ( qualificationAfterStartName, unqualified ) ->
+                                ( if qualificationAfterStartName |> String.isEmpty then
+                                    startName
+
+                                  else
+                                    startName ++ "." ++ qualificationAfterStartName
+                                , unqualified
+                                )
                     )
                     nameUppercase
                     (ParserFast.lazy (\() -> maybeDotReferenceExpressionTuple))
                 )
-                (\name -> Just ( [], name ))
+                (\name -> Just ( "", name ))
                 nameLowercaseUnderscoreSuffixingKeywords
             )
         )
@@ -3047,7 +3090,7 @@ expressionUnqualifiedFunctionReferenceFollowedByRecordAccess =
                 { range = range
                 , value =
                     ElmSyntax.ExpressionReference
-                        { qualification = [], name = unqualified }
+                        { qualification = "", name = unqualified }
                 }
             }
         )
@@ -4160,15 +4203,22 @@ qualifiedPatternWithConsumeValues =
             }
         )
         (ParserFast.map2WithRange
-            (\range firstName after ->
+            (\range startName after ->
                 { range = range
                 , value =
                     case after of
                         Nothing ->
-                            { qualification = [], name = firstName }
+                            { qualification = "", name = startName }
 
-                        Just ( qualificationAfter, unqualified ) ->
-                            { qualification = firstName :: qualificationAfter, name = unqualified }
+                        Just ( qualificationAfterStartName, unqualified ) ->
+                            { qualification =
+                                if qualificationAfterStartName |> String.isEmpty then
+                                    startName
+
+                                else
+                                    startName ++ "." ++ qualificationAfterStartName
+                            , name = unqualified
+                            }
                 }
             )
             nameUppercase
@@ -4193,7 +4243,7 @@ qualifiedPatternWithConsumeValues =
 qualifiedPatternWithoutConsumeArgs : Parser (WithComments (ElmSyntax.Node ElmSyntax.Pattern))
 qualifiedPatternWithoutConsumeArgs =
     ParserFast.map2WithRange
-        (\range firstName after ->
+        (\range startName after ->
             { comments = ropeEmpty
             , syntax =
                 { range = range
@@ -4204,10 +4254,15 @@ qualifiedPatternWithoutConsumeArgs =
                             , value =
                                 case after of
                                     Nothing ->
-                                        { qualification = [], name = firstName }
+                                        { qualification = "", name = startName }
 
-                                    Just ( qualificationAfter, unqualified ) ->
-                                        { qualification = firstName :: qualificationAfter
+                                    Just ( qualificationAfterStartName, unqualified ) ->
+                                        { qualification =
+                                            if qualificationAfterStartName |> String.isEmpty then
+                                                startName
+
+                                            else
+                                                startName ++ "." ++ qualificationAfterStartName
                                         , name = unqualified
                                         }
                             }

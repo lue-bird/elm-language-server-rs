@@ -32,16 +32,16 @@ qualifiedSyntaxKindMap :
     SyntaxKind
     ->
         ElmSyntax.Node
-            { qualification : ElmSyntax.ModuleName
+            { qualification : String
             , name : String
             }
     -> RangeDict SyntaxKind
 qualifiedSyntaxKindMap kind qualified =
     case qualified.value.qualification of
-        [] ->
+        "" ->
             RangeDict.singleton qualified.range kind
 
-        _ :: _ ->
+        _ ->
             RangeDict.empty
                 |> RangeDict.insert
                     { start = qualified.range.start
@@ -813,7 +813,7 @@ exposingSyntaxKindMap exposingNode =
                                 RangeDict.singleton exposedMemberNode.range
                                     Type
 
-                            ElmSyntax.ExposeChoiceType exposedType ->
+                            ElmSyntax.ExposeChoiceTypeIncludingVariants exposedType ->
                                 RangeDict.singleton
                                     { start = exposedMemberNode.range.start
                                     , end = exposedType.openRange.start
