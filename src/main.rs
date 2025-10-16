@@ -4,27 +4,14 @@
 mod elm;
 
 struct State {
-    // Currently parsed elm modules and other elm-derived state types are stored using
-    // static references. In regular rust code, this is an eventual memory leak. So
-    // instead this language server tries to find good points in time to
-    // **re-calculate all state** and then throw away all the garbage that was put
-    // into the allocator since last cleanup. The effect to the user is very similar
-    // to stop-the-world garbage collection (increasing memory usage followed by a
-    // major GC pause, repeat) but potentially worse because more computationally
-    // expensive (if the state is heavy which ours isn't!). The benefit however is
-    // that de-allocating and allocating is very fast. I haven't looked into whether
-    // this approach actually has a name; in the meantime I'll call it
-    // "clear-reconstruct" allocator
-    clear_reconstruct_allocator: &'static bumpalo::Bump,
-    last_allocator_clear_time: std::time::Instant,
     elm_jsons_source_directories: std::collections::HashMap<std::path::PathBuf, Vec<std::path::PathBuf>>,
     parsed_modules: std::collections::HashMap<std::path::PathBuf, ModuleState>,
 }
 
 #[derive(Clone)]
 struct ModuleState {
-    source: &'static str,
-    syntax: Option<elm::ElmSyntaxModule<'static>>,
+    source: String,
+    syntax: Option<ElmSyntaxModule>,
 }
 
 const token_types: [lsp_types::SemanticTokenType; 11] =
@@ -54,8 +41,6 @@ fn semantic_token_type_to_id(semantic_token: lsp_types::SemanticTokenType) -> u3
 async fn main() {
     let (server, _client_socket) = async_lsp::MainLoop::new_server(|client| {
         let mut router: async_lsp::router::Router<State> = async_lsp::router::Router::new(State {
-            clear_reconstruct_allocator: std::boxed::Box::leak(std::boxed::Box::new(bumpalo::Bump::new())),
-            last_allocator_clear_time: std::time::Instant::now(),
             elm_jsons_source_directories: std::collections::HashMap::new(),
             parsed_modules: std::collections::HashMap::new(),
         });
@@ -104,9 +89,8 @@ async fn main() {
                             list_elm_files_in_source_directory_at_path(workspace_folder_path).ok()
                         }).flatten();
                         for (file_uri, file_content) in elm_source_files {
-                            let file_content_str: &str = state.clear_reconstruct_allocator.alloc(file_content);
                             state.parsed_modules.insert(file_uri, ModuleState {
-                                source: file_content_str,
+                                source: file_content,
                                 syntax: None,
                             });
                         }
@@ -145,7 +129,33 @@ async fn main() {
                 })
             }
         }).request::<lsp_types::request::HoverRequest, _>(|state, hover_arguments| {
-            let maybe_module_syntax =
+            let handle_hover = |module_syntax: &ElmSyntaxModule| {
+                if lsp_range_includes_position(
+                    module_syntax.header.range,
+                    hover_arguments.text_document_position_params.position,
+                ) {
+                    Some(lsp_types::Hover {
+                        contents: lsp_types::HoverContents::Scalar(
+                            lsp_types::MarkedString::String(format!("module info: {:?}", module_syntax.header.value)),
+                        ),
+                        range: None,
+                    })
+                } else {
+                    Some(lsp_types::Hover {
+                        contents: lsp_types::HoverContents::Scalar(
+                            lsp_types::MarkedString::String(
+                                format!(
+                                    "I am a hover text at offset {}:{}",
+                                    hover_arguments.text_document_position_params.position.line,
+                                    hover_arguments.text_document_position_params.position.character
+                                ),
+                            ),
+                        ),
+                        range: None,
+                    })
+                }
+            };
+            let maybe_hover_result =
                 hover_arguments
                     .text_document_position_params
                     .text_document
@@ -154,56 +164,31 @@ async fn main() {
                     .ok()
                     .and_then(|file_path| state.parsed_modules.get_mut(&file_path).and_then(|module_state| {
                         match module_state.syntax {
-                            Some(module_syntax) => {
-                                Some(module_syntax)
+                            Some(ref module_syntax) => {
+                                handle_hover(module_syntax)
                             },
                             None => {
+                                let parse_allocator: bumpalo::Bump = bumpalo::Bump::new();
                                 match elm::elm_parser_lenient_run(
-                                    elm::elm_parser_lenient_module_(state.clear_reconstruct_allocator),
-                                    elm::StringString::One(module_state.source),
+                                    elm::elm_parser_lenient_module_(&parse_allocator),
+                                    elm::StringString::One(&module_state.source),
                                 ) {
                                     None => {
                                         None
                                     },
                                     Some(parsed_elm_module) => {
-                                        module_state.syntax = Some(parsed_elm_module);
-                                        Some(parsed_elm_module)
+                                        let parsed_elm_module_persistent =
+                                            elm_syntax_module_to_persistent(parsed_elm_module);
+                                        let hover_result = handle_hover(&parsed_elm_module_persistent);
+                                        module_state.syntax = Some(parsed_elm_module_persistent);
+                                        hover_result
                                     },
                                 }
                             },
                         }
                     }));
-            let hover_location: elm::TextGridLocation =
-                lsp_position_to_text_grid_location(hover_arguments.text_document_position_params.position);
             async move {
-                match maybe_module_syntax {
-                    None => Ok(None),
-                    Some(module_syntax) => {
-                        if elm::text_grid_range_includes_location(hover_location, module_syntax.header.range) {
-                            Ok(Some(lsp_types::Hover {
-                                contents: lsp_types::HoverContents::Scalar(
-                                    lsp_types::MarkedString::String(
-                                        format!("module info: {:?}", module_syntax.header.value),
-                                    ),
-                                ),
-                                range: None,
-                            }))
-                        } else {
-                            Ok(Some(lsp_types::Hover {
-                                contents: lsp_types::HoverContents::Scalar(
-                                    lsp_types::MarkedString::String(
-                                        format!(
-                                            "I am a hover text at offset {}:{}",
-                                            hover_arguments.text_document_position_params.position.line,
-                                            hover_arguments.text_document_position_params.position.character
-                                        ),
-                                    ),
-                                ),
-                                range: None,
-                            }))
-                        }
-                    },
-                }
+                Ok(maybe_hover_result)
             }
         }).request::<lsp_types::request::GotoDefinition, _>(|_state, goto_definition_arguments| async move {
             Ok(Some(lsp_types::GotoDefinitionResponse::Scalar(lsp_types::Location {
@@ -220,43 +205,14 @@ async fn main() {
                 },
             })))
         }).request::<lsp_types::request::SemanticTokensFullRequest, _>(|state, semantic_tokens_arguments| {
-            let maybe_module_syntax =
-                semantic_tokens_arguments
-                    .text_document
-                    .uri
-                    .to_file_path()
-                    .ok()
-                    .and_then(
-                        |module_to_highlight_file_path| state
-                            .parsed_modules
-                            .get_mut(&module_to_highlight_file_path)
-                            .and_then(|module_state| {
-                                match module_state.syntax {
-                                    Some(module_syntax) => {
-                                        Some(module_syntax)
-                                    },
-                                    None => {
-                                        match elm::elm_parser_lenient_run(
-                                            elm::elm_parser_lenient_module_(state.clear_reconstruct_allocator),
-                                            elm::StringString::One(module_state.source),
-                                        ) {
-                                            None => {
-                                                None
-                                            },
-                                            Some(parsed_elm_module) => {
-                                                module_state.syntax = Some(parsed_elm_module);
-                                                Some(parsed_elm_module)
-                                            },
-                                        }
-                                    },
-                                }
-                            }),
-                    );
-            let semantic_tokens = maybe_module_syntax.and_then(|module_syntax| {
+            let handle_semantic_tokens = |module_syntax: &ElmSyntaxModule| {
                 let highlight_allocator = bumpalo::Bump::new();
                 Some(lsp_types::SemanticTokensResult::Tokens(lsp_types::SemanticTokens {
                     result_id: None,
-                    data: elm::elm_syntax_highlight_for(&highlight_allocator, module_syntax)
+                    data: elm::elm_syntax_highlight_for(
+                        &highlight_allocator,
+                        elm_syntax_module_from_persistent(&highlight_allocator, &module_syntax),
+                    )
                         .into_iter()
                         .scan(elm::TextGridLocation {
                             line: 1,
@@ -277,7 +233,39 @@ async fn main() {
                         })
                         .collect::<Vec<lsp_types::SemanticToken>>(),
                 }))
-            });
+            };
+            let semantic_tokens =
+                semantic_tokens_arguments
+                    .text_document
+                    .uri
+                    .to_file_path()
+                    .ok()
+                    .and_then(|file_path| state.parsed_modules.get_mut(&file_path).and_then(|module_state| {
+                        match module_state.syntax {
+                            Some(ref module_syntax) => {
+                                handle_semantic_tokens(module_syntax)
+                            },
+                            None => {
+                                let parse_allocator: bumpalo::Bump = bumpalo::Bump::new();
+                                match elm::elm_parser_lenient_run(
+                                    elm::elm_parser_lenient_module_(&parse_allocator),
+                                    elm::StringString::One(&module_state.source),
+                                ) {
+                                    None => {
+                                        None
+                                    },
+                                    Some(parsed_elm_module) => {
+                                        let parsed_elm_module_persistent =
+                                            elm_syntax_module_to_persistent(parsed_elm_module);
+                                        let semantic_tokens_result =
+                                            handle_semantic_tokens(&parsed_elm_module_persistent);
+                                        module_state.syntax = Some(parsed_elm_module_persistent);
+                                        semantic_tokens_result
+                                    },
+                                }
+                            },
+                        }
+                    }));
             async move {
                 Ok(semantic_tokens)
             }
@@ -299,9 +287,8 @@ async fn main() {
                         // bug in client. full document should be sent
                     },
                     Some(file_content) => {
-                        let file_content_str: &str = state.clear_reconstruct_allocator.alloc(file_content);
                         state.parsed_modules.insert(changed_file_path, ModuleState {
-                            source: file_content_str,
+                            source: file_content,
                             syntax: None,
                         });
                     },
@@ -318,43 +305,12 @@ async fn main() {
                 match std::fs::read_to_string(&changed_file_path) {
                     Err(_) => { },
                     Ok(file_content) => {
-                        let file_content_str: &str = state.clear_reconstruct_allocator.alloc(file_content);
                         state.parsed_modules.insert(changed_file_path, ModuleState {
-                            source: file_content_str,
+                            source: file_content,
                             syntax: None,
                         });
                     },
                 }
-            }
-
-            // regularly clear the allocator and re-allocate sources and re-populate module
-            // states. I'm not sure this is generally safe given async is involved but I
-            // believe it should be for this language server since _.notification specifically
-            // is synchronous and (so far) the rest of the code only uses async with immediate
-            // returns.
-            if std::time::Instant::now().duration_since(state.last_allocator_clear_time) >= 
-                // TODO increase duration once parsing and document sync is more incremental and
-                // therefore memory garbage is lower
-                std::time::Duration::from_secs(30) {
-                let modules_to_reparse = state.parsed_modules.iter().map(|(file_path, module_state)| {
-                    (file_path, module_state.source.to_string())
-                });
-
-                // no need to state.parsed_modules.clear(); because all entries will be overridden
-                // by the reparsed module state
-                unsafe {
-                    ref_to_mut(state.clear_reconstruct_allocator).reset();
-                }
-                let mut reparsed_modules = std::collections::HashMap::new();
-                for (module_file_path, module_source_to_reparse) in modules_to_reparse {
-                    let file_content_str: &str = state.clear_reconstruct_allocator.alloc(module_source_to_reparse);
-                    reparsed_modules.insert(module_file_path.clone(), ModuleState {
-                        source: file_content_str,
-                        syntax: None,
-                    });
-                }
-                state.parsed_modules = reparsed_modules;
-                state.last_allocator_clear_time = std::time::Instant::now();
             }
             std::ops::ControlFlow::Continue(())
         }).notification::<lsp_types::notification::DidSaveTextDocument>(|_state, _| {
@@ -382,6 +338,15 @@ async fn main() {
     server.run_buffered(stdin, stdout).await.unwrap();
 }
 
+fn lsp_range_includes_position(range: lsp_types::Range, location: lsp_types::Position) -> bool {
+    // location >= range.start
+    ((location.line > range.start.line) ||
+        ((location.line == range.start.line) && (location.character >= range.start.character))) &&
+        // location <= range.end
+        ((location.line < range.end.line) ||
+            ((location.line == range.end.line) && (location.character >= range.end.character)))
+}
+
 fn elm_syntax_highlight_syntax_kind_to_lsp_semantic_token_type(
     elm_syntax_highlight_syntax_kind: elm::ElmSyntaxHighlightSyntaxKind,
 ) -> lsp_types::SemanticTokenType {
@@ -405,6 +370,27 @@ fn lsp_position_to_text_grid_location(lsp_position: lsp_types::Position) -> elm:
     elm::GeneratedColumnLine {
         line: (lsp_position.line + 1) as i64,
         column: (lsp_position.character + 1) as i64,
+    }
+}
+
+fn lsp_range_to_text_grid_range(lsp_range: lsp_types::Range) -> elm::TextGridRange {
+    elm::GeneratedEndStart {
+        start: lsp_position_to_text_grid_location(lsp_range.start),
+        end: lsp_position_to_text_grid_location(lsp_range.end),
+    }
+}
+
+fn text_grid_location_to_lsp_position(text_grid_location: elm::TextGridLocation) -> lsp_types::Position {
+    lsp_types::Position {
+        line: (text_grid_location.line - 1) as u32,
+        character: (text_grid_location.column - 1) as u32,
+    }
+}
+
+fn text_grid_range_to_lsp_range(text_grid_range: elm::TextGridRange) -> lsp_types::Range {
+    lsp_types::Range {
+        start: text_grid_location_to_lsp_position(text_grid_range.start),
+        end: text_grid_location_to_lsp_position(text_grid_range.end),
     }
 }
 
@@ -437,8 +423,1680 @@ fn list_elm_files_in_source_directory_at_path_into(
     Ok(())
 }
 
-unsafe fn ref_to_mut<T: ?Sized>(val: &T) -> &mut T {
-    unsafe {
-        (val as *const T as *mut T).as_mut().unwrap_unchecked()
+// // // below persistent rust types and conversions to and from temporary elm
+// types
+#[derive(Clone, Debug, PartialEq)]
+enum ElmSyntaxType {
+    Construct {
+        reference: ElmSyntaxNode<elm::GeneratedNameQualification<String, String>>,
+        arguments: Vec<ElmSyntaxNode<ElmSyntaxType>>,
+    },
+    Function {
+        input: ElmSyntaxNode<Box<ElmSyntaxType>>,
+        arrow_key_symbol_range: lsp_types::Range,
+        output: ElmSyntaxNode<Box<ElmSyntaxType>>,
+    },
+    Parenthesized(ElmSyntaxNode<Box<ElmSyntaxType>>),
+    Record(
+        Vec<
+            elm
+            ::GeneratedColonKeySymbolRangeNameValue<
+                lsp_types::Range,
+                ElmSyntaxNode<String>,
+                ElmSyntaxNode<ElmSyntaxType>,
+            >,
+        >,
+    ),
+    RecordExtension {
+        record_variable: ElmSyntaxNode<String>,
+        bar_key_symbol_range: lsp_types::Range,
+        field0: elm
+        ::GeneratedColonKeySymbolRangeNameValue<
+            lsp_types::Range,
+            ElmSyntaxNode<String>,
+            ElmSyntaxNode<Box<ElmSyntaxType>>,
+        >,
+        field1_up: Vec<
+            elm
+            ::GeneratedColonKeySymbolRangeNameValue<
+                lsp_types::Range,
+                ElmSyntaxNode<String>,
+                ElmSyntaxNode<ElmSyntaxType>,
+            >,
+        >,
+    },
+    Triple {
+        part0: ElmSyntaxNode<Box<ElmSyntaxType>>,
+        part1: ElmSyntaxNode<Box<ElmSyntaxType>>,
+        part2: ElmSyntaxNode<Box<ElmSyntaxType>>,
+    },
+    Tuple {
+        part0: ElmSyntaxNode<Box<ElmSyntaxType>>,
+        part1: ElmSyntaxNode<Box<ElmSyntaxType>>,
+    },
+    Unit,
+    Variable(String),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum ElmSyntaxPattern {
+    As {
+        pattern: ElmSyntaxNode<Box<ElmSyntaxPattern>>,
+        as_keyword_range: lsp_types::Range,
+        variable: ElmSyntaxNode<String>,
+    },
+    Char(char),
+    Ignored,
+    Int {
+        base: elm::ElmSyntaxIntBase,
+        value: i64,
+    },
+    ListCons {
+        cons_key_symbol: lsp_types::Range,
+        head: ElmSyntaxNode<Box<ElmSyntaxPattern>>,
+        tail: ElmSyntaxNode<Box<ElmSyntaxPattern>>,
+    },
+    ListExact(Vec<ElmSyntaxNode<ElmSyntaxPattern>>),
+    Parenthesized(ElmSyntaxNode<Box<ElmSyntaxPattern>>),
+    Record(Vec<ElmSyntaxNode<String>>),
+    String {
+        content: String,
+        quoting_style: elm::ElmSyntaxStringQuotingStyle,
+    },
+    Triple {
+        part0: ElmSyntaxNode<Box<ElmSyntaxPattern>>,
+        part1: ElmSyntaxNode<Box<ElmSyntaxPattern>>,
+        part2: ElmSyntaxNode<Box<ElmSyntaxPattern>>,
+    },
+    Tuple {
+        part0: ElmSyntaxNode<Box<ElmSyntaxPattern>>,
+        part1: ElmSyntaxNode<Box<ElmSyntaxPattern>>,
+    },
+    Unit,
+    Variable(String),
+    Variant {
+        reference: ElmSyntaxNode<elm::GeneratedNameQualification<String, String>>,
+        values: Vec<ElmSyntaxNode<ElmSyntaxPattern>>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum ElmSyntaxModuleHeaderSpecific {
+    Effect {
+        module_keyword_range: lsp_types::Range,
+        command: Option<ElmSyntaxNode<String>>,
+        subscription: Option<ElmSyntaxNode<String>>,
+    },
+    Port {
+        module_keyword_range: lsp_types::Range,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum ElmSyntaxLetDeclaration {
+    Destructuring {
+        pattern: ElmSyntaxNode<ElmSyntaxPattern>,
+        equals_key_symbol_range: lsp_types::Range,
+        expression: ElmSyntaxNode<ElmSyntaxExpression>,
+    },
+    ValueOrFunctionDeclaration {
+        name: String,
+        signature: Option<elm::GeneratedNameType0<ElmSyntaxNode<String>, ElmSyntaxNode<ElmSyntaxType>>>,
+        implementation_name_range: lsp_types::Range,
+        parameters: Vec<ElmSyntaxNode<ElmSyntaxPattern>>,
+        equals_key_symbol_range: lsp_types::Range,
+        result: ElmSyntaxNode<ElmSyntaxExpression>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum ElmSyntaxExpression {
+    Call {
+        called: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+        argument0: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+        argument1_up: Vec<ElmSyntaxNode<ElmSyntaxExpression>>,
+    },
+    CaseOf {
+        matched: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+        of_keyword_range: lsp_types::Range,
+        case0: elm
+        ::GeneratedArrowKeySymbolRangePatternResult<
+            lsp_types::Range,
+            ElmSyntaxNode<ElmSyntaxPattern>,
+            ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+        >,
+        case1_up: Vec<
+            elm
+            ::GeneratedArrowKeySymbolRangePatternResult<
+                lsp_types::Range,
+                ElmSyntaxNode<ElmSyntaxPattern>,
+                ElmSyntaxNode<ElmSyntaxExpression>,
+            >,
+        >,
+    },
+    Char(char),
+    Float(f64),
+    IfThenElse {
+        condition: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+        then_keyword_range: lsp_types::Range,
+        on_true: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+        else_keyword_range: lsp_types::Range,
+        on_false: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+    },
+    InfixOperation {
+        left: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+        operator: ElmSyntaxNode<String>,
+        right: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+    },
+    Integer {
+        value: i64,
+        base: elm::ElmSyntaxIntBase,
+    },
+    Lambda {
+        arrow_key_symbol_range: lsp_types::Range,
+        parameter0: ElmSyntaxNode<ElmSyntaxPattern>,
+        parameter1_up: Vec<ElmSyntaxNode<ElmSyntaxPattern>>,
+        result: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+    },
+    LetIn {
+        declaration0: ElmSyntaxNode<Box<ElmSyntaxLetDeclaration>>,
+        declaration1_up: Vec<ElmSyntaxNode<ElmSyntaxLetDeclaration>>,
+        in_keyword_range: lsp_types::Range,
+        result: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+    },
+    List(Vec<ElmSyntaxNode<ElmSyntaxExpression>>),
+    Negation(ElmSyntaxNode<Box<ElmSyntaxExpression>>),
+    OperatorFunction(String),
+    Parenthesized(ElmSyntaxNode<Box<ElmSyntaxExpression>>),
+    Record(
+        Vec<
+            elm
+            ::GeneratedEqualsKeySymbolRangeNameValue<
+                lsp_types::Range,
+                ElmSyntaxNode<String>,
+                ElmSyntaxNode<ElmSyntaxExpression>,
+            >,
+        >,
+    ),
+    RecordAccess {
+        record: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+        field: ElmSyntaxNode<String>,
+    },
+    RecordAccessFunction(String),
+    RecordUpdate {
+        record_variable: ElmSyntaxNode<String>,
+        bar_key_symbol_range: lsp_types::Range,
+        field0: elm
+        ::GeneratedEqualsKeySymbolRangeNameValue<
+            lsp_types::Range,
+            ElmSyntaxNode<String>,
+            ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+        >,
+        field1_up: Vec<
+            elm
+            ::GeneratedEqualsKeySymbolRangeNameValue<
+                lsp_types::Range,
+                ElmSyntaxNode<String>,
+                ElmSyntaxNode<ElmSyntaxExpression>,
+            >,
+        >,
+    },
+    Reference(elm::GeneratedNameQualification<String, String>),
+    String {
+        content: String,
+        quoting_style: elm::ElmSyntaxStringQuotingStyle,
+    },
+    Triple {
+        part0: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+        part1: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+        part2: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+    },
+    Tuple {
+        part0: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+        part1: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+    },
+    Unit,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum ElmSyntaxExposing {
+    All(lsp_types::Range),
+    Explicit(Vec<ElmSyntaxNode<ElmSyntaxExpose>>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum ElmSyntaxExpose {
+    ChoiceTypeIncludingVariants {
+        name: ElmSyntaxNode<String>,
+        open_range: lsp_types::Range,
+    },
+    Operator(String),
+    TypeName(String),
+    Variable(String),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum ElmSyntaxDeclaration {
+    ChoiceType {
+        name: ElmSyntaxNode<String>,
+        parameters: Vec<ElmSyntaxNode<String>>,
+        equals_key_symbol_range: lsp_types::Range,
+        variant0: elm::GeneratedNameValues<ElmSyntaxNode<String>, Vec<ElmSyntaxNode<ElmSyntaxType>>>,
+        variant1_up: Vec<
+            elm
+            ::GeneratedNameOrKeySymbolRangeValues<
+                ElmSyntaxNode<String>,
+                lsp_types::Range,
+                Vec<ElmSyntaxNode<ElmSyntaxType>>,
+            >,
+        >,
+    },
+    Operator {
+        direction: ElmSyntaxNode<elm::ElmSyntaxInfixDirection>,
+        operator: ElmSyntaxNode<String>,
+        function: ElmSyntaxNode<String>,
+        precedence: ElmSyntaxNode<i64>,
+    },
+    Port {
+        name: ElmSyntaxNode<String>,
+        type_: ElmSyntaxNode<ElmSyntaxType>,
+    },
+    TypeAlias {
+        alias_keyword_range: lsp_types::Range,
+        equals_key_symbol_range: lsp_types::Range,
+        name: ElmSyntaxNode<String>,
+        parameters: Vec<ElmSyntaxNode<String>>,
+        type_: ElmSyntaxNode<ElmSyntaxType>,
+    },
+    ValueOrFunction {
+        name: String,
+        signature: Option<elm::GeneratedNameType0<ElmSyntaxNode<String>, ElmSyntaxNode<ElmSyntaxType>>>,
+        implementation_name_range: lsp_types::Range,
+        parameters: Vec<ElmSyntaxNode<ElmSyntaxPattern>>,
+        equals_key_symbol_range: lsp_types::Range,
+        result: ElmSyntaxNode<ElmSyntaxExpression>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ElmSyntaxNode<Value> {
+    range: lsp_types::Range,
+    value: Value,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ElmSyntaxModuleHeader {
+    exposing: ElmSyntaxNode<ElmSyntaxExposing>,
+    module_name: ElmSyntaxNode<String>,
+    specific: Option<ElmSyntaxModuleHeaderSpecific>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ElmSyntaxModule {
+    header: ElmSyntaxNode<ElmSyntaxModuleHeader>,
+    imports: Vec<ElmSyntaxNode<ElmSyntaxImport>>,
+    comments: Vec<ElmSyntaxNode<String>>,
+    declarations: Vec<
+        elm::GeneratedDeclarationDocumentation<ElmSyntaxNode<ElmSyntaxDeclaration>, Option<ElmSyntaxNode<String>>>,
+    >,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ElmSyntaxImport {
+    module_name: ElmSyntaxNode<String>,
+    alias: Option<elm::GeneratedAsKeywordRangeName<lsp_types::Range, ElmSyntaxNode<String>>>,
+    exposing: Option<ElmSyntaxNode<ElmSyntaxExposing>>,
+}
+
+fn elm_syntax_node_from_persistent<
+    Value,
+    ValuePersistent,
+>(
+    elm_syntax_node: ElmSyntaxNode<ValuePersistent>,
+    value_from_persistent: impl Fn(ValuePersistent) -> Value,
+) -> elm::ElmSyntaxNode<Value> {
+    elm::GeneratedRangeValue {
+        range: lsp_range_to_text_grid_range(elm_syntax_node.range),
+        value: value_from_persistent(elm_syntax_node.value),
+    }
+}
+
+fn elm_syntax_node_from_persistent_ref<
+    'a,
+    Value,
+    ValuePersistent,
+>(
+    elm_syntax_node: &'a ElmSyntaxNode<ValuePersistent>,
+    value_from_persistent: impl Fn(&'a ValuePersistent) -> Value,
+) -> elm::ElmSyntaxNode<Value> {
+    elm::GeneratedRangeValue {
+        range: lsp_range_to_text_grid_range(elm_syntax_node.range),
+        value: value_from_persistent(&elm_syntax_node.value),
+    }
+}
+
+fn elm_syntax_node_string_from_persistent<
+    'a,
+>(elm_syntax_node: &'a ElmSyntaxNode<String>) -> elm::ElmSyntaxNode<elm::StringString<'a>> {
+    elm_syntax_node_from_persistent_ref(elm_syntax_node, |value| elm::StringString::One(value))
+}
+
+fn elm_syntax_module_from_persistent<
+    'a,
+>(allocator: &'a bumpalo::Bump, elm_syntax_module_persistent: &'a ElmSyntaxModule) -> elm::ElmSyntaxModule<'a> {
+    elm::GeneratedCommentsDeclarationsHeaderImports {
+        header: elm_syntax_node_from_persistent_ref(
+            &elm_syntax_module_persistent.header,
+            |header| elm_syntax_module_header_from_persistent(allocator, header),
+        ),
+        imports: elm::double_ended_iterator_to_list(
+            allocator,
+            elm_syntax_module_persistent
+                .imports
+                .iter()
+                .map(
+                    |import_node| elm_syntax_node_from_persistent_ref(
+                        import_node,
+                        |import| elm_syntax_import_from_persistent(allocator, import),
+                    ),
+                ),
+        ),
+        comments: elm::double_ended_iterator_to_list(
+            allocator,
+            elm_syntax_module_persistent
+                .comments
+                .iter()
+                .map(|comment_node| elm_syntax_node_string_from_persistent(comment_node)),
+        ),
+        declarations: elm::double_ended_iterator_to_list(
+            allocator,
+            elm_syntax_module_persistent
+                .declarations
+                .iter()
+                .map(|documented_declaration_node| elm::GeneratedDeclarationDocumentation {
+                    documentation: documented_declaration_node
+                        .documentation
+                        .as_ref()
+                        .map(|documentation_node| elm_syntax_node_string_from_persistent(documentation_node)),
+                    declaration: elm_syntax_node_from_persistent_ref(
+                        &documented_declaration_node.declaration,
+                        |declaration| elm_syntax_declaration_from_persistent(allocator, declaration),
+                    ),
+                }),
+        ),
+    }
+}
+
+fn elm_syntax_import_from_persistent<
+    'a,
+>(allocator: &'a bumpalo::Bump, elm_syntax_import: &'a ElmSyntaxImport) -> elm::ElmSyntaxImport<'a> {
+    elm::GeneratedAliasExposing0ModuleName {
+        module_name: elm_syntax_node_string_from_persistent(&elm_syntax_import.module_name),
+        alias: elm_syntax_import.alias.as_ref().map(|alias| elm::GeneratedAsKeywordRangeName {
+            as_keyword_range: lsp_range_to_text_grid_range(alias.as_keyword_range),
+            name: elm_syntax_node_string_from_persistent(&alias.name),
+        }),
+        exposing_: elm_syntax_import
+            .exposing
+            .as_ref()
+            .map(
+                |exposing_node| elm_syntax_node_from_persistent_ref(
+                    exposing_node,
+                    |exposing| elm_syntax_exposing_from_persistent(allocator, exposing),
+                ),
+            ),
+    }
+}
+
+fn elm_syntax_declaration_from_persistent<
+    'a,
+>(
+    allocator: &'a bumpalo::Bump,
+    elm_syntax_declaration_persistent: &'a ElmSyntaxDeclaration,
+) -> elm::ElmSyntaxDeclaration<'a> {
+    match elm_syntax_declaration_persistent {
+        ElmSyntaxDeclaration::ChoiceType { name, parameters, equals_key_symbol_range, variant0, variant1_up } => elm
+        ::ElmSyntaxDeclaration
+        ::DeclarationChoiceType(
+            elm::GeneratedEqualsKeySymbolRangeNameParametersVariant0Variant1Up {
+                name: elm_syntax_node_string_from_persistent(name),
+                parameters: elm::double_ended_iterator_to_list(
+                    allocator,
+                    parameters.iter().map(elm_syntax_node_string_from_persistent),
+                ),
+                equals_key_symbol_range: lsp_range_to_text_grid_range(*equals_key_symbol_range),
+                variant0: elm::GeneratedNameValues {
+                    name: elm_syntax_node_string_from_persistent(&variant0.name),
+                    values: elm::double_ended_iterator_to_list(
+                        allocator,
+                        variant0
+                            .values
+                            .iter()
+                            .map(|variant_value| elm_syntax_node_type_from_persistent(allocator, variant_value)),
+                    ),
+                },
+                variant1_up: elm::double_ended_iterator_to_list(
+                    allocator,
+                    variant1_up.iter().map(|variant| elm::GeneratedNameOrKeySymbolRangeValues {
+                        or_key_symbol_range: lsp_range_to_text_grid_range(variant.or_key_symbol_range),
+                        name: elm_syntax_node_string_from_persistent(&variant.name),
+                        values: elm::double_ended_iterator_to_list(
+                            allocator,
+                            variant
+                                .values
+                                .iter()
+                                .map(|variant_value| elm_syntax_node_type_from_persistent(allocator, variant_value)),
+                        ),
+                    }),
+                ),
+            },
+        ),
+        ElmSyntaxDeclaration::Operator { precedence, operator, function, direction } => elm
+        ::ElmSyntaxDeclaration
+        ::DeclarationOperator(
+            elm::GeneratedDirectionFunctionOperatorPrecedence {
+                precedence: elm_syntax_node_from_persistent(*precedence, |precedence| precedence),
+                direction: elm_syntax_node_from_persistent(*direction, |direction| direction),
+                operator: elm_syntax_node_string_from_persistent(operator),
+                function: elm_syntax_node_string_from_persistent(function),
+            },
+        ),
+        ElmSyntaxDeclaration::Port { name, type_ } => elm::ElmSyntaxDeclaration::DeclarationPort(
+            elm::GeneratedNameType0 {
+                name: elm_syntax_node_string_from_persistent(name),
+                type_1: elm_syntax_node_type_from_persistent(allocator, type_),
+            },
+        ),
+        ElmSyntaxDeclaration
+        ::TypeAlias {
+            alias_keyword_range,
+            name,
+            parameters,
+            equals_key_symbol_range,
+            type_,
+        } => elm
+        ::ElmSyntaxDeclaration
+        ::DeclarationTypeAlias(
+            elm::GeneratedAliasKeywordRangeEqualsKeySymbolRangeNameParametersType0 {
+                name: elm_syntax_node_string_from_persistent(name),
+                alias_keyword_range: lsp_range_to_text_grid_range(*alias_keyword_range),
+                parameters: elm::double_ended_iterator_to_list(
+                    allocator,
+                    parameters.iter().map(|parameter_node| elm_syntax_node_string_from_persistent(parameter_node)),
+                ),
+                equals_key_symbol_range: lsp_range_to_text_grid_range(*equals_key_symbol_range),
+                type_1: elm_syntax_node_type_from_persistent(allocator, type_),
+            },
+        ),
+        ElmSyntaxDeclaration
+        ::ValueOrFunction {
+            name,
+            signature,
+            implementation_name_range,
+            parameters,
+            equals_key_symbol_range,
+            result,
+        } => elm
+        ::ElmSyntaxDeclaration
+        ::DeclarationValueOrFunction(
+            elm::GeneratedEqualsKeySymbolRangeImplementationNameRangeNameParametersResultSignature {
+                name: elm::StringString::One(name),
+                signature: signature.as_ref().map(|signature| elm::GeneratedNameType0 {
+                    name: elm_syntax_node_string_from_persistent(&signature.name),
+                    type_1: elm_syntax_node_type_from_persistent(allocator, &signature.type_1),
+                }),
+                implementation_name_range: lsp_range_to_text_grid_range(*implementation_name_range),
+                parameters: elm::double_ended_iterator_to_list(
+                    allocator,
+                    parameters
+                        .iter()
+                        .map(|parameter_node| elm_syntax_node_pattern_from_persistent(allocator, parameter_node)),
+                ),
+                equals_key_symbol_range: lsp_range_to_text_grid_range(*equals_key_symbol_range),
+                result: elm_syntax_node_expression_from_persistent(allocator, result),
+            },
+        ),
+    }
+}
+
+fn elm_syntax_node_type_from_persistent<
+    'a,
+>(
+    allocator: &'a bumpalo::Bump,
+    elm_syntax_type_node: &'a ElmSyntaxNode<ElmSyntaxType>,
+) -> elm::ElmSyntaxNode<elm::ElmSyntaxType<'a>> {
+    elm_syntax_node_from_persistent_ref(
+        elm_syntax_type_node,
+        |type_| elm_syntax_type_from_persistent(allocator, type_),
+    )
+}
+
+fn elm_syntax_node_type_from_persistent_box<
+    'a,
+>(
+    allocator: &'a bumpalo::Bump,
+    elm_syntax_type_node: &'a ElmSyntaxNode<Box<ElmSyntaxType>>,
+) -> elm::ElmSyntaxNode<elm::ElmSyntaxType<'a>> {
+    elm_syntax_node_from_persistent_ref(
+        elm_syntax_type_node,
+        |type_| elm_syntax_type_from_persistent(allocator, type_),
+    )
+}
+
+fn elm_syntax_node_pattern_from_persistent<
+    'a,
+>(
+    allocator: &'a bumpalo::Bump,
+    elm_syntax_pattern_node: &'a ElmSyntaxNode<ElmSyntaxPattern>,
+) -> elm::ElmSyntaxNode<elm::ElmSyntaxPattern<'a>> {
+    elm_syntax_node_from_persistent_ref(
+        elm_syntax_pattern_node,
+        |pattern| elm_syntax_pattern_from_persistent(allocator, pattern),
+    )
+}
+
+fn elm_syntax_node_pattern_from_persistent_box<
+    'a,
+>(
+    allocator: &'a bumpalo::Bump,
+    elm_syntax_pattern_node: &'a ElmSyntaxNode<Box<ElmSyntaxPattern>>,
+) -> elm::ElmSyntaxNode<elm::ElmSyntaxPattern<'a>> {
+    elm_syntax_node_from_persistent_ref(
+        elm_syntax_pattern_node,
+        |pattern| elm_syntax_pattern_from_persistent(allocator, pattern),
+    )
+}
+
+fn elm_syntax_node_expression_from_persistent<
+    'a,
+>(
+    allocator: &'a bumpalo::Bump,
+    elm_syntax_expression_node: &'a ElmSyntaxNode<ElmSyntaxExpression>,
+) -> elm::ElmSyntaxNode<elm::ElmSyntaxExpression<'a>> {
+    elm_syntax_node_from_persistent_ref(
+        elm_syntax_expression_node,
+        |pattern| elm_syntax_expression_from_persistent(allocator, pattern),
+    )
+}
+
+fn elm_syntax_node_expression_from_persistent_box<
+    'a,
+>(
+    allocator: &'a bumpalo::Bump,
+    elm_syntax_expression_node: &'a ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+) -> elm::ElmSyntaxNode<elm::ElmSyntaxExpression<'a>> {
+    elm_syntax_node_from_persistent_ref(
+        elm_syntax_expression_node,
+        |pattern| elm_syntax_expression_from_persistent(allocator, pattern),
+    )
+}
+
+fn elm_syntax_pattern_from_persistent<
+    'a,
+>(allocator: &'a bumpalo::Bump, elm_syntax_pattern: &'a ElmSyntaxPattern) -> elm::ElmSyntaxPattern<'a> {
+    match elm_syntax_pattern {
+        ElmSyntaxPattern::As { pattern, as_keyword_range, variable } => elm::ElmSyntaxPattern::PatternAs(
+            allocator.alloc(elm::GeneratedAsKeywordRangePatternVariable {
+                pattern: elm_syntax_node_pattern_from_persistent_box(allocator, pattern),
+                as_keyword_range: lsp_range_to_text_grid_range(*as_keyword_range),
+                variable: elm_syntax_node_string_from_persistent(variable),
+            }),
+        ),
+        ElmSyntaxPattern::Char(char) => elm::ElmSyntaxPattern::PatternChar(*char),
+        ElmSyntaxPattern::Ignored => elm::ElmSyntaxPattern::PatternIgnored,
+        ElmSyntaxPattern::Int { base, value } => elm::ElmSyntaxPattern::PatternInt(elm::GeneratedBaseValue {
+            value: *value,
+            base: *base,
+        }),
+        ElmSyntaxPattern::ListCons { cons_key_symbol, head, tail } => elm::ElmSyntaxPattern::PatternListCons(
+            allocator.alloc(elm::GeneratedConsKeySymbolRangeHeadTail {
+                head: elm_syntax_node_pattern_from_persistent_box(allocator, head),
+                cons_key_symbol_range: lsp_range_to_text_grid_range(*cons_key_symbol),
+                tail: elm_syntax_node_pattern_from_persistent_box(allocator, tail),
+            }),
+        ),
+        ElmSyntaxPattern::ListExact(elements) => elm::ElmSyntaxPattern::PatternListExact(
+            allocator.alloc(
+                elm::double_ended_iterator_to_list(
+                    allocator,
+                    elements.iter().map(|element| elm_syntax_node_pattern_from_persistent(allocator, element)),
+                ),
+            ),
+        ),
+        ElmSyntaxPattern::Parenthesized(in_parens) => elm::ElmSyntaxPattern::PatternParenthesized(
+            allocator.alloc(elm_syntax_node_pattern_from_persistent_box(allocator, in_parens)),
+        ),
+        ElmSyntaxPattern::Record(fields) => elm::ElmSyntaxPattern::PatternRecord(
+            elm::double_ended_iterator_to_list(
+                allocator,
+                fields.iter().map(|field| elm_syntax_node_string_from_persistent(field)),
+            ),
+        ),
+        ElmSyntaxPattern::String { content, quoting_style } => elm::ElmSyntaxPattern::PatternString(
+            elm::GeneratedContentQuotingStyle {
+                quoting_style: *quoting_style,
+                content: elm::StringString::One(content),
+            },
+        ),
+        ElmSyntaxPattern::Triple { part0, part1, part2 } => elm::ElmSyntaxPattern::PatternTriple(
+            allocator.alloc(elm::GeneratedPart0Part1Part2 {
+                part0: elm_syntax_node_pattern_from_persistent_box(allocator, part0),
+                part1: elm_syntax_node_pattern_from_persistent_box(allocator, part1),
+                part2: elm_syntax_node_pattern_from_persistent_box(allocator, part2),
+            }),
+        ),
+        ElmSyntaxPattern::Tuple { part0, part1 } => elm::ElmSyntaxPattern::PatternTuple(
+            allocator.alloc(elm::GeneratedPart0Part1 {
+                part0: elm_syntax_node_pattern_from_persistent_box(allocator, part0),
+                part1: elm_syntax_node_pattern_from_persistent_box(allocator, part1),
+            }),
+        ),
+        ElmSyntaxPattern::Unit => elm::ElmSyntaxPattern::PatternUnit,
+        ElmSyntaxPattern::Variable(name) => elm::ElmSyntaxPattern::PatternVariable(elm::StringString::One(name)),
+        ElmSyntaxPattern::Variant { reference: reference_node, values } => elm::ElmSyntaxPattern::PatternVariant(
+            allocator.alloc(elm::GeneratedReferenceValues {
+                reference: elm_syntax_node_from_persistent_ref(
+                    reference_node,
+                    |reference| elm::GeneratedNameQualification {
+                        qualification: elm::StringString::One(&reference.qualification),
+                        name: elm::StringString::One(&reference.name),
+                    },
+                ),
+                values: elm::double_ended_iterator_to_list(
+                    allocator,
+                    values.iter().map(|value| elm_syntax_node_pattern_from_persistent(allocator, value)),
+                ),
+            }),
+        ),
+    }
+}
+
+fn elm_syntax_expression_from_persistent<
+    'a,
+>(allocator: &'a bumpalo::Bump, elm_syntax_expression: &'a ElmSyntaxExpression) -> elm::ElmSyntaxExpression<'a> {
+    match elm_syntax_expression {
+        ElmSyntaxExpression::Call { called, argument0, argument1_up } => elm::ElmSyntaxExpression::ExpressionCall(
+            allocator.alloc(elm::GeneratedArgument0Argument1UpCalled {
+                called: elm_syntax_node_expression_from_persistent_box(allocator, called),
+                argument0: elm_syntax_node_expression_from_persistent_box(allocator, argument0),
+                argument1_up: elm::double_ended_iterator_to_list(
+                    allocator,
+                    argument1_up
+                        .iter()
+                        .map(|argument| elm_syntax_node_expression_from_persistent(allocator, argument)),
+                ),
+            }),
+        ),
+        ElmSyntaxExpression::CaseOf { matched, of_keyword_range, case0, case1_up } => elm
+        ::ElmSyntaxExpression
+        ::ExpressionCaseOf(
+            allocator.alloc(elm::GeneratedCase0Case1UpMatchedOfKeywordRange {
+                matched: elm_syntax_node_expression_from_persistent_box(allocator, matched),
+                of_keyword_range: lsp_range_to_text_grid_range(*of_keyword_range),
+                case0: elm::GeneratedArrowKeySymbolRangePatternResult {
+                    pattern: elm_syntax_node_pattern_from_persistent(allocator, &case0.pattern),
+                    arrow_key_symbol_range: lsp_range_to_text_grid_range(case0.arrow_key_symbol_range),
+                    result: elm_syntax_node_expression_from_persistent_box(allocator, &case0.result),
+                },
+                case1_up: elm::double_ended_iterator_to_list(
+                    allocator,
+                    case1_up.iter().map(|case| elm::GeneratedArrowKeySymbolRangePatternResult {
+                        pattern: elm_syntax_node_pattern_from_persistent(allocator, &case.pattern),
+                        arrow_key_symbol_range: lsp_range_to_text_grid_range(case.arrow_key_symbol_range),
+                        result: elm_syntax_node_expression_from_persistent(allocator, &case.result),
+                    }),
+                ),
+            }),
+        ),
+        ElmSyntaxExpression::Char(char) => elm::ElmSyntaxExpression::ExpressionChar(*char),
+        ElmSyntaxExpression::Float(float) => elm::ElmSyntaxExpression::ExpressionFloat(*float),
+        ElmSyntaxExpression::IfThenElse { condition, then_keyword_range, on_true, else_keyword_range, on_false } => elm
+        ::ElmSyntaxExpression
+        ::ExpressionIfThenElse(
+            allocator.alloc(elm::GeneratedConditionElseKeywordRangeOnFalseOnTrueThenKeywordRange {
+                condition: elm_syntax_node_expression_from_persistent_box(allocator, condition),
+                then_keyword_range: lsp_range_to_text_grid_range(*then_keyword_range),
+                on_true: elm_syntax_node_expression_from_persistent_box(allocator, on_true),
+                else_keyword_range: lsp_range_to_text_grid_range(*else_keyword_range),
+                on_false: elm_syntax_node_expression_from_persistent_box(allocator, on_false),
+            }),
+        ),
+        ElmSyntaxExpression::InfixOperation { left, operator, right } => elm
+        ::ElmSyntaxExpression
+        ::ExpressionInfixOperation(
+            allocator.alloc(elm::GeneratedLeftOperatorRight {
+                left: elm_syntax_node_expression_from_persistent_box(allocator, left),
+                operator: elm_syntax_node_string_from_persistent(operator),
+                right: elm_syntax_node_expression_from_persistent_box(allocator, right),
+            }),
+        ),
+        ElmSyntaxExpression::Integer { value, base } => elm::ElmSyntaxExpression::ExpressionInteger(
+            elm::GeneratedBaseValue {
+                base: *base,
+                value: *value,
+            },
+        ),
+        ElmSyntaxExpression::Lambda { arrow_key_symbol_range, parameter0, parameter1_up, result } => elm
+        ::ElmSyntaxExpression
+        ::ExpressionLambda(
+            allocator.alloc(elm::GeneratedArrowKeySymbolRangeParameter0Parameter1UpResult {
+                parameter0: elm_syntax_node_pattern_from_persistent(allocator, parameter0),
+                parameter1_up: elm::double_ended_iterator_to_list(
+                    allocator,
+                    parameter1_up
+                        .iter()
+                        .map(|parameter| elm_syntax_node_pattern_from_persistent(allocator, parameter)),
+                ),
+                arrow_key_symbol_range: lsp_range_to_text_grid_range(*arrow_key_symbol_range),
+                result: elm_syntax_node_expression_from_persistent_box(allocator, result),
+            }),
+        ),
+        ElmSyntaxExpression
+        ::LetIn {
+            declaration0: declaration0_node,
+            declaration1_up,
+            in_keyword_range,
+            result,
+        } => elm
+        ::ElmSyntaxExpression
+        ::ExpressionLetIn(
+            allocator.alloc(elm::GeneratedDeclaration0Declaration1UpInKeywordRangeResult {
+                declaration0: elm_syntax_node_from_persistent_ref(
+                    declaration0_node,
+                    |declaration| elm_syntax_let_declaration_from_persistent(allocator, declaration),
+                ),
+                declaration1_up: elm::double_ended_iterator_to_list(
+                    allocator,
+                    declaration1_up
+                        .iter()
+                        .map(
+                            |declaration_node| elm_syntax_node_from_persistent_ref(
+                                declaration_node,
+                                |declaration| elm_syntax_let_declaration_from_persistent(allocator, declaration),
+                            ),
+                        ),
+                ),
+                in_keyword_range: lsp_range_to_text_grid_range(*in_keyword_range),
+                result: elm_syntax_node_expression_from_persistent_box(allocator, result),
+            }),
+        ),
+        ElmSyntaxExpression::List(elements) => elm::ElmSyntaxExpression::ExpressionList(
+            allocator.alloc(
+                elm::double_ended_iterator_to_list(
+                    allocator,
+                    elements.iter().map(|element| elm_syntax_node_expression_from_persistent(allocator, element)),
+                ),
+            ),
+        ),
+        ElmSyntaxExpression::Negation(in_negation) => elm::ElmSyntaxExpression::ExpressionNegation(
+            allocator.alloc(elm_syntax_node_expression_from_persistent_box(allocator, in_negation)),
+        ),
+        ElmSyntaxExpression::OperatorFunction(operator) => elm::ElmSyntaxExpression::ExpressionOperatorFunction(
+            elm::StringString::One(operator),
+        ),
+        ElmSyntaxExpression::Parenthesized(in_parens) => elm::ElmSyntaxExpression::ExpressionParenthesized(
+            allocator.alloc(elm_syntax_node_expression_from_persistent_box(allocator, in_parens)),
+        ),
+        ElmSyntaxExpression::Record(fields) => elm::ElmSyntaxExpression::ExpressionRecord(
+            allocator.alloc(
+                elm::double_ended_iterator_to_list(
+                    allocator,
+                    fields.iter().map(|field| elm::GeneratedEqualsKeySymbolRangeNameValue {
+                        name: elm_syntax_node_string_from_persistent(&field.name),
+                        equals_key_symbol_range: lsp_range_to_text_grid_range(field.equals_key_symbol_range),
+                        value: elm_syntax_node_expression_from_persistent(allocator, &field.value),
+                    }),
+                ),
+            ),
+        ),
+        ElmSyntaxExpression::RecordAccess { record, field } => elm::ElmSyntaxExpression::ExpressionRecordAccess(
+            allocator.alloc(elm::GeneratedFieldRecord {
+                record: elm_syntax_node_expression_from_persistent_box(allocator, record),
+                field: elm_syntax_node_string_from_persistent(field),
+            }),
+        ),
+        ElmSyntaxExpression::RecordAccessFunction(field) => elm::ElmSyntaxExpression::ExpressionRecordAccessFunction(
+            elm::StringString::One(field),
+        ),
+        ElmSyntaxExpression::RecordUpdate { record_variable, bar_key_symbol_range, field0, field1_up } => elm
+        ::ElmSyntaxExpression
+        ::ExpressionRecordUpdate(
+            allocator.alloc(elm::GeneratedBarKeySymbolRangeField0Field1UpRecordVariable {
+                record_variable: elm_syntax_node_string_from_persistent(record_variable),
+                bar_key_symbol_range: lsp_range_to_text_grid_range(*bar_key_symbol_range),
+                field0: elm::GeneratedEqualsKeySymbolRangeNameValue {
+                    name: elm_syntax_node_string_from_persistent(&field0.name),
+                    equals_key_symbol_range: lsp_range_to_text_grid_range(field0.equals_key_symbol_range),
+                    value: elm_syntax_node_expression_from_persistent_box(allocator, &field0.value),
+                },
+                field1_up: elm::double_ended_iterator_to_list(
+                    allocator,
+                    field1_up.iter().map(|field| elm::GeneratedEqualsKeySymbolRangeNameValue {
+                        name: elm_syntax_node_string_from_persistent(&field.name),
+                        equals_key_symbol_range: lsp_range_to_text_grid_range(field.equals_key_symbol_range),
+                        value: elm_syntax_node_expression_from_persistent(allocator, &field.value),
+                    }),
+                ),
+            }),
+        ),
+        ElmSyntaxExpression::Reference(reference) => elm::ElmSyntaxExpression::ExpressionReference(
+            elm::GeneratedNameQualification {
+                qualification: elm::StringString::One(&reference.qualification),
+                name: elm::StringString::One(&reference.name),
+            },
+        ),
+        ElmSyntaxExpression::String { content, quoting_style } => elm::ElmSyntaxExpression::ExpressionString(
+            elm::GeneratedContentQuotingStyle {
+                content: elm::StringString::One(content),
+                quoting_style: *quoting_style,
+            },
+        ),
+        ElmSyntaxExpression::Triple { part0, part1, part2 } => elm::ElmSyntaxExpression::ExpressionTriple(
+            allocator.alloc(elm::GeneratedPart0Part1Part2 {
+                part0: elm_syntax_node_expression_from_persistent_box(allocator, part0),
+                part1: elm_syntax_node_expression_from_persistent_box(allocator, part1),
+                part2: elm_syntax_node_expression_from_persistent_box(allocator, part2),
+            }),
+        ),
+        ElmSyntaxExpression::Tuple { part0, part1 } => elm::ElmSyntaxExpression::ExpressionTuple(
+            allocator.alloc(elm::GeneratedPart0Part1 {
+                part0: elm_syntax_node_expression_from_persistent_box(allocator, part0),
+                part1: elm_syntax_node_expression_from_persistent_box(allocator, part1),
+            }),
+        ),
+        ElmSyntaxExpression::Unit => elm::ElmSyntaxExpression::ExpressionUnit,
+    }
+}
+
+fn elm_syntax_let_declaration_from_persistent<
+    'a,
+>(
+    allocator: &'a bumpalo::Bump,
+    elm_syntax_let_declaration: &'a ElmSyntaxLetDeclaration,
+) -> elm::ElmSyntaxLetDeclaration<'a> {
+    match elm_syntax_let_declaration {
+        ElmSyntaxLetDeclaration::Destructuring { pattern, equals_key_symbol_range, expression } => elm
+        ::ElmSyntaxLetDeclaration
+        ::LetDestructuring(
+            allocator.alloc(elm::GeneratedEqualsKeySymbolRangeExpressionPattern {
+                pattern: elm_syntax_node_pattern_from_persistent(allocator, pattern),
+                equals_key_symbol_range: lsp_range_to_text_grid_range(*equals_key_symbol_range),
+                expression: elm_syntax_node_expression_from_persistent(allocator, expression),
+            }),
+        ),
+        ElmSyntaxLetDeclaration
+        ::ValueOrFunctionDeclaration {
+            name,
+            signature,
+            implementation_name_range,
+            parameters,
+            equals_key_symbol_range,
+            result,
+        } => elm
+        ::ElmSyntaxLetDeclaration
+        ::LetValueOrFunctionDeclaration(
+            allocator.alloc(elm::GeneratedEqualsKeySymbolRangeImplementationNameRangeNameParametersResultSignature {
+                name: elm::StringString::One(name),
+                signature: signature.as_ref().map(|signature| elm::GeneratedNameType0 {
+                    name: elm_syntax_node_string_from_persistent(&signature.name),
+                    type_1: elm_syntax_node_type_from_persistent(allocator, &signature.type_1),
+                }),
+                implementation_name_range: lsp_range_to_text_grid_range(*implementation_name_range),
+                parameters: elm::double_ended_iterator_to_list(
+                    allocator,
+                    parameters
+                        .iter()
+                        .map(|parameter_node| elm_syntax_node_pattern_from_persistent(allocator, parameter_node)),
+                ),
+                equals_key_symbol_range: lsp_range_to_text_grid_range(*equals_key_symbol_range),
+                result: elm_syntax_node_expression_from_persistent(allocator, result),
+            }),
+        ),
+    }
+}
+
+fn elm_syntax_type_from_persistent<
+    'a,
+>(allocator: &'a bumpalo::Bump, elm_syntax_type: &'a ElmSyntaxType) -> elm::ElmSyntaxType<'a> {
+    match elm_syntax_type {
+        ElmSyntaxType::Construct { reference: reference_node, arguments } => elm::ElmSyntaxType::TypeConstruct(
+            allocator.alloc(elm::GeneratedArgumentsReference {
+                reference: elm_syntax_node_from_persistent_ref(
+                    reference_node,
+                    |reference| elm::GeneratedNameQualification {
+                        qualification: elm::StringString::One(&reference.qualification),
+                        name: elm::StringString::One(&reference.name),
+                    },
+                ),
+                arguments: elm::double_ended_iterator_to_list(
+                    allocator,
+                    arguments
+                        .iter()
+                        .map(|argument_node| elm_syntax_node_type_from_persistent(allocator, argument_node)),
+                ),
+            }),
+        ),
+        ElmSyntaxType::Function { input, arrow_key_symbol_range, output } => elm::ElmSyntaxType::TypeFunction(
+            allocator.alloc(elm::GeneratedArrowKeySymbolRangeInputOutput {
+                input: elm_syntax_node_type_from_persistent_box(allocator, input),
+                arrow_key_symbol_range: (lsp_range_to_text_grid_range(*arrow_key_symbol_range)),
+                output: elm_syntax_node_type_from_persistent_box(allocator, output),
+            }),
+        ),
+        ElmSyntaxType::Parenthesized(in_parens) => elm::ElmSyntaxType::TypeParenthesized(
+            allocator.alloc(elm_syntax_node_type_from_persistent_box(allocator, in_parens)),
+        ),
+        ElmSyntaxType::Record(fields) => elm::ElmSyntaxType::TypeRecord(
+            allocator.alloc(
+                elm::double_ended_iterator_to_list(
+                    allocator,
+                    fields.iter().map(|field| elm::GeneratedColonKeySymbolRangeNameValue {
+                        name: elm_syntax_node_string_from_persistent(&field.name),
+                        colon_key_symbol_range: lsp_range_to_text_grid_range(field.colon_key_symbol_range),
+                        value: elm_syntax_node_type_from_persistent(allocator, &field.value),
+                    }),
+                ),
+            ),
+        ),
+        ElmSyntaxType::RecordExtension { record_variable, bar_key_symbol_range, field0, field1_up } => elm
+        ::ElmSyntaxType
+        ::TypeRecordExtension(
+            allocator.alloc(elm::GeneratedBarKeySymbolRangeField0Field1UpRecordVariable {
+                record_variable: elm_syntax_node_string_from_persistent(record_variable),
+                bar_key_symbol_range: lsp_range_to_text_grid_range(*bar_key_symbol_range),
+                field0: elm::GeneratedColonKeySymbolRangeNameValue {
+                    name: elm_syntax_node_string_from_persistent(&field0.name),
+                    colon_key_symbol_range: lsp_range_to_text_grid_range(field0.colon_key_symbol_range),
+                    value: elm_syntax_node_type_from_persistent_box(allocator, &field0.value),
+                },
+                field1_up: elm::double_ended_iterator_to_list(
+                    allocator,
+                    field1_up.iter().map(|field| elm::GeneratedColonKeySymbolRangeNameValue {
+                        name: elm_syntax_node_string_from_persistent(&field.name),
+                        colon_key_symbol_range: lsp_range_to_text_grid_range(field.colon_key_symbol_range),
+                        value: elm_syntax_node_type_from_persistent(allocator, &field.value),
+                    }),
+                ),
+            }),
+        ),
+        ElmSyntaxType::Triple { part0, part1, part2 } => elm::ElmSyntaxType::TypeTriple(
+            allocator.alloc(elm::GeneratedPart0Part1Part2 {
+                part0: elm_syntax_node_type_from_persistent_box(allocator, part0),
+                part1: elm_syntax_node_type_from_persistent_box(allocator, part1),
+                part2: elm_syntax_node_type_from_persistent_box(allocator, part2),
+            }),
+        ),
+        ElmSyntaxType::Tuple { part0, part1 } => elm::ElmSyntaxType::TypeTuple(
+            allocator.alloc(elm::GeneratedPart0Part1 {
+                part0: elm_syntax_node_type_from_persistent_box(allocator, part0),
+                part1: elm_syntax_node_type_from_persistent_box(allocator, part1),
+            }),
+        ),
+        ElmSyntaxType::Unit => elm::ElmSyntaxType::TypeUnit,
+        ElmSyntaxType::Variable(name) => elm::ElmSyntaxType::TypeVariable(elm::StringString::One(name.as_ref())),
+    }
+}
+
+fn elm_syntax_module_header_from_persistent<
+    'a,
+>(
+    allocator: &'a bumpalo::Bump,
+    elm_syntax_module_header_persistent: &'a ElmSyntaxModuleHeader,
+) -> elm::ElmSyntaxModuleHeader<'a> {
+    elm::GeneratedExposing0ModuleNameSpecific {
+        module_name: elm_syntax_node_string_from_persistent(&elm_syntax_module_header_persistent.module_name),
+        exposing_: elm_syntax_node_from_persistent_ref(
+            &elm_syntax_module_header_persistent.exposing,
+            |exposing| elm_syntax_exposing_from_persistent(allocator, exposing),
+        ),
+        specific: elm_syntax_module_header_persistent
+            .specific
+            .as_ref()
+            .map(|ref specific| elm_syntax_module_header_specific_from_persistent(specific)),
+    }
+}
+
+fn elm_syntax_exposing_from_persistent<
+    'a,
+>(allocator: &'a bumpalo::Bump, elm_syntax_exposing_persistent: &'a ElmSyntaxExposing) -> elm::ElmSyntaxExposing<'a> {
+    match elm_syntax_exposing_persistent {
+        ElmSyntaxExposing::All(range) => elm::ElmSyntaxExposing::ExposingAll(lsp_range_to_text_grid_range(*range)),
+        ElmSyntaxExposing::Explicit(exposes) => elm::ElmSyntaxExposing::ExposingExplicit(
+            elm::double_ended_iterator_to_list(
+                allocator,
+                exposes
+                    .iter()
+                    .map(
+                        |expose_node| elm_syntax_node_from_persistent_ref(
+                            expose_node,
+                            |expose| elm_syntax_expose_from_persistent(expose),
+                        ),
+                    ),
+            ),
+        ),
+    }
+}
+
+fn elm_syntax_expose_from_persistent<
+    'a,
+>(elm_syntax_expose_persistent: &'a ElmSyntaxExpose) -> elm::ElmSyntaxExpose<'a> {
+    match elm_syntax_expose_persistent {
+        ElmSyntaxExpose::ChoiceTypeIncludingVariants { name, open_range } => elm
+        ::ElmSyntaxExpose
+        ::ExposeChoiceTypeIncludingVariants(
+            elm::GeneratedNameOpenRange {
+                name: elm_syntax_node_string_from_persistent(name),
+                open_range: lsp_range_to_text_grid_range(*open_range),
+            },
+        ),
+        ElmSyntaxExpose::Operator(symbol) => elm::ElmSyntaxExpose::ExposeOperator(elm::StringString::One(symbol)),
+        ElmSyntaxExpose::TypeName(name) => elm::ElmSyntaxExpose::ExposeTypeName(elm::StringString::One(name)),
+        ElmSyntaxExpose::Variable(name) => elm::ElmSyntaxExpose::ExposeVariable(elm::StringString::One(name)),
+    }
+}
+
+fn elm_syntax_module_header_specific_from_persistent<
+    'a,
+>(
+    elm_syntax_module_header_specific_persistent: &'a ElmSyntaxModuleHeaderSpecific,
+) -> elm::ElmSyntaxModuleHeaderSpecific<'a> {
+    match elm_syntax_module_header_specific_persistent {
+        ElmSyntaxModuleHeaderSpecific::Effect { module_keyword_range, command, subscription } => elm
+        ::ElmSyntaxModuleHeaderSpecific
+        ::ModuleHeaderSpecificEffect(
+            elm::GeneratedCommandModuleKeywordRangeSubscription {
+                module_keyword_range: lsp_range_to_text_grid_range(*module_keyword_range),
+                command: command.as_ref().map(|name_node| elm_syntax_node_string_from_persistent(name_node)),
+                subscription: subscription
+                    .as_ref()
+                    .map(|name_node| elm_syntax_node_string_from_persistent(name_node)),
+            },
+        ),
+        ElmSyntaxModuleHeaderSpecific::Port { module_keyword_range } => elm
+        ::ElmSyntaxModuleHeaderSpecific
+        ::ModuleHeaderSpecificPort(
+            elm::GeneratedModuleKeywordRange {
+                module_keyword_range: lsp_range_to_text_grid_range(*module_keyword_range),
+            },
+        ),
+    }
+}
+
+// //
+fn elm_syntax_module_to_persistent(elm_syntax_module: elm::ElmSyntaxModule) -> ElmSyntaxModule {
+    ElmSyntaxModule {
+        header: elm_syntax_node_to_persistent(elm_syntax_module.header, elm_syntax_module_header_to_persistent),
+        imports: elm_syntax_module
+            .imports
+            .into_iter()
+            .map(
+                |
+                    import_node:
+                        elm
+                        ::GeneratedRangeValue<
+                            elm
+                            ::GeneratedEndStart<
+                                elm::GeneratedColumnLine<i64, i64>,
+                                elm::GeneratedColumnLine<i64, i64>,
+                            >,
+                            elm
+                            ::GeneratedAliasExposing0ModuleName<
+                                Option<
+                                    elm
+                                    ::GeneratedAsKeywordRangeName<
+                                        elm
+                                        ::GeneratedEndStart<
+                                            elm::GeneratedColumnLine<i64, i64>,
+                                            elm::GeneratedColumnLine<i64, i64>,
+                                        >,
+                                        elm
+                                        ::GeneratedRangeValue<
+                                            elm
+                                            ::GeneratedEndStart<
+                                                elm::GeneratedColumnLine<i64, i64>,
+                                                elm::GeneratedColumnLine<i64, i64>,
+                                            >,
+                                            elm::StringString<'_>,
+                                        >,
+                                    >,
+                                >,
+                                Option<
+                                    elm
+                                    ::GeneratedRangeValue<
+                                        elm
+                                        ::GeneratedEndStart<
+                                            elm::GeneratedColumnLine<i64, i64>,
+                                            elm::GeneratedColumnLine<i64, i64>,
+                                        >,
+                                        elm::ElmSyntaxExposing<'_>,
+                                    >,
+                                >,
+                                elm
+                                ::GeneratedRangeValue<
+                                    elm
+                                    ::GeneratedEndStart<
+                                        elm::GeneratedColumnLine<i64, i64>,
+                                        elm::GeneratedColumnLine<i64, i64>,
+                                    >,
+                                    elm::StringString<'_>,
+                                >,
+                            >,
+                        >,
+                | elm_syntax_node_to_persistent(
+                    import_node,
+                    elm_syntax_import_to_persistent,
+                ),
+            )
+            .collect::<Vec<_>>(),
+        comments: elm_syntax_module
+            .comments
+            .into_iter()
+            .map(elm_syntax_node_string_to_persistent)
+            .collect::<Vec<_>>(),
+        declarations: elm_syntax_module
+            .declarations
+            .into_iter()
+            .map(|documented_declaration_node| elm::GeneratedDeclarationDocumentation {
+                documentation: documented_declaration_node.documentation.map(elm_syntax_node_string_to_persistent),
+                declaration: elm_syntax_node_to_persistent(
+                    documented_declaration_node.declaration,
+                    elm_syntax_declaration_to_persistent,
+                ),
+            })
+            .collect::<Vec<_>>(),
+    }
+}
+
+fn elm_syntax_module_header_to_persistent(
+    elm_syntax_module_header: elm::ElmSyntaxModuleHeader,
+) -> ElmSyntaxModuleHeader {
+    ElmSyntaxModuleHeader {
+        module_name: elm_syntax_node_string_to_persistent(elm_syntax_module_header.module_name),
+        exposing: elm_syntax_node_to_persistent(
+            elm_syntax_module_header.exposing_,
+            elm_syntax_exposing_to_persistent,
+        ),
+        specific: elm_syntax_module_header.specific.map(elm_syntax_module_header_specific_to_persistent),
+    }
+}
+
+fn elm_syntax_module_header_specific_to_persistent(
+    elm_syntax_module_header_specific: elm::ElmSyntaxModuleHeaderSpecific,
+) -> ElmSyntaxModuleHeaderSpecific {
+    match elm_syntax_module_header_specific {
+        elm::ElmSyntaxModuleHeaderSpecific::ModuleHeaderSpecificEffect(
+            effect_module_header_specific,
+        ) => ElmSyntaxModuleHeaderSpecific
+        ::Effect {
+            module_keyword_range: text_grid_range_to_lsp_range(effect_module_header_specific.module_keyword_range),
+            command: effect_module_header_specific.command.map(elm_syntax_node_string_to_persistent),
+            subscription: effect_module_header_specific.subscription.map(elm_syntax_node_string_to_persistent),
+        },
+        elm::ElmSyntaxModuleHeaderSpecific::ModuleHeaderSpecificPort(
+            port_module_header_specific,
+        ) => ElmSyntaxModuleHeaderSpecific
+        ::Port {
+            module_keyword_range: text_grid_range_to_lsp_range(port_module_header_specific.module_keyword_range),
+        },
+    }
+}
+
+fn elm_syntax_import_to_persistent(elm_syntax_import: elm::ElmSyntaxImport) -> ElmSyntaxImport {
+    ElmSyntaxImport {
+        module_name: elm_syntax_node_string_to_persistent(elm_syntax_import.module_name),
+        alias: elm_syntax_import.alias.map(|alias| elm::GeneratedAsKeywordRangeName {
+            as_keyword_range: text_grid_range_to_lsp_range(alias.as_keyword_range),
+            name: elm_syntax_node_string_to_persistent(alias.name),
+        }),
+        exposing: elm_syntax_import
+            .exposing_
+            .map(|exposing_node| elm_syntax_node_to_persistent(exposing_node, elm_syntax_exposing_to_persistent)),
+    }
+}
+
+fn elm_syntax_exposing_to_persistent(elm_syntax_exposing: elm::ElmSyntaxExposing) -> ElmSyntaxExposing {
+    match elm_syntax_exposing {
+        elm::ElmSyntaxExposing::ExposingAll(all_range) => ElmSyntaxExposing::All(
+            text_grid_range_to_lsp_range(all_range),
+        ),
+        elm::ElmSyntaxExposing::ExposingExplicit(exposes) => ElmSyntaxExposing::Explicit(
+            exposes
+                .into_iter()
+                .map(|expose_node| elm_syntax_node_to_persistent(expose_node, elm_syntax_expose_to_persistent))
+                .collect::<Vec<_>>(),
+        ),
+    }
+}
+
+fn elm_syntax_expose_to_persistent(elm_syntax_expose: elm::ElmSyntaxExpose) -> ElmSyntaxExpose {
+    match elm_syntax_expose {
+        elm::ElmSyntaxExpose::ExposeChoiceTypeIncludingVariants(choice_type_expose) => ElmSyntaxExpose
+        ::ChoiceTypeIncludingVariants {
+            name: elm_syntax_node_string_to_persistent(choice_type_expose.name),
+            open_range: text_grid_range_to_lsp_range(choice_type_expose.open_range),
+        },
+        elm::ElmSyntaxExpose::ExposeOperator(symbol) => ElmSyntaxExpose::Operator(symbol.to_string()),
+        elm::ElmSyntaxExpose::ExposeTypeName(name) => ElmSyntaxExpose::TypeName(name.to_string()),
+        elm::ElmSyntaxExpose::ExposeVariable(name) => ElmSyntaxExpose::Variable(name.to_string()),
+    }
+}
+
+fn elm_syntax_declaration_to_persistent(elm_syntax_declaration: elm::ElmSyntaxDeclaration) -> ElmSyntaxDeclaration {
+    match elm_syntax_declaration {
+        elm::ElmSyntaxDeclaration::DeclarationChoiceType(choice_type_declaration) => ElmSyntaxDeclaration
+        ::ChoiceType {
+            name: elm_syntax_node_string_to_persistent(choice_type_declaration.name),
+            parameters: choice_type_declaration
+                .parameters
+                .into_iter()
+                .map(elm_syntax_node_string_to_persistent)
+                .collect::<Vec<_>>(),
+            equals_key_symbol_range: text_grid_range_to_lsp_range(choice_type_declaration.equals_key_symbol_range),
+            variant0: elm::GeneratedNameValues {
+                name: elm_syntax_node_string_to_persistent(choice_type_declaration.variant0.name),
+                values: choice_type_declaration
+                    .variant0
+                    .values
+                    .into_iter()
+                    .map(elm_syntax_node_type_to_persistent)
+                    .collect::<Vec<_>>(),
+            },
+            variant1_up: choice_type_declaration
+                .variant1_up
+                .into_iter()
+                .map(|variant| elm::GeneratedNameOrKeySymbolRangeValues {
+                    or_key_symbol_range: text_grid_range_to_lsp_range(variant.or_key_symbol_range),
+                    name: elm_syntax_node_string_to_persistent(variant.name),
+                    values: variant.values.into_iter().map(elm_syntax_node_type_to_persistent).collect::<Vec<_>>(),
+                })
+                .collect::<Vec<_>>(),
+        },
+        elm::ElmSyntaxDeclaration::DeclarationOperator(operator_declaration) => ElmSyntaxDeclaration::Operator {
+            direction: elm_syntax_node_to_persistent(operator_declaration.direction, |direction| direction),
+            operator: elm_syntax_node_to_persistent(operator_declaration.operator, |operator| operator.to_string()),
+            precedence: elm_syntax_node_to_persistent(operator_declaration.precedence, |precedence| precedence),
+            function: elm_syntax_node_to_persistent(operator_declaration.function, |function| function.to_string()),
+        },
+        elm::ElmSyntaxDeclaration::DeclarationPort(port_declaration) => ElmSyntaxDeclaration::Port {
+            name: elm_syntax_node_string_to_persistent(port_declaration.name),
+            type_: elm_syntax_node_type_to_persistent(port_declaration.type_1),
+        },
+        elm::ElmSyntaxDeclaration::DeclarationTypeAlias(type_alias_declaration) => ElmSyntaxDeclaration::TypeAlias {
+            alias_keyword_range: text_grid_range_to_lsp_range(type_alias_declaration.alias_keyword_range),
+            name: elm_syntax_node_string_to_persistent(type_alias_declaration.name),
+            parameters: type_alias_declaration
+                .parameters
+                .into_iter()
+                .map(elm_syntax_node_string_to_persistent)
+                .collect::<Vec<_>>(),
+            equals_key_symbol_range: text_grid_range_to_lsp_range(type_alias_declaration.equals_key_symbol_range),
+            type_: elm_syntax_node_type_to_persistent(type_alias_declaration.type_1),
+        },
+        elm::ElmSyntaxDeclaration::DeclarationValueOrFunction(variable_declaration) => ElmSyntaxDeclaration
+        ::ValueOrFunction {
+            name: variable_declaration.name.to_string(),
+            signature: variable_declaration.signature.map(|signature| elm::GeneratedNameType0 {
+                name: elm_syntax_node_string_to_persistent(signature.name),
+                type_1: elm_syntax_node_type_to_persistent(signature.type_1),
+            }),
+            implementation_name_range: text_grid_range_to_lsp_range(variable_declaration.implementation_name_range),
+            parameters: variable_declaration
+                .parameters
+                .into_iter()
+                .map(elm_syntax_node_pattern_to_persistent)
+                .collect::<Vec<_>>(),
+            equals_key_symbol_range: text_grid_range_to_lsp_range(variable_declaration.equals_key_symbol_range),
+            result: elm_syntax_node_expression_to_persistent(variable_declaration.result),
+        },
+    }
+}
+
+fn elm_syntax_type_to_persistent(elm_syntax_type: elm::ElmSyntaxType) -> ElmSyntaxType {
+    match elm_syntax_type {
+        elm::ElmSyntaxType::TypeConstruct(type_construct) => ElmSyntaxType::Construct {
+            reference: elm_syntax_node_to_persistent(
+                type_construct.reference,
+                |reference| elm::GeneratedNameQualification {
+                    qualification: reference.qualification.to_string(),
+                    name: reference.name.to_string(),
+                },
+            ),
+            arguments: type_construct
+                .arguments
+                .into_iter()
+                .map(elm_syntax_node_type_to_persistent)
+                .collect::<Vec<_>>(),
+        },
+        elm::ElmSyntaxType::TypeFunction(type_function) => ElmSyntaxType::Function {
+            input: elm_syntax_node_type_to_persistent_box(type_function.input),
+            arrow_key_symbol_range: text_grid_range_to_lsp_range(type_function.arrow_key_symbol_range),
+            output: elm_syntax_node_type_to_persistent_box(type_function.output),
+        },
+        elm::ElmSyntaxType::TypeParenthesized(in_parens) => ElmSyntaxType::Parenthesized(
+            elm_syntax_node_type_to_persistent_box(*in_parens),
+        ),
+        elm::ElmSyntaxType::TypeRecord(fields) => ElmSyntaxType::Record(
+            fields.into_iter().map(|field| elm::GeneratedColonKeySymbolRangeNameValue {
+                name: elm_syntax_node_string_to_persistent(field.name),
+                colon_key_symbol_range: text_grid_range_to_lsp_range(field.colon_key_symbol_range),
+                value: elm_syntax_node_type_to_persistent(field.value),
+            }).collect::<Vec<_>>(),
+        ),
+        elm::ElmSyntaxType::TypeRecordExtension(type_record_extension) => ElmSyntaxType::RecordExtension {
+            record_variable: elm_syntax_node_string_to_persistent(type_record_extension.record_variable),
+            bar_key_symbol_range: text_grid_range_to_lsp_range(type_record_extension.bar_key_symbol_range),
+            field0: elm::GeneratedColonKeySymbolRangeNameValue {
+                name: elm_syntax_node_string_to_persistent(type_record_extension.field0.name),
+                colon_key_symbol_range: text_grid_range_to_lsp_range(
+                    type_record_extension.field0.colon_key_symbol_range,
+                ),
+                value: elm_syntax_node_type_to_persistent_box(type_record_extension.field0.value),
+            },
+            field1_up: type_record_extension
+                .field1_up
+                .into_iter()
+                .map(|field| elm::GeneratedColonKeySymbolRangeNameValue {
+                    name: elm_syntax_node_string_to_persistent(field.name),
+                    colon_key_symbol_range: text_grid_range_to_lsp_range(field.colon_key_symbol_range),
+                    value: elm_syntax_node_type_to_persistent(field.value),
+                })
+                .collect::<Vec<_>>(),
+        },
+        elm::ElmSyntaxType::TypeTriple(parts) => ElmSyntaxType::Triple {
+            part0: elm_syntax_node_type_to_persistent_box(parts.part0),
+            part1: elm_syntax_node_type_to_persistent_box(parts.part1),
+            part2: elm_syntax_node_type_to_persistent_box(parts.part2),
+        },
+        elm::ElmSyntaxType::TypeTuple(parts) => ElmSyntaxType::Tuple {
+            part0: elm_syntax_node_type_to_persistent_box(parts.part0),
+            part1: elm_syntax_node_type_to_persistent_box(parts.part1),
+        },
+        elm::ElmSyntaxType::TypeUnit => ElmSyntaxType::Unit,
+        elm::ElmSyntaxType::TypeVariable(name) => ElmSyntaxType::Variable(name.to_string()),
+    }
+}
+
+fn elm_syntax_node_type_to_persistent(
+    elm_syntax_node_type: elm::ElmSyntaxNode<elm::ElmSyntaxType>,
+) -> ElmSyntaxNode<ElmSyntaxType> {
+    elm_syntax_node_to_persistent(elm_syntax_node_type, elm_syntax_type_to_persistent)
+}
+
+fn elm_syntax_node_type_to_persistent_box(
+    elm_syntax_node_type: elm::ElmSyntaxNode<elm::ElmSyntaxType>,
+) -> ElmSyntaxNode<Box<ElmSyntaxType>> {
+    elm_syntax_node_to_persistent(elm_syntax_node_type, |type_| Box::new(elm_syntax_type_to_persistent(type_)))
+}
+
+fn elm_syntax_pattern_to_persistent(elm_syntax_pattern: elm::ElmSyntaxPattern) -> ElmSyntaxPattern {
+    match elm_syntax_pattern {
+        elm::ElmSyntaxPattern::PatternAs(as_pattern) => ElmSyntaxPattern::As {
+            pattern: elm_syntax_node_pattern_to_persistent_box(as_pattern.pattern),
+            as_keyword_range: text_grid_range_to_lsp_range(as_pattern.as_keyword_range),
+            variable: elm_syntax_node_string_to_persistent(as_pattern.variable),
+        },
+        elm::ElmSyntaxPattern::PatternChar(char) => ElmSyntaxPattern::Char(char),
+        elm::ElmSyntaxPattern::PatternIgnored => ElmSyntaxPattern::Ignored,
+        elm::ElmSyntaxPattern::PatternInt(int_pattern) => ElmSyntaxPattern::Int {
+            base: int_pattern.base,
+            value: int_pattern.value,
+        },
+        elm::ElmSyntaxPattern::PatternListCons(list_cons_pattern) => ElmSyntaxPattern::ListCons {
+            head: elm_syntax_node_pattern_to_persistent_box(list_cons_pattern.head),
+            cons_key_symbol: text_grid_range_to_lsp_range(list_cons_pattern.cons_key_symbol_range),
+            tail: elm_syntax_node_pattern_to_persistent_box(list_cons_pattern.tail),
+        },
+        elm::ElmSyntaxPattern::PatternListExact(elements) => ElmSyntaxPattern::ListExact(
+            elements.into_iter().map(elm_syntax_node_pattern_to_persistent).collect::<Vec<_>>(),
+        ),
+        elm::ElmSyntaxPattern::PatternParenthesized(in_parens) => ElmSyntaxPattern::Parenthesized(
+            elm_syntax_node_pattern_to_persistent_box(*in_parens),
+        ),
+        elm::ElmSyntaxPattern::PatternRecord(fields) => ElmSyntaxPattern::Record(
+            fields.into_iter().map(elm_syntax_node_string_to_persistent).collect::<Vec<_>>(),
+        ),
+        elm::ElmSyntaxPattern::PatternString(string_pattern) => ElmSyntaxPattern::String {
+            quoting_style: string_pattern.quoting_style,
+            content: string_pattern.content.to_string(),
+        },
+        elm::ElmSyntaxPattern::PatternTriple(parts) => ElmSyntaxPattern::Triple {
+            part0: elm_syntax_node_pattern_to_persistent_box(parts.part0),
+            part1: elm_syntax_node_pattern_to_persistent_box(parts.part1),
+            part2: elm_syntax_node_pattern_to_persistent_box(parts.part2),
+        },
+        elm::ElmSyntaxPattern::PatternTuple(parts) => ElmSyntaxPattern::Tuple {
+            part0: elm_syntax_node_pattern_to_persistent_box(parts.part0),
+            part1: elm_syntax_node_pattern_to_persistent_box(parts.part1),
+        },
+        elm::ElmSyntaxPattern::PatternUnit => ElmSyntaxPattern::Unit,
+        elm::ElmSyntaxPattern::PatternVariable(name) => ElmSyntaxPattern::Variable(name.to_string()),
+        elm::ElmSyntaxPattern::PatternVariant(variant_pattern) => ElmSyntaxPattern::Variant {
+            reference: elm_syntax_node_to_persistent(
+                variant_pattern.reference,
+                |reference| elm::GeneratedNameQualification {
+                    qualification: reference.qualification.to_string(),
+                    name: reference.name.to_string(),
+                },
+            ),
+            values: variant_pattern
+                .values
+                .into_iter()
+                .map(elm_syntax_node_pattern_to_persistent)
+                .collect::<Vec<_>>(),
+        },
+    }
+}
+
+fn elm_syntax_node_pattern_to_persistent(
+    elm_syntax_node_pattern: elm::ElmSyntaxNode<elm::ElmSyntaxPattern>,
+) -> ElmSyntaxNode<ElmSyntaxPattern> {
+    elm_syntax_node_to_persistent(elm_syntax_node_pattern, elm_syntax_pattern_to_persistent)
+}
+
+fn elm_syntax_node_pattern_to_persistent_box(
+    elm_syntax_node_pattern: elm::ElmSyntaxNode<elm::ElmSyntaxPattern>,
+) -> ElmSyntaxNode<Box<ElmSyntaxPattern>> {
+    elm_syntax_node_to_persistent(
+        elm_syntax_node_pattern,
+        |pattern| Box::new(elm_syntax_pattern_to_persistent(pattern)),
+    )
+}
+
+fn elm_syntax_expression_to_persistent(elm_syntax_expression: elm::ElmSyntaxExpression) -> ElmSyntaxExpression {
+    match elm_syntax_expression {
+        elm::ElmSyntaxExpression::ExpressionCall(call) => ElmSyntaxExpression::Call {
+            called: elm_syntax_node_expression_to_persistent_box(call.called),
+            argument0: elm_syntax_node_expression_to_persistent_box(call.argument0),
+            argument1_up: call
+                .argument1_up
+                .into_iter()
+                .map(elm_syntax_node_expression_to_persistent)
+                .collect::<Vec<_>>(),
+        },
+        elm::ElmSyntaxExpression::ExpressionCaseOf(case_of) => ElmSyntaxExpression::CaseOf {
+            matched: elm_syntax_node_expression_to_persistent_box(case_of.matched),
+            of_keyword_range: text_grid_range_to_lsp_range(case_of.of_keyword_range),
+            case0: elm::GeneratedArrowKeySymbolRangePatternResult {
+                pattern: elm_syntax_node_pattern_to_persistent(case_of.case0.pattern),
+                arrow_key_symbol_range: text_grid_range_to_lsp_range(case_of.case0.arrow_key_symbol_range),
+                result: elm_syntax_node_expression_to_persistent_box(case_of.case0.result),
+            },
+            case1_up: case_of.case1_up.into_iter().map(|case| elm::GeneratedArrowKeySymbolRangePatternResult {
+                pattern: elm_syntax_node_pattern_to_persistent(case.pattern),
+                arrow_key_symbol_range: text_grid_range_to_lsp_range(case.arrow_key_symbol_range),
+                result: elm_syntax_node_expression_to_persistent(case.result),
+            }).collect::<Vec<_>>(),
+        },
+        elm::ElmSyntaxExpression::ExpressionChar(char) => ElmSyntaxExpression::Char(char),
+        elm::ElmSyntaxExpression::ExpressionFloat(float) => ElmSyntaxExpression::Float(float),
+        elm::ElmSyntaxExpression::ExpressionIfThenElse(if_then_else) => ElmSyntaxExpression::IfThenElse {
+            condition: elm_syntax_node_expression_to_persistent_box(if_then_else.condition),
+            then_keyword_range: text_grid_range_to_lsp_range(if_then_else.then_keyword_range),
+            on_true: elm_syntax_node_expression_to_persistent_box(if_then_else.on_true),
+            else_keyword_range: text_grid_range_to_lsp_range(if_then_else.else_keyword_range),
+            on_false: elm_syntax_node_expression_to_persistent_box(if_then_else.on_false),
+        },
+        elm::ElmSyntaxExpression::ExpressionInfixOperation(infix_operation) => ElmSyntaxExpression::InfixOperation {
+            left: elm_syntax_node_expression_to_persistent_box(infix_operation.left),
+            operator: elm_syntax_node_string_to_persistent(infix_operation.operator),
+            right: elm_syntax_node_expression_to_persistent_box(infix_operation.right),
+        },
+        elm::ElmSyntaxExpression::ExpressionInteger(integer_expression) => ElmSyntaxExpression::Integer {
+            base: integer_expression.base,
+            value: integer_expression.value,
+        },
+        elm::ElmSyntaxExpression::ExpressionLambda(lambda) => ElmSyntaxExpression::Lambda {
+            parameter0: elm_syntax_node_pattern_to_persistent(lambda.parameter0),
+            parameter1_up: lambda
+                .parameter1_up
+                .into_iter()
+                .map(elm_syntax_node_pattern_to_persistent)
+                .collect::<Vec<_>>(),
+            arrow_key_symbol_range: text_grid_range_to_lsp_range(lambda.arrow_key_symbol_range),
+            result: elm_syntax_node_expression_to_persistent_box(lambda.result),
+        },
+        elm::ElmSyntaxExpression::ExpressionLetIn(let_in) => ElmSyntaxExpression::LetIn {
+            declaration0: elm_syntax_node_to_persistent(
+                let_in.declaration0,
+                |declaration| Box::new(elm_syntax_let_declaration_to_persistent(declaration)),
+            ),
+            declaration1_up: let_in
+                .declaration1_up
+                .into_iter()
+                .map(
+                    |declaration_node| elm_syntax_node_to_persistent(
+                        declaration_node,
+                        elm_syntax_let_declaration_to_persistent,
+                    ),
+                )
+                .collect::<Vec<_>>(),
+            in_keyword_range: text_grid_range_to_lsp_range(let_in.in_keyword_range),
+            result: elm_syntax_node_expression_to_persistent_box(let_in.result),
+        },
+        elm::ElmSyntaxExpression::ExpressionList(elements) => ElmSyntaxExpression::List(
+            elements.into_iter().map(elm_syntax_node_expression_to_persistent).collect::<Vec<_>>(),
+        ),
+        elm::ElmSyntaxExpression::ExpressionNegation(in_negation) => ElmSyntaxExpression::Negation(
+            elm_syntax_node_expression_to_persistent_box(*in_negation),
+        ),
+        elm::ElmSyntaxExpression::ExpressionOperatorFunction(symbol) => ElmSyntaxExpression::OperatorFunction(
+            symbol.to_string(),
+        ),
+        elm::ElmSyntaxExpression::ExpressionParenthesized(in_parens) => ElmSyntaxExpression::Parenthesized(
+            elm_syntax_node_expression_to_persistent_box(*in_parens),
+        ),
+        elm::ElmSyntaxExpression::ExpressionRecord(fields) => ElmSyntaxExpression::Record(
+            fields.into_iter().map(|field| elm::GeneratedEqualsKeySymbolRangeNameValue {
+                name: elm_syntax_node_string_to_persistent(field.name),
+                equals_key_symbol_range: text_grid_range_to_lsp_range(field.equals_key_symbol_range),
+                value: elm_syntax_node_expression_to_persistent(field.value),
+            }).collect::<Vec<_>>(),
+        ),
+        elm::ElmSyntaxExpression::ExpressionRecordAccess(record_access) => ElmSyntaxExpression::RecordAccess {
+            record: elm_syntax_node_expression_to_persistent_box(record_access.record),
+            field: elm_syntax_node_string_to_persistent(record_access.field),
+        },
+        elm::ElmSyntaxExpression::ExpressionRecordAccessFunction(field) => ElmSyntaxExpression::RecordAccessFunction(
+            field.to_string(),
+        ),
+        elm::ElmSyntaxExpression::ExpressionRecordUpdate(record_update) => ElmSyntaxExpression::RecordUpdate {
+            record_variable: elm_syntax_node_string_to_persistent(record_update.record_variable),
+            bar_key_symbol_range: text_grid_range_to_lsp_range(record_update.bar_key_symbol_range),
+            field0: elm::GeneratedEqualsKeySymbolRangeNameValue {
+                name: elm_syntax_node_string_to_persistent(record_update.field0.name),
+                equals_key_symbol_range: text_grid_range_to_lsp_range(record_update.field0.equals_key_symbol_range),
+                value: elm_syntax_node_expression_to_persistent_box(record_update.field0.value),
+            },
+            field1_up: record_update.field1_up.into_iter().map(|field| elm::GeneratedEqualsKeySymbolRangeNameValue {
+                name: elm_syntax_node_string_to_persistent(field.name),
+                equals_key_symbol_range: text_grid_range_to_lsp_range(field.equals_key_symbol_range),
+                value: elm_syntax_node_expression_to_persistent(field.value),
+            }).collect::<Vec<_>>(),
+        },
+        elm::ElmSyntaxExpression::ExpressionReference(reference) => ElmSyntaxExpression::Reference(
+            elm::GeneratedNameQualification {
+                qualification: reference.qualification.to_string(),
+                name: reference.name.to_string(),
+            },
+        ),
+        elm::ElmSyntaxExpression::ExpressionString(string_expression) => ElmSyntaxExpression::String {
+            quoting_style: string_expression.quoting_style,
+            content: string_expression.content.to_string(),
+        },
+        elm::ElmSyntaxExpression::ExpressionTriple(parts) => ElmSyntaxExpression::Triple {
+            part0: elm_syntax_node_expression_to_persistent_box(parts.part0),
+            part1: elm_syntax_node_expression_to_persistent_box(parts.part1),
+            part2: elm_syntax_node_expression_to_persistent_box(parts.part2),
+        },
+        elm::ElmSyntaxExpression::ExpressionTuple(parts) => ElmSyntaxExpression::Tuple {
+            part0: elm_syntax_node_expression_to_persistent_box(parts.part0),
+            part1: elm_syntax_node_expression_to_persistent_box(parts.part1),
+        },
+        elm::ElmSyntaxExpression::ExpressionUnit => ElmSyntaxExpression::Unit,
+    }
+}
+
+fn elm_syntax_node_expression_to_persistent(
+    elm_syntax_node_expression: elm::ElmSyntaxNode<elm::ElmSyntaxExpression>,
+) -> ElmSyntaxNode<ElmSyntaxExpression> {
+    elm_syntax_node_to_persistent(elm_syntax_node_expression, elm_syntax_expression_to_persistent)
+}
+
+fn elm_syntax_node_expression_to_persistent_box(
+    elm_syntax_node_expression: elm::ElmSyntaxNode<elm::ElmSyntaxExpression>,
+) -> ElmSyntaxNode<Box<ElmSyntaxExpression>> {
+    elm_syntax_node_to_persistent(
+        elm_syntax_node_expression,
+        |expression| Box::new(elm_syntax_expression_to_persistent(expression)),
+    )
+}
+
+fn elm_syntax_let_declaration_to_persistent(
+    elm_syntax_let_declaration: elm::ElmSyntaxLetDeclaration,
+) -> ElmSyntaxLetDeclaration {
+    match elm_syntax_let_declaration {
+        elm::ElmSyntaxLetDeclaration::LetDestructuring(destructuring) => ElmSyntaxLetDeclaration::Destructuring {
+            pattern: elm_syntax_node_pattern_to_persistent(destructuring.pattern),
+            equals_key_symbol_range: text_grid_range_to_lsp_range(destructuring.equals_key_symbol_range),
+            expression: elm_syntax_node_expression_to_persistent(destructuring.expression),
+        },
+        elm::ElmSyntaxLetDeclaration::LetValueOrFunctionDeclaration(variable_declaration) => ElmSyntaxLetDeclaration
+        ::ValueOrFunctionDeclaration {
+            name: variable_declaration.name.to_string(),
+            signature: variable_declaration.signature.map(|signature| elm::GeneratedNameType0 {
+                name: elm_syntax_node_string_to_persistent(signature.name),
+                type_1: elm_syntax_node_type_to_persistent(signature.type_1),
+            }),
+            implementation_name_range: text_grid_range_to_lsp_range(variable_declaration.implementation_name_range),
+            parameters: variable_declaration
+                .parameters
+                .into_iter()
+                .map(elm_syntax_node_pattern_to_persistent)
+                .collect::<Vec<_>>(),
+            equals_key_symbol_range: text_grid_range_to_lsp_range(variable_declaration.equals_key_symbol_range),
+            result: elm_syntax_node_expression_to_persistent(variable_declaration.result),
+        },
+    }
+}
+
+fn elm_syntax_node_string_to_persistent(
+    elm_syntax_node_string: elm::ElmSyntaxNode<elm::StringString>,
+) -> ElmSyntaxNode<String> {
+    ElmSyntaxNode {
+        range: text_grid_range_to_lsp_range(elm_syntax_node_string.range),
+        value: elm_syntax_node_string.value.to_string(),
+    }
+}
+
+fn elm_syntax_node_to_persistent<
+    Value,
+    ValuePersistent,
+>(
+    elm_syntax_node: elm::ElmSyntaxNode<Value>,
+    value_to_persistent: fn(Value) -> ValuePersistent,
+) -> ElmSyntaxNode<ValuePersistent> {
+    ElmSyntaxNode {
+        range: text_grid_range_to_lsp_range(elm_syntax_node.range),
+        value: value_to_persistent(elm_syntax_node.value),
     }
 }
