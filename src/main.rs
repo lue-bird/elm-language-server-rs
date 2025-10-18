@@ -140,18 +140,26 @@ async fn main() {
                     .and_then(|hovered_file_path| {
                         let module_syntax =
                             state_access_or_parse_and_cache_module_syntax(state, &hovered_file_path)?;
-                        let (hovered_reference, origin_declaration) =
+                        let hovered_reference =
                             elm_syntax_module_find_reference_at_position(
                                 &module_syntax,
                                 hover_arguments.text_document_position_params.position,
                             )?;
-                        match origin_declaration {
+                        let full_hovered_reference = match hovered_reference.module_origin.as_str() {
+                            "" => ElmSyntaxReference {
+                                module_origin: module_syntax.header.value.module_name.value.clone(),
+                                name: hovered_reference.name,
+                                range: hovered_reference.range,
+                            },
+                            _ => hovered_reference,
+                        };
+                        let origin_module_file_path =
+                            state_file_path_for_module_name(state, &full_hovered_reference.module_origin)?;
+                        let origin_module_syntax =
+                            state_access_or_parse_and_cache_module_syntax(state, &origin_module_file_path)?;
+                        match &full_hovered_reference.name {
                             // referencing a module
                             None => {
-                                let origin_module_file_path =
-                                    state_file_path_for_module_name(state, &hovered_reference.module_origin)?;
-                                let origin_module_syntax =
-                                    state_access_or_parse_and_cache_module_syntax(state, &origin_module_file_path)?;
                                 match origin_module_syntax
                                     .comments
                                     .iter()
@@ -161,7 +169,7 @@ async fn main() {
                                             // show list of exports or something
                                             "_module has no documentation comment_".to_string(),
                                         )),
-                                        range: Some(hovered_reference.range),
+                                        range: Some(full_hovered_reference.range),
                                     }),
                                     Some(module_documentation) => Some(lsp_types::Hover {
                                         contents: lsp_types::HoverContents::Scalar(
@@ -174,46 +182,287 @@ async fn main() {
                                                     .to_string(),
                                             ),
                                         ),
-                                        range: Some(hovered_reference.range),
+                                        range: Some(full_hovered_reference.range),
                                     }),
                                 }
                             },
-                            Some(origin_declaration) => {
-                                let full_hovered_reference = match hovered_reference.module_origin.as_str() {
-                                    "" => ElmSyntaxReference {
-                                        module_origin: module_syntax.header.value.module_name.value.clone(),
-                                        name: hovered_reference.name,
-                                        range: hovered_reference.range,
-                                    },
-                                    _ => hovered_reference,
-                                };
-
-                                // todo add more info like parameter names, type, exposed variants etc
-                                Some(match &origin_declaration.documentation {
-                                    None => lsp_types::Hover {
-                                        contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
-                                            kind: lsp_types::MarkupKind::Markdown,
-                                            value: "```elm\n".to_string() +
-                                                &elm_syntax_reference_to_string(&full_hovered_reference) +
-                                                "\n```\n-----",
-                                        }),
-                                        range: Some(full_hovered_reference.range),
-                                    },
-                                    Some(documentation) => lsp_types::Hover {
-                                        contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
-                                            kind: lsp_types::MarkupKind::Markdown,
-                                            value: "```elm\n".to_string() +
-                                                &elm_syntax_reference_to_string(&full_hovered_reference) +
-                                                "\n```\n-----\n" +
-                                                documentation
-                                                    .value
-                                                    .trim_start_matches("{-|")
-                                                    .trim_end_matches("-}")
-                                                    .trim(),
-                                        }),
-                                        range: Some(full_hovered_reference.range),
-                                    },
-                                })
+                            Some(reference_name) => {
+                                origin_module_syntax
+                                    .declarations
+                                    .iter()
+                                    .find_map(
+                                        |origin_module_declaration| match &origin_module_declaration
+                                            .declaration
+                                            .value {
+                                            ElmSyntaxDeclaration
+                                            ::ChoiceType {
+                                                name: origin_module_declaration_name,
+                                                parameters: origin_module_declaration_parameters,
+                                                equals_key_symbol_range: _,
+                                                variant0: origin_module_declaration_variant0,
+                                                variant1_up: origin_module_declaration_variant1_up,
+                                            } => if &origin_module_declaration_name.value ==
+                                                reference_name {
+                                                let description =
+                                                    format!(
+                                                        "type {}.{}{}\n    = {}{}{}",
+                                                        &full_hovered_reference.module_origin,
+                                                        &origin_module_declaration_name.value,
+                                                        &origin_module_declaration_parameters
+                                                            .iter()
+                                                            .fold(
+                                                                String::new(),
+                                                                |so_far, parameter_node| so_far + " " +
+                                                                    &parameter_node.value,
+                                                            ),
+                                                        &origin_module_declaration_variant0.name.value,
+                                                        &origin_module_declaration_variant0
+                                                            .values
+                                                            .iter()
+                                                            .fold(
+                                                                String::new(),
+                                                                |so_far, value_node| so_far + " " +
+                                                                    &value_node.value.to_string(),
+                                                            ),
+                                                        &origin_module_declaration_variant1_up
+                                                            .iter()
+                                                            .fold(
+                                                                String::new(),
+                                                                |so_far, variant| so_far + "\n    | " +
+                                                                    &variant.name.value +
+                                                                    &variant
+                                                                        .values
+                                                                        .iter()
+                                                                        .fold(
+                                                                            String::new(),
+                                                                            |so_far, value_node| so_far + " " +
+                                                                                &value_node.value.to_string(),
+                                                                        ),
+                                                            ),
+                                                    );
+                                                Some(match &origin_module_declaration.documentation {
+                                                    None => lsp_types::Hover {
+                                                        contents: lsp_types::HoverContents::Markup(
+                                                            lsp_types::MarkupContent {
+                                                                kind: lsp_types::MarkupKind::Markdown,
+                                                                value: "```elm\n".to_string() + &description +
+                                                                    "\n```\n-----",
+                                                            },
+                                                        ),
+                                                        range: Some(full_hovered_reference.range),
+                                                    },
+                                                    Some(documentation) => lsp_types::Hover {
+                                                        contents: lsp_types::HoverContents::Markup(
+                                                            lsp_types::MarkupContent {
+                                                                kind: lsp_types::MarkupKind::Markdown,
+                                                                value: "```elm\n".to_string() + &description +
+                                                                    "\n```\n-----\n" +
+                                                                    documentation_to_hover_string(
+                                                                        &documentation.value,
+                                                                    ),
+                                                            },
+                                                        ),
+                                                        range: Some(full_hovered_reference.range),
+                                                    },
+                                                })
+                                            } else {
+                                                None
+                                            },
+                                            ElmSyntaxDeclaration
+                                            ::Operator {
+                                                direction: origin_module_declaration_direction,
+                                                operator: origin_module_declaration_operator,
+                                                function: _,
+                                                precedence: origin_module_declaration_precedence,
+                                            } => if reference_name ==
+                                                &origin_module_declaration_operator.value {
+                                                let description =
+                                                    // TODO associate function type
+                                                    "infix ".to_string() + match origin_module_declaration_direction.value {
+                                                        elm::ElmSyntaxInfixDirection::Left => "left",
+                                                        elm::ElmSyntaxInfixDirection::Non => "non",
+                                                        elm::ElmSyntaxInfixDirection::Right => "right",
+                                                    } + " " + &origin_module_declaration_precedence.value.to_string() +
+                                                        " " +
+                                                        &full_hovered_reference.module_origin +
+                                                        ".(" +
+                                                        &origin_module_declaration_operator.value +
+                                                        ")";
+                                                Some(match &origin_module_declaration.documentation {
+                                                    None => lsp_types::Hover {
+                                                        contents: lsp_types::HoverContents::Markup(
+                                                            lsp_types::MarkupContent {
+                                                                kind: lsp_types::MarkupKind::Markdown,
+                                                                value: "```elm\n".to_string() + &description +
+                                                                    "\n```\n-----",
+                                                            },
+                                                        ),
+                                                        range: Some(full_hovered_reference.range),
+                                                    },
+                                                    Some(documentation) => lsp_types::Hover {
+                                                        contents: lsp_types::HoverContents::Markup(
+                                                            lsp_types::MarkupContent {
+                                                                kind: lsp_types::MarkupKind::Markdown,
+                                                                value: "```elm\n".to_string() + &description +
+                                                                    "\n```\n-----\n" +
+                                                                    documentation_to_hover_string(
+                                                                        &documentation.value,
+                                                                    ),
+                                                            },
+                                                        ),
+                                                        range: Some(full_hovered_reference.range),
+                                                    },
+                                                })
+                                            } else {
+                                                None
+                                            },
+                                            ElmSyntaxDeclaration
+                                            ::Port {
+                                                name: origin_module_declaration_name,
+                                                type_,
+                                            } => {
+                                                if &origin_module_declaration_name.value == reference_name {
+                                                    let description =
+                                                        format!(
+                                                            "port {}.{} : {}",
+                                                            &full_hovered_reference.module_origin,
+                                                            &origin_module_declaration_name.value,
+                                                            &type_.value
+                                                        );
+                                                    Some(match &origin_module_declaration.documentation {
+                                                        None => lsp_types::Hover {
+                                                            contents: lsp_types::HoverContents::Markup(
+                                                                lsp_types::MarkupContent {
+                                                                    kind: lsp_types::MarkupKind::Markdown,
+                                                                    value: "```elm\n".to_string() + &description +
+                                                                        "\n```\n-----",
+                                                                },
+                                                            ),
+                                                            range: Some(full_hovered_reference.range),
+                                                        },
+                                                        Some(documentation) => lsp_types::Hover {
+                                                            contents: lsp_types::HoverContents::Markup(
+                                                                lsp_types::MarkupContent {
+                                                                    kind: lsp_types::MarkupKind::Markdown,
+                                                                    value: "```elm\n".to_string() + &description +
+                                                                        "\n```\n-----\n" +
+                                                                        documentation_to_hover_string(
+                                                                            &documentation.value,
+                                                                        ),
+                                                                },
+                                                            ),
+                                                            range: Some(full_hovered_reference.range),
+                                                        },
+                                                    })
+                                                } else {
+                                                    None
+                                                }
+                                            },
+                                            ElmSyntaxDeclaration
+                                            ::TypeAlias {
+                                                alias_keyword_range: _,
+                                                name: origin_module_declaration_name,
+                                                parameters: origin_module_declaration_parameters,
+                                                equals_key_symbol_range: _,
+                                                type_,
+                                            } => {
+                                                if &origin_module_declaration_name.value == reference_name {
+                                                    let description =
+                                                        format!(
+                                                            "type alias {}.{}{} =\n    {}",
+                                                            &full_hovered_reference.module_origin,
+                                                            &origin_module_declaration_name.value,
+                                                            &origin_module_declaration_parameters
+                                                                .iter()
+                                                                .fold(
+                                                                    String::new(),
+                                                                    |so_far, parameter_node| so_far + " " +
+                                                                        &parameter_node.value,
+                                                                ),
+                                                            &type_.value
+                                                        );
+                                                    Some(match &origin_module_declaration.documentation {
+                                                        None => lsp_types::Hover {
+                                                            contents: lsp_types::HoverContents::Markup(
+                                                                lsp_types::MarkupContent {
+                                                                    kind: lsp_types::MarkupKind::Markdown,
+                                                                    value: "```elm\n".to_string() + &description +
+                                                                        "\n```\n-----",
+                                                                },
+                                                            ),
+                                                            range: Some(full_hovered_reference.range),
+                                                        },
+                                                        Some(documentation) => lsp_types::Hover {
+                                                            contents: lsp_types::HoverContents::Markup(
+                                                                lsp_types::MarkupContent {
+                                                                    kind: lsp_types::MarkupKind::Markdown,
+                                                                    value: "```elm\n".to_string() + &description +
+                                                                        "\n```\n-----\n" +
+                                                                        documentation_to_hover_string(
+                                                                            &documentation.value,
+                                                                        ),
+                                                                },
+                                                            ),
+                                                            range: Some(full_hovered_reference.range),
+                                                        },
+                                                    })
+                                                } else {
+                                                    None
+                                                }
+                                            },
+                                            ElmSyntaxDeclaration
+                                            ::ValueOrFunction {
+                                                name: origin_module_declaration_name,
+                                                signature: origin_module_declaration_maybe_signature,
+                                                implementation_name_range: _,
+                                                parameters: _,
+                                                equals_key_symbol_range: _,
+                                                result: _,
+                                            } => if origin_module_declaration_name ==
+                                                reference_name {
+                                                let description = match origin_module_declaration_maybe_signature {
+                                                    Some(origin_module_declaration_signature) => format!(
+                                                        "{}.{} : {}",
+                                                        &full_hovered_reference.module_origin,
+                                                        &origin_module_declaration_name,
+                                                        &origin_module_declaration_signature.type_1.value
+                                                    ),
+                                                    None => format!(
+                                                        "{}.{}",
+                                                        &full_hovered_reference.module_origin,
+                                                        &origin_module_declaration_name
+                                                    ),
+                                                };
+                                                Some(match &origin_module_declaration.documentation {
+                                                    None => lsp_types::Hover {
+                                                        contents: lsp_types::HoverContents::Markup(
+                                                            lsp_types::MarkupContent {
+                                                                kind: lsp_types::MarkupKind::Markdown,
+                                                                value: "```elm\n".to_string() + &description +
+                                                                    "\n```\n-----",
+                                                            },
+                                                        ),
+                                                        range: Some(full_hovered_reference.range),
+                                                    },
+                                                    Some(documentation) => lsp_types::Hover {
+                                                        contents: lsp_types::HoverContents::Markup(
+                                                            lsp_types::MarkupContent {
+                                                                kind: lsp_types::MarkupKind::Markdown,
+                                                                value: "```elm\n".to_string() + &description +
+                                                                    "\n```\n-----\n" +
+                                                                    documentation_to_hover_string(
+                                                                        &documentation.value,
+                                                                    ),
+                                                            },
+                                                        ),
+                                                        range: Some(full_hovered_reference.range),
+                                                    },
+                                                })
+                                            } else {
+                                                None
+                                            },
+                                        },
+                                    )
                             },
                         }
                     });
@@ -346,6 +595,10 @@ async fn main() {
     server.run_buffered(stdin, stdout).await.unwrap();
 }
 
+fn documentation_to_hover_string(documentation: &str) -> &str {
+    documentation.trim_start_matches("{-|").trim_end_matches("-}").trim()
+}
+
 fn state_file_path_for_module_name<'a>(state: &'a State, module_name: &str) -> Option<std::path::PathBuf> {
     // can be incorrect if multiple packages internal module names and or the
     // project's module names overlap. To prevent that, it would help immensely if
@@ -414,48 +667,19 @@ struct ElmSyntaxReference {
     range: lsp_types::Range,
 }
 
-fn elm_syntax_reference_to_string(elm_syntax_reference: &ElmSyntaxReference) -> String {
-    match &elm_syntax_reference.name {
-        None => elm_syntax_reference.module_origin.clone(),
-        Some(name) => elm_syntax_reference.module_origin.clone() + "." + &name,
-    }
-}
-
 /// TODO switch to taking in a list of declarations and returning the matching
 /// declaration. TODO add imports
 fn elm_syntax_module_find_reference_at_position<
     'a,
->(
-    elm_syntax_module: &'a ElmSyntaxModule,
-    position: lsp_types::Position,
-) -> Option<
-    (
-        ElmSyntaxReference,
-        Option<
-            &'a elm
-            ::GeneratedDeclarationDocumentation<ElmSyntaxNode<ElmSyntaxDeclaration>, Option<ElmSyntaxNode<String>>>,
-        >,
-    ),
-> {
+>(elm_syntax_module: &'a ElmSyntaxModule, position: lsp_types::Position) -> Option<ElmSyntaxReference> {
     if lsp_range_includes_position(elm_syntax_module.header.value.module_name.range, position) {
-        Some((ElmSyntaxReference {
+        Some(ElmSyntaxReference {
             module_origin: elm_syntax_module.header.value.module_name.value.clone(),
             name: None,
             range: elm_syntax_module.header.value.module_name.range,
-        }, None))
+        })
     } else {
-        let mut module_declared_variables:
-            std
-            ::collections
-            ::HashMap<
-                &str,
-                &elm
-                ::GeneratedDeclarationDocumentation<
-                    ElmSyntaxNode<ElmSyntaxDeclaration>,
-                    Option<ElmSyntaxNode<String>>,
-                >,
-            > =
-            std::collections::HashMap::new();
+        let mut module_declared_variables: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for documented_declaration in elm_syntax_module.declarations.iter() {
             match &documented_declaration.declaration.value {
                 ElmSyntaxDeclaration
@@ -466,17 +690,17 @@ fn elm_syntax_module_find_reference_at_position<
                     variant0: variant0,
                     variant1_up: variant1_up,
                 } => {
-                    let _ = module_declared_variables.insert(&name.value, documented_declaration);
-                    let _ = module_declared_variables.insert(&variant0.name.value, documented_declaration);
+                    let _ = module_declared_variables.insert(&name.value);
+                    let _ = module_declared_variables.insert(&variant0.name.value);
                     for variant in variant1_up.iter() {
-                        let _ = module_declared_variables.insert(&variant.name.value, documented_declaration);
+                        let _ = module_declared_variables.insert(&variant.name.value);
                     }
                 },
                 ElmSyntaxDeclaration::Operator { direction: _, operator, function: _, precedence: _ } => {
-                    let _ = module_declared_variables.insert(&operator.value, documented_declaration);
+                    let _ = module_declared_variables.insert(&operator.value);
                 },
                 ElmSyntaxDeclaration::Port { name, type_: _ } => {
-                    let _ = module_declared_variables.insert(&name.value, documented_declaration);
+                    let _ = module_declared_variables.insert(&name.value);
                 },
                 ElmSyntaxDeclaration
                 ::TypeAlias {
@@ -486,7 +710,7 @@ fn elm_syntax_module_find_reference_at_position<
                     parameters: _,
                     type_: _,
                 } => {
-                    let _ = module_declared_variables.insert(&name.value, documented_declaration);
+                    let _ = module_declared_variables.insert(&name.value);
                 },
                 ElmSyntaxDeclaration
                 ::ValueOrFunction {
@@ -497,7 +721,7 @@ fn elm_syntax_module_find_reference_at_position<
                     equals_key_symbol_range: _,
                     result: _,
                 } => {
-                    let _ = module_declared_variables.insert(name, documented_declaration);
+                    let _ = module_declared_variables.insert(name);
                 },
             }
         }
@@ -525,13 +749,6 @@ fn elm_syntax_module_find_reference_at_position<
                         ),
                     ),
             )
-            .and_then(|reference| match reference.name {
-                None => Some((reference, None)),
-                Some(ref name) => match module_declared_variables.get(name.as_str()) {
-                    None => None,
-                    Some(&origin_declaration) => Some((reference, Some(origin_declaration))),
-                },
-            })
     }
 }
 
@@ -770,7 +987,7 @@ fn elm_syntax_pattern_find_reference_at_position<
             position,
         ),
         ElmSyntaxPattern::Char(_) => None,
-        ElmSyntaxPattern::Ignored => todo!(),
+        ElmSyntaxPattern::Ignored => None,
         ElmSyntaxPattern::Int { base: _, value: _ } => None,
         ElmSyntaxPattern::ListCons { head, cons_key_symbol: _, tail } => elm_syntax_pattern_find_reference_at_position(
             elm_syntax_node_unbox(head),
@@ -2968,5 +3185,71 @@ fn elm_syntax_node_to_persistent<
     ElmSyntaxNode {
         range: text_grid_range_to_lsp_range(elm_syntax_node.range),
         value: value_to_persistent(elm_syntax_node.value),
+    }
+}
+
+impl std::fmt::Display for ElmSyntaxType {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            ElmSyntaxType::Construct { reference, arguments } => {
+                // preferably fully qualify
+                match reference.value.qualification.as_str() {
+                    "" => { },
+                    qualification => {
+                        formatter.write_str(qualification)?;
+                    },
+                }
+                formatter.write_str(&reference.value.name)?;
+                for argument in arguments {
+                    write!(formatter, " {}", argument.value)?;
+                }
+                Ok(())
+            },
+            ElmSyntaxType::Function { input, arrow_key_symbol_range: _, output } => write!(
+                formatter,
+                "{} -> {}",
+                &input.value,
+                &output.value
+            ),
+            ElmSyntaxType::Parenthesized(in_parens) => write!(formatter, "({})", &in_parens.value),
+            ElmSyntaxType::Record(fields) => {
+                let mut fields_iterator = fields.iter();
+                match fields_iterator.next() {
+                    None => {
+                        formatter.write_str("{}")
+                    },
+                    Some(field0) => {
+                        write!(formatter, "{{ {} : {}", &field0.name.value, &field0.value.value)?;
+                        for field in fields_iterator {
+                            write!(formatter, ", {} : {}", &field.name.value, &field.value.value)?;
+                        }
+                        formatter.write_str(" }")
+                    },
+                }
+            },
+            ElmSyntaxType::RecordExtension { record_variable, bar_key_symbol_range: _, field0, field1_up } => {
+                write!(
+                    formatter,
+                    "{{ {} | {} : {}",
+                    &record_variable.value,
+                    &field0.name.value,
+                    &field0.value.value
+                )?;
+                for field in field1_up {
+                    write!(formatter, ", {} : {}", &field.name.value, &field.value.value)?;
+                }
+                formatter.write_str(" }")
+            },
+            ElmSyntaxType::Triple { part0, part1, part2 } => write!(
+                formatter,
+                "( {}, {}, {} )",
+                &part0.value,
+                &part1.value,
+                &part2.value
+            ),
+            ElmSyntaxType::Tuple { part0, part1 } => write!(formatter, "( {}, {} )", &part0.value, &part1.value),
+            ElmSyntaxType::Unit => formatter.write_str("()"),
+            ElmSyntaxType::Variable(name) => formatter.write_str(name),
+        }
     }
 }
