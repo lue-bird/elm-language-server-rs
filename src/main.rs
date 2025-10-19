@@ -3681,17 +3681,113 @@ fn elm_syntax_module_create_origin_lookup(state: &State, elm_syntax_module: &Elm
                             match imported_module_maybe_syntax {
                                 None => { },
                                 Some(imported_module_syntax) => {
-                                    // TODO
+                                    for declaration in imported_module_syntax.declarations.iter() {
+                                        match &declaration.declaration.value {
+                                            ElmSyntaxDeclaration
+                                            ::ChoiceType {
+                                                name: imported_module_choice_type_name,
+                                                parameters: _,
+                                                equals_key_symbol_range: _,
+                                                variant0: imported_module_choice_type_variant0,
+                                                variant1_up: imported_module_choice_type_variant1_up,
+                                            } => {
+                                                module_origin_lookup
+                                                    .unqualified
+                                                    .insert(
+                                                        imported_module_choice_type_name.value.clone(),
+                                                        import_node.value.module_name.value.clone(),
+                                                    );
+                                                module_origin_lookup
+                                                    .unqualified
+                                                    .insert(
+                                                        imported_module_choice_type_variant0.name.value.clone(),
+                                                        import_node.value.module_name.value.clone(),
+                                                    );
+                                                for imported_module_choice_type_variant in imported_module_choice_type_variant1_up {
+                                                    module_origin_lookup
+                                                        .unqualified
+                                                        .insert(
+                                                            imported_module_choice_type_variant.name.value.clone(),
+                                                            import_node.value.module_name.value.clone(),
+                                                        );
+                                                }
+                                            },
+                                            ElmSyntaxDeclaration
+                                            ::Port {
+                                                name: imported_module_port_name,
+                                                type_: _,
+                                            } => {
+                                                module_origin_lookup
+                                                    .unqualified
+                                                    .insert(
+                                                        imported_module_port_name.value.clone(),
+                                                        import_node.value.module_name.value.clone(),
+                                                    );
+                                            },
+                                            ElmSyntaxDeclaration
+                                            ::TypeAlias {
+                                                alias_keyword_range: _,
+                                                name: imported_module_type_alias_name,
+                                                parameters: _,
+                                                equals_key_symbol_range: _,
+                                                type_: _,
+                                            } => {
+                                                module_origin_lookup
+                                                    .unqualified
+                                                    .insert(
+                                                        imported_module_type_alias_name.value.clone(),
+                                                        import_node.value.module_name.value.clone(),
+                                                    );
+                                            },
+                                            ElmSyntaxDeclaration
+                                            ::Operator {
+                                                direction: _,
+                                                operator: imported_module_operator,
+                                                function: _,
+                                                precedence: _,
+                                            } => {
+                                                module_origin_lookup
+                                                    .unqualified
+                                                    .insert(
+                                                        imported_module_operator.value.clone(),
+                                                        import_node.value.module_name.value.clone(),
+                                                    );
+                                            },
+                                            ElmSyntaxDeclaration
+                                            ::ValueOrFunction {
+                                                name: imported_module_variable_name,
+                                                signature: _,
+                                                implementation_name_range: _,
+                                                parameters: _,
+                                                equals_key_symbol_range: _,
+                                                result: _,
+                                            } => {
+                                                module_origin_lookup
+                                                    .unqualified
+                                                    .insert(
+                                                        imported_module_variable_name.clone(),
+                                                        import_node.value.module_name.value.clone(),
+                                                    );
+                                            },
+                                        }
+                                    }
                                 },
                             }
                         },
                         ElmSyntaxExposing::Explicit(exposes) => {
                             for expose in exposes {
                                 match &expose.value {
-                                    ElmSyntaxExpose::ChoiceTypeIncludingVariants { name, open_range: _ } => {
+                                    ElmSyntaxExpose
+                                    ::ChoiceTypeIncludingVariants {
+                                        name: choice_type_expose_name,
+                                        open_range: _,
+                                    } => {
                                         module_origin_lookup
                                             .unqualified
-                                            .insert(name.value.clone(), import_node.value.module_name.value.clone());
+                                            .insert(
+                                                choice_type_expose_name.value.clone(),
+                                                import_node.value.module_name.value.clone(),
+                                            );
                                         let imported_module_maybe_syntax: Option<&ElmSyntaxModule> =
                                             match state_file_path_for_module_name(
                                                 state,
@@ -3706,7 +3802,50 @@ fn elm_syntax_module_create_origin_lookup(state: &State, elm_syntax_module: &Elm
                                         match imported_module_maybe_syntax {
                                             None => { },
                                             Some(imported_module_syntax) => {
-                                                // TODO add variants
+                                                'until_origin_choice_type_declaration_found: for declaration in imported_module_syntax
+                                                    .declarations
+                                                    .iter() {
+                                                    match &declaration.declaration.value {
+                                                        ElmSyntaxDeclaration
+                                                        ::ChoiceType {
+                                                            name: imported_module_choice_type_name,
+                                                            parameters: _,
+                                                            equals_key_symbol_range: _,
+                                                            variant0: imported_module_choice_type_variant0,
+                                                            variant1_up: imported_module_choice_type_variant1_up,
+                                                        } => {
+                                                            if choice_type_expose_name ==
+                                                                imported_module_choice_type_name {
+                                                                module_origin_lookup
+                                                                    .unqualified
+                                                                    .insert(
+                                                                        imported_module_choice_type_variant0
+                                                                            .name
+                                                                            .value
+                                                                            .clone(),
+                                                                        import_node.value.module_name.value.clone(),
+                                                                    );
+                                                                for imported_module_choice_type_variant in imported_module_choice_type_variant1_up {
+                                                                    module_origin_lookup
+                                                                        .unqualified
+                                                                        .insert(
+                                                                            imported_module_choice_type_variant
+                                                                                .name
+                                                                                .value
+                                                                                .clone(),
+                                                                            import_node
+                                                                                .value
+                                                                                .module_name
+                                                                                .value
+                                                                                .clone(),
+                                                                        );
+                                                                }
+                                                                break 'until_origin_choice_type_declaration_found
+                                                            }
+                                                        },
+                                                        _ => { },
+                                                    }
+                                                }
                                             },
                                         }
                                     },
@@ -3733,10 +3872,14 @@ fn elm_syntax_module_create_origin_lookup(state: &State, elm_syntax_module: &Elm
                 ElmSyntaxExposing::Explicit(exposes) => {
                     for expose in exposes {
                         match &expose.value {
-                            ElmSyntaxExpose::ChoiceTypeIncludingVariants { name, open_range: _ } => {
+                            ElmSyntaxExpose
+                            ::ChoiceTypeIncludingVariants {
+                                name: choice_type_expose_name,
+                                open_range: _,
+                            } => {
                                 module_origin_lookup
                                     .unqualified
-                                    .insert(name.value.clone(), elm_syntax_module_name.clone());
+                                    .insert(choice_type_expose_name.value.clone(), elm_syntax_module_name.clone());
                                 let imported_module_maybe_syntax: Option<&ElmSyntaxModule> =
                                     match state_file_path_for_module_name(
                                         state,
@@ -3751,7 +3894,42 @@ fn elm_syntax_module_create_origin_lookup(state: &State, elm_syntax_module: &Elm
                                 match imported_module_maybe_syntax {
                                     None => { },
                                     Some(imported_module_syntax) => {
-                                        // TODO add variants
+                                        'until_origin_choice_type_declaration_found: for declaration in imported_module_syntax
+                                            .declarations
+                                            .iter() {
+                                            match &declaration.declaration.value {
+                                                ElmSyntaxDeclaration
+                                                ::ChoiceType {
+                                                    name: imported_module_choice_type_name,
+                                                    parameters: _,
+                                                    equals_key_symbol_range: _,
+                                                    variant0: imported_module_choice_type_variant0,
+                                                    variant1_up: imported_module_choice_type_variant1_up,
+                                                } => {
+                                                    if choice_type_expose_name == imported_module_choice_type_name {
+                                                        module_origin_lookup
+                                                            .unqualified
+                                                            .insert(
+                                                                imported_module_choice_type_variant0.name.value.clone(),
+                                                                import_node.value.module_name.value.clone(),
+                                                            );
+                                                        for imported_module_choice_type_variant in imported_module_choice_type_variant1_up {
+                                                            module_origin_lookup
+                                                                .unqualified
+                                                                .insert(
+                                                                    imported_module_choice_type_variant
+                                                                        .name
+                                                                        .value
+                                                                        .clone(),
+                                                                    import_node.value.module_name.value.clone(),
+                                                                );
+                                                        }
+                                                        break 'until_origin_choice_type_declaration_found
+                                                    }
+                                                },
+                                                _ => { },
+                                            }
+                                        }
                                     },
                                 }
                             },
