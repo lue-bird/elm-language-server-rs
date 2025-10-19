@@ -191,6 +191,8 @@ async fn main() {
                             },
                             // referencing a module-declared member
                             Some(reference_name) => {
+                                let module_origin_lookup: ModuleOriginLookup =
+                                    elm_syntax_module_create_origin_lookup(state, origin_module_syntax);
                                 origin_module_syntax
                                     .declarations
                                     .iter()
@@ -230,7 +232,10 @@ async fn main() {
                                                             .fold(
                                                                 String::new(),
                                                                 |so_far, value_node| so_far + " " +
-                                                                    &value_node.value.to_string(),
+                                                                    &elm_syntax_type_to_single_line_string(
+                                                                        &module_origin_lookup,
+                                                                        &value_node.value,
+                                                                    ),
                                                             ),
                                                         &origin_module_declaration_variant1_up
                                                             .iter()
@@ -244,7 +249,10 @@ async fn main() {
                                                                         .fold(
                                                                             String::new(),
                                                                             |so_far, value_node| so_far + " " +
-                                                                                &value_node.value.to_string(),
+                                                                                &elm_syntax_type_to_single_line_string(
+                                                                                    &module_origin_lookup,
+                                                                                    &value_node.value,
+                                                                                ),
                                                                         ),
                                                             ),
                                                     );
@@ -335,7 +343,10 @@ async fn main() {
                                                             "port {}.{} : {}",
                                                             &full_hovered_reference.module_origin,
                                                             &origin_module_declaration_name.value,
-                                                            &type_.value
+                                                            &elm_syntax_type_to_single_line_string(
+                                                                &module_origin_lookup,
+                                                                &type_.value,
+                                                            )
                                                         );
                                                     Some(match &origin_module_declaration.documentation {
                                                         None => lsp_types::Hover {
@@ -387,7 +398,10 @@ async fn main() {
                                                                     |so_far, parameter_node| so_far + " " +
                                                                         &parameter_node.value,
                                                                 ),
-                                                            &type_.value
+                                                            &elm_syntax_type_to_single_line_string(
+                                                                &module_origin_lookup,
+                                                                &type_.value,
+                                                            )
                                                         );
                                                     Some(match &origin_module_declaration.documentation {
                                                         None => lsp_types::Hover {
@@ -433,7 +447,10 @@ async fn main() {
                                                         "{}.{} : {}",
                                                         &full_hovered_reference.module_origin,
                                                         &origin_module_declaration_name,
-                                                        &origin_module_declaration_signature.type_1.value
+                                                        &elm_syntax_type_to_single_line_string(
+                                                            &module_origin_lookup,
+                                                            &origin_module_declaration_signature.type_1.value,
+                                                        )
                                                     ),
                                                     None => format!(
                                                         "{}.{}",
@@ -3957,70 +3974,99 @@ fn elm_syntax_module_create_origin_lookup(state: &State, elm_syntax_module: &Elm
     module_origin_lookup
 }
 
-/// TODO replace by fn elm_syntax_type_to_single_line_string(&ModuleOriginLookup,
-/// &ElmSyntaxType) -> String
-impl std::fmt::Display for ElmSyntaxType {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            ElmSyntaxType::Construct { reference, arguments } => {
-                // preferably fully qualify
-                match reference.value.qualification.as_str() {
-                    "" => { },
-                    qualification => {
-                        write!(formatter, "{qualification}.")?;
-                    },
-                }
-                formatter.write_str(&reference.value.name)?;
-                for argument in arguments {
-                    write!(formatter, " {}", argument.value)?;
-                }
-                Ok(())
-            },
-            ElmSyntaxType::Function { input, arrow_key_symbol_range: _, output } => write!(
-                formatter,
-                "{} -> {}",
-                &input.value,
-                &output.value
-            ),
-            ElmSyntaxType::Parenthesized(in_parens) => write!(formatter, "({})", &in_parens.value),
-            ElmSyntaxType::Record(fields) => {
-                let mut fields_iterator = fields.iter();
-                match fields_iterator.next() {
-                    None => {
-                        formatter.write_str("{}")
-                    },
-                    Some(field0) => {
-                        write!(formatter, "{{ {} : {}", &field0.name.value, &field0.value.value)?;
-                        for field in fields_iterator {
-                            write!(formatter, ", {} : {}", &field.name.value, &field.value.value)?;
-                        }
-                        formatter.write_str(" }")
-                    },
-                }
-            },
-            ElmSyntaxType::RecordExtension { record_variable, bar_key_symbol_range: _, field0, field1_up } => {
-                write!(
-                    formatter,
-                    "{{ {} | {} : {}",
-                    &record_variable.value,
-                    &field0.name.value,
-                    &field0.value.value
-                )?;
-                for field in field1_up {
-                    write!(formatter, ", {} : {}", &field.name.value, &field.value.value)?;
-                }
-                formatter.write_str(" }")
-            },
-            ElmSyntaxType::Triple { part0, part1, part2 } => write!(
-                formatter,
-                "( {}, {}, {} )",
-                &part0.value,
-                &part1.value,
-                &part2.value
-            ),
-            ElmSyntaxType::Tuple { part0, part1 } => write!(formatter, "( {}, {} )", &part0.value, &part1.value),
-            ElmSyntaxType::Unit => formatter.write_str("()"),
-            ElmSyntaxType::Variable(name) => formatter.write_str(name),
-        }
+fn elm_syntax_type_to_single_line_string(
+    module_origin_lookup: &ModuleOriginLookup,
+    elm_syntax_type: &ElmSyntaxType,
+) -> String {
+    let mut builder = String::new();
+    elm_syntax_type_to_single_line_string_into(&mut builder, module_origin_lookup, elm_syntax_type);
+    builder
+}
+
+fn elm_syntax_type_to_single_line_string_into(
+    so_far: &mut String,
+    module_origin_lookup: &ModuleOriginLookup,
+    elm_syntax_type: &ElmSyntaxType,
+) {
+    match elm_syntax_type {
+        ElmSyntaxType::Construct { reference, arguments } => {
+            so_far.push_str(
+                look_up_origin_module(module_origin_lookup, &reference.value.qualification, &reference.value.name),
+            );
+            so_far.push('.');
+            so_far.push_str(&reference.value.name);
+            for argument in arguments {
+                so_far.push(' ');
+                elm_syntax_type_to_single_line_string_into(so_far, module_origin_lookup, &argument.value);
+            }
+        },
+        ElmSyntaxType::Function { input, arrow_key_symbol_range: _, output } => {
+            elm_syntax_type_to_single_line_string_into(so_far, module_origin_lookup, &input.value);
+            so_far.push_str(" -> ");
+            elm_syntax_type_to_single_line_string_into(so_far, module_origin_lookup, &output.value)
+        },
+        ElmSyntaxType::Parenthesized(in_parens) => {
+            so_far.push('(');
+            elm_syntax_type_to_single_line_string_into(so_far, module_origin_lookup, &in_parens.value);
+            so_far.push(')');
+        },
+        ElmSyntaxType::Record(fields) => {
+            let mut fields_iterator = fields.iter();
+            match fields_iterator.next() {
+                None => {
+                    so_far.push_str("{}")
+                },
+                Some(field0) => {
+                    so_far.push_str("{ ");
+                    so_far.push_str(&field0.name.value);
+                    so_far.push_str(" : ");
+                    elm_syntax_type_to_single_line_string_into(so_far, module_origin_lookup, &field0.value.value);
+                    for field in fields_iterator {
+                        so_far.push_str(", ");
+                        so_far.push_str(&field.name.value);
+                        so_far.push_str(" : ");
+                        elm_syntax_type_to_single_line_string_into(so_far, module_origin_lookup, &field.value.value);
+                    }
+                    so_far.push_str(" }")
+                },
+            }
+        },
+        ElmSyntaxType::RecordExtension { record_variable, bar_key_symbol_range: _, field0, field1_up } => {
+            so_far.push_str("{ ");
+            so_far.push_str(&record_variable.value);
+            so_far.push_str(" | ");
+            so_far.push_str(&field0.name.value);
+            so_far.push_str(" : ");
+            elm_syntax_type_to_single_line_string_into(so_far, module_origin_lookup, &field0.value.value);
+            for field in field1_up {
+                so_far.push_str(", ");
+                so_far.push_str(&field.name.value);
+                so_far.push_str(" : ");
+                elm_syntax_type_to_single_line_string_into(so_far, module_origin_lookup, &field.value.value);
+            }
+            so_far.push_str(" }")
+        },
+        ElmSyntaxType::Triple { part0, part1, part2 } => {
+            so_far.push_str("( ");
+            elm_syntax_type_to_single_line_string_into(so_far, module_origin_lookup, &part0.value);
+            so_far.push_str(", ");
+            elm_syntax_type_to_single_line_string_into(so_far, module_origin_lookup, &part1.value);
+            so_far.push_str(", ");
+            elm_syntax_type_to_single_line_string_into(so_far, module_origin_lookup, &part2.value);
+            so_far.push_str(" )");
+        },
+        ElmSyntaxType::Tuple { part0, part1 } => {
+            so_far.push_str("( ");
+            elm_syntax_type_to_single_line_string_into(so_far, module_origin_lookup, &part0.value);
+            so_far.push_str(", ");
+            elm_syntax_type_to_single_line_string_into(so_far, module_origin_lookup, &part1.value);
+            so_far.push_str(" )");
+        },
+        ElmSyntaxType::Unit => {
+            so_far.push_str("()")
+        },
+        ElmSyntaxType::Variable(name) => {
+            so_far.push_str(name)
+        },
     }
 }
