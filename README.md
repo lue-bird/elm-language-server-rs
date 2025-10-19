@@ -1,6 +1,6 @@
 > Status: **do not use 💩**
 
-A minimal LSP language server for [elm](https://elm-lang.org/), written in a bit of rust and mostly elm (which itself gets transpiled into rust when building).
+A minimal LSP language server for [elm](https://elm-lang.org/), written in rust and elm (which itself gets transpiled into rust when building).
 
 ## goals
 - fast
