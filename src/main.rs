@@ -163,31 +163,27 @@ async fn main() {
                         match &full_hovered_reference.name {
                             // referencing a module
                             None => {
-                                match origin_module_syntax
-                                    .comments
-                                    .iter()
-                                    .find(|comment_node| comment_node.value.starts_with("{-|")) {
-                                    None => Some(lsp_types::Hover {
-                                        contents: lsp_types::HoverContents::Scalar(lsp_types::MarkedString::String(
-                                            // show list of exports or something
-                                            "_module has no documentation comment_".to_string(),
-                                        )),
-                                        range: Some(full_hovered_reference.range),
-                                    }),
-                                    Some(module_documentation) => Some(lsp_types::Hover {
-                                        contents: lsp_types::HoverContents::Scalar(
-                                            lsp_types::MarkedString::String(
-                                                module_documentation
+                                Some(lsp_types::Hover {
+                                    contents: lsp_types::HoverContents::Scalar(
+                                        lsp_types::MarkedString::String(
+                                            match origin_module_syntax
+                                                .comments
+                                                .iter()
+                                                .find(|comment_node| comment_node.value.starts_with("{-|")) {
+                                                None => 
+                                                // show list of exports or something
+                                                "_module has no documentation comment_".to_string(),
+                                                Some(module_documentation) => module_documentation
                                                     .value
                                                     .trim_start_matches("{-|")
                                                     .trim_end_matches("-}")
                                                     .trim()
                                                     .to_string(),
-                                            ),
+                                            },
                                         ),
-                                        range: Some(full_hovered_reference.range),
-                                    }),
-                                }
+                                    ),
+                                    range: Some(full_hovered_reference.range),
+                                })
                             },
                             // referencing a module-declared member
                             Some(reference_name) => {
@@ -215,7 +211,7 @@ async fn main() {
                                                     .any(|variant| &variant.name.value == reference_name)) {
                                                 let description =
                                                     format!(
-                                                        "type {}.{}{}\n    = {}{}{}",
+                                                        "```elm\ntype {}.{}{}\n    = {}{}{}\n```\n",
                                                         &full_hovered_reference.module_origin,
                                                         &origin_module_declaration_name.value,
                                                         &origin_module_declaration_parameters
@@ -256,30 +252,20 @@ async fn main() {
                                                                         ),
                                                             ),
                                                     );
-                                                Some(match &origin_module_declaration.documentation {
-                                                    None => lsp_types::Hover {
-                                                        contents: lsp_types::HoverContents::Markup(
-                                                            lsp_types::MarkupContent {
-                                                                kind: lsp_types::MarkupKind::Markdown,
-                                                                value: "```elm\n".to_string() + &description +
-                                                                    "\n```\n-----",
-                                                            },
-                                                        ),
-                                                        range: Some(full_hovered_reference.range),
-                                                    },
-                                                    Some(documentation) => lsp_types::Hover {
-                                                        contents: lsp_types::HoverContents::Markup(
-                                                            lsp_types::MarkupContent {
-                                                                kind: lsp_types::MarkupKind::Markdown,
-                                                                value: "```elm\n".to_string() + &description +
-                                                                    "\n```\n-----\n" +
+                                                Some(lsp_types::Hover {
+                                                    contents: lsp_types::HoverContents::Markup(
+                                                        lsp_types::MarkupContent {
+                                                            kind: lsp_types::MarkupKind::Markdown,
+                                                            value: match &origin_module_declaration.documentation {
+                                                                None => description,
+                                                                Some(documentation) => description + "-----\n" +
                                                                     documentation_to_hover_string(
                                                                         &documentation.value,
                                                                     ),
                                                             },
-                                                        ),
-                                                        range: Some(full_hovered_reference.range),
-                                                    },
+                                                        },
+                                                    ),
+                                                    range: Some(full_hovered_reference.range),
                                                 })
                                             } else {
                                                 None
@@ -294,7 +280,7 @@ async fn main() {
                                                 &origin_module_declaration_operator.value {
                                                 let description =
                                                     // TODO associate function type
-                                                    "infix ".to_string() + match origin_module_declaration_direction.value {
+                                                    "```elm\ninfix ".to_string() + match origin_module_declaration_direction.value {
                                                         elm::ElmSyntaxInfixDirection::Left => "left",
                                                         elm::ElmSyntaxInfixDirection::Non => "non",
                                                         elm::ElmSyntaxInfixDirection::Right => "right",
@@ -303,31 +289,22 @@ async fn main() {
                                                         &full_hovered_reference.module_origin +
                                                         ".(" +
                                                         &origin_module_declaration_operator.value +
-                                                        ")";
-                                                Some(match &origin_module_declaration.documentation {
-                                                    None => lsp_types::Hover {
-                                                        contents: lsp_types::HoverContents::Markup(
-                                                            lsp_types::MarkupContent {
-                                                                kind: lsp_types::MarkupKind::Markdown,
-                                                                value: "```elm\n".to_string() + &description +
-                                                                    "\n```\n-----",
-                                                            },
-                                                        ),
-                                                        range: Some(full_hovered_reference.range),
-                                                    },
-                                                    Some(documentation) => lsp_types::Hover {
-                                                        contents: lsp_types::HoverContents::Markup(
-                                                            lsp_types::MarkupContent {
-                                                                kind: lsp_types::MarkupKind::Markdown,
-                                                                value: "```elm\n".to_string() + &description +
-                                                                    "\n```\n-----\n" +
+                                                        ")" +
+                                                        "\n```\n";
+                                                Some(lsp_types::Hover {
+                                                    contents: lsp_types::HoverContents::Markup(
+                                                        lsp_types::MarkupContent {
+                                                            kind: lsp_types::MarkupKind::Markdown,
+                                                            value: match &origin_module_declaration.documentation {
+                                                                None => description,
+                                                                Some(documentation) => description + "-----\n" +
                                                                     documentation_to_hover_string(
                                                                         &documentation.value,
                                                                     ),
                                                             },
-                                                        ),
-                                                        range: Some(full_hovered_reference.range),
-                                                    },
+                                                        },
+                                                    ),
+                                                    range: Some(full_hovered_reference.range),
                                                 })
                                             } else {
                                                 None
@@ -340,7 +317,7 @@ async fn main() {
                                                 if &origin_module_declaration_name.value == reference_name {
                                                     let description =
                                                         format!(
-                                                            "port {}.{} : {}",
+                                                            "```elm\nport {}.{} : {}\n```\n",
                                                             &full_hovered_reference.module_origin,
                                                             &origin_module_declaration_name.value,
                                                             &elm_syntax_type_to_single_line_string(
@@ -348,30 +325,20 @@ async fn main() {
                                                                 &type_.value,
                                                             )
                                                         );
-                                                    Some(match &origin_module_declaration.documentation {
-                                                        None => lsp_types::Hover {
-                                                            contents: lsp_types::HoverContents::Markup(
-                                                                lsp_types::MarkupContent {
-                                                                    kind: lsp_types::MarkupKind::Markdown,
-                                                                    value: "```elm\n".to_string() + &description +
-                                                                        "\n```\n-----",
-                                                                },
-                                                            ),
-                                                            range: Some(full_hovered_reference.range),
-                                                        },
-                                                        Some(documentation) => lsp_types::Hover {
-                                                            contents: lsp_types::HoverContents::Markup(
-                                                                lsp_types::MarkupContent {
-                                                                    kind: lsp_types::MarkupKind::Markdown,
-                                                                    value: "```elm\n".to_string() + &description +
-                                                                        "\n```\n-----\n" +
+                                                    Some(lsp_types::Hover {
+                                                        contents: lsp_types::HoverContents::Markup(
+                                                            lsp_types::MarkupContent {
+                                                                kind: lsp_types::MarkupKind::Markdown,
+                                                                value: match &origin_module_declaration.documentation {
+                                                                    None => description,
+                                                                    Some(documentation) => description + "-----\n" +
                                                                         documentation_to_hover_string(
                                                                             &documentation.value,
                                                                         ),
                                                                 },
-                                                            ),
-                                                            range: Some(full_hovered_reference.range),
-                                                        },
+                                                            },
+                                                        ),
+                                                        range: Some(full_hovered_reference.range),
                                                     })
                                                 } else {
                                                     None
@@ -388,7 +355,7 @@ async fn main() {
                                                 if &origin_module_declaration_name.value == reference_name {
                                                     let description =
                                                         format!(
-                                                            "type alias {}.{}{} =\n    {}",
+                                                            "```elm\ntype alias {}.{}{} =\n    {}\n```\n",
                                                             &full_hovered_reference.module_origin,
                                                             &origin_module_declaration_name.value,
                                                             &origin_module_declaration_parameters
@@ -403,30 +370,20 @@ async fn main() {
                                                                 &type_.value,
                                                             )
                                                         );
-                                                    Some(match &origin_module_declaration.documentation {
-                                                        None => lsp_types::Hover {
-                                                            contents: lsp_types::HoverContents::Markup(
-                                                                lsp_types::MarkupContent {
-                                                                    kind: lsp_types::MarkupKind::Markdown,
-                                                                    value: "```elm\n".to_string() + &description +
-                                                                        "\n```\n-----",
-                                                                },
-                                                            ),
-                                                            range: Some(full_hovered_reference.range),
-                                                        },
-                                                        Some(documentation) => lsp_types::Hover {
-                                                            contents: lsp_types::HoverContents::Markup(
-                                                                lsp_types::MarkupContent {
-                                                                    kind: lsp_types::MarkupKind::Markdown,
-                                                                    value: "```elm\n".to_string() + &description +
-                                                                        "\n```\n-----\n" +
+                                                    Some(lsp_types::Hover {
+                                                        contents: lsp_types::HoverContents::Markup(
+                                                            lsp_types::MarkupContent {
+                                                                kind: lsp_types::MarkupKind::Markdown,
+                                                                value: match &origin_module_declaration.documentation {
+                                                                    None => description,
+                                                                    Some(documentation) => description + "-----\n" +
                                                                         documentation_to_hover_string(
                                                                             &documentation.value,
                                                                         ),
                                                                 },
-                                                            ),
-                                                            range: Some(full_hovered_reference.range),
-                                                        },
+                                                            },
+                                                        ),
+                                                        range: Some(full_hovered_reference.range),
                                                     })
                                                 } else {
                                                     None
@@ -444,7 +401,7 @@ async fn main() {
                                                 reference_name {
                                                 let description = match origin_module_declaration_maybe_signature {
                                                     Some(origin_module_declaration_signature) => format!(
-                                                        "{}.{} : {}",
+                                                        "```elm\n{}.{} : {}\n```\n",
                                                         &full_hovered_reference.module_origin,
                                                         &origin_module_declaration_name,
                                                         &elm_syntax_type_to_single_line_string(
@@ -453,35 +410,25 @@ async fn main() {
                                                         )
                                                     ),
                                                     None => format!(
-                                                        "{}.{}",
+                                                        "```elm\n{}.{}\n```\n",
                                                         &full_hovered_reference.module_origin,
                                                         &origin_module_declaration_name
                                                     ),
                                                 };
-                                                Some(match &origin_module_declaration.documentation {
-                                                    None => lsp_types::Hover {
-                                                        contents: lsp_types::HoverContents::Markup(
-                                                            lsp_types::MarkupContent {
-                                                                kind: lsp_types::MarkupKind::Markdown,
-                                                                value: "```elm\n".to_string() + &description +
-                                                                    "\n```\n-----",
-                                                            },
-                                                        ),
-                                                        range: Some(full_hovered_reference.range),
-                                                    },
-                                                    Some(documentation) => lsp_types::Hover {
-                                                        contents: lsp_types::HoverContents::Markup(
-                                                            lsp_types::MarkupContent {
-                                                                kind: lsp_types::MarkupKind::Markdown,
-                                                                value: "```elm\n".to_string() + &description +
-                                                                    "\n```\n-----\n" +
+                                                Some(lsp_types::Hover {
+                                                    contents: lsp_types::HoverContents::Markup(
+                                                        lsp_types::MarkupContent {
+                                                            kind: lsp_types::MarkupKind::Markdown,
+                                                            value: match &origin_module_declaration.documentation {
+                                                                None => description,
+                                                                Some(documentation) => description + "-----\n" +
                                                                     documentation_to_hover_string(
                                                                         &documentation.value,
                                                                     ),
                                                             },
-                                                        ),
-                                                        range: Some(full_hovered_reference.range),
-                                                    },
+                                                        },
+                                                    ),
+                                                    range: Some(full_hovered_reference.range),
                                                 })
                                             } else {
                                                 None
