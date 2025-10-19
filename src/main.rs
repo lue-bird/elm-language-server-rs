@@ -485,20 +485,185 @@ async fn main() {
             async move {
                 Ok(maybe_hover_result)
             }
-        }).request::<lsp_types::request::GotoDefinition, _>(|_state, goto_definition_arguments| async move {
-            Ok(Some(lsp_types::GotoDefinitionResponse::Scalar(lsp_types::Location {
-                uri: goto_definition_arguments.text_document_position_params.text_document.uri,
-                range: lsp_types::Range {
-                    start: lsp_types::Position {
-                        line: 0,
-                        character: 0,
-                    },
-                    end: lsp_types::Position {
-                        line: 0,
-                        character: 6,
-                    },
-                },
-            })))
+        }).request::<lsp_types::request::GotoDefinition, _>(|state, goto_definition_arguments| {
+            let maybe_declaration_range: Option<lsp_types::Location> =
+                goto_definition_arguments
+                    .text_document_position_params
+                    .text_document
+                    .uri
+                    .to_file_path()
+                    .ok()
+                    .and_then(|hovered_file_path| {
+                        let module_syntax =
+                            state.parsed_modules.get(&hovered_file_path).and_then(|m| m.syntax.as_ref())?;
+                        let hovered_reference =
+                            elm_syntax_module_find_reference_at_position(
+                                state,
+                                module_syntax,
+                                goto_definition_arguments.text_document_position_params.position,
+                            )?;
+                        let full_hovered_reference = match hovered_reference.module_origin.as_str() {
+                            "" => ElmSyntaxReference {
+                                module_origin: module_syntax.header.value.module_name.value.clone(),
+                                name: hovered_reference.name,
+                                range: hovered_reference.range,
+                            },
+                            _ => hovered_reference,
+                        };
+                        let origin_module_file_path =
+                            state_file_path_for_module_name(state, &full_hovered_reference.module_origin)?;
+                        let origin_module_syntax =
+                            state.parsed_modules.get(&origin_module_file_path).and_then(|m| m.syntax.as_ref())?;
+                        match &full_hovered_reference.name {
+                            // referencing a module
+                            None => {
+                                lsp_types::Url::from_file_path(&origin_module_file_path)
+                                    .ok()
+                                    .map(|origin_module_file_url| lsp_types::Location {
+                                        uri: origin_module_file_url,
+                                        range: origin_module_syntax.header.value.module_name.range,
+                                    })
+                            },
+                            // referencing a module-declared member
+                            Some(reference_name) => {
+                                origin_module_syntax
+                                    .declarations
+                                    .iter()
+                                    .find_map(
+                                        |origin_module_declaration| match &origin_module_declaration
+                                            .declaration
+                                            .value {
+                                            ElmSyntaxDeclaration
+                                            ::ChoiceType {
+                                                name: origin_module_declaration_name,
+                                                parameters: _,
+                                                equals_key_symbol_range: _,
+                                                variant0: origin_module_declaration_variant0,
+                                                variant1_up: origin_module_declaration_variant1_up,
+                                            } => if &origin_module_declaration_name.value ==
+                                                reference_name {
+                                                lsp_types::Url::from_file_path(&origin_module_file_path)
+                                                    .ok()
+                                                    .map(|origin_module_file_url| lsp_types::Location {
+                                                        uri: origin_module_file_url,
+                                                        range: origin_module_declaration_name.range,
+                                                    })
+                                            } else if &origin_module_declaration_variant0.name.value == reference_name {
+                                                lsp_types::Url::from_file_path(&origin_module_file_path)
+                                                    .ok()
+                                                    .map(|origin_module_file_url| lsp_types::Location {
+                                                        uri: origin_module_file_url,
+                                                        range: origin_module_declaration_variant0.name.range,
+                                                    })
+                                            } else {
+                                                origin_module_declaration_variant1_up
+                                                    .iter()
+                                                    .find(|variant| &variant.name.value == reference_name)
+                                                    .and_then(
+                                                        |variant| lsp_types::Url::from_file_path(
+                                                            &origin_module_file_path,
+                                                        )
+                                                            .ok()
+                                                            .map(|origin_module_file_url| lsp_types::Location {
+                                                                uri: origin_module_file_url,
+                                                                range: variant.name.range,
+                                                            }),
+                                                    )
+                                            },
+                                            ElmSyntaxDeclaration
+                                            ::Operator {
+                                                direction: _,
+                                                operator: origin_module_declaration_operator,
+                                                function: _,
+                                                precedence: _,
+                                            } => if reference_name ==
+                                                &origin_module_declaration_operator.value {
+                                                lsp_types::Url::from_file_path(&origin_module_file_path)
+                                                    .ok()
+                                                    .map(|origin_module_file_url| lsp_types::Location {
+                                                        uri: origin_module_file_url,
+                                                        range: origin_module_declaration_operator.range,
+                                                    })
+                                            } else {
+                                                None
+                                            },
+                                            ElmSyntaxDeclaration
+                                            ::Port {
+                                                name: origin_module_declaration_name,
+                                                type_: _,
+                                            } => {
+                                                if &origin_module_declaration_name.value == reference_name {
+                                                    lsp_types::Url::from_file_path(&origin_module_file_path)
+                                                        .ok()
+                                                        .map(|origin_module_file_url| lsp_types::Location {
+                                                            uri: origin_module_file_url,
+                                                            range: origin_module_declaration_name.range,
+                                                        })
+                                                } else {
+                                                    None
+                                                }
+                                            },
+                                            ElmSyntaxDeclaration
+                                            ::TypeAlias {
+                                                alias_keyword_range: _,
+                                                name: origin_module_declaration_name,
+                                                parameters: _,
+                                                equals_key_symbol_range: _,
+                                                type_: _,
+                                            } => {
+                                                if &origin_module_declaration_name.value == reference_name {
+                                                    lsp_types::Url::from_file_path(&origin_module_file_path)
+                                                        .ok()
+                                                        .map(|origin_module_file_url| lsp_types::Location {
+                                                            uri: origin_module_file_url,
+                                                            range: origin_module_declaration_name.range,
+                                                        })
+                                                } else {
+                                                    None
+                                                }
+                                            },
+                                            ElmSyntaxDeclaration
+                                            ::ValueOrFunction {
+                                                name: origin_module_declaration_name,
+                                                signature: origin_module_declaration_maybe_signature,
+                                                implementation_name_range: origin_module_declaration_implementation_name_range,
+                                                parameters: _,
+                                                equals_key_symbol_range: _,
+                                                result: _,
+                                            } => if origin_module_declaration_name ==
+                                                reference_name {
+                                                lsp_types::Url::from_file_path(&origin_module_file_path)
+                                                    .ok()
+                                                    .map(|origin_module_file_url| lsp_types::Location {
+                                                        uri: origin_module_file_url,
+                                                        range: match origin_module_declaration_maybe_signature {
+                                                            Some(
+                                                                origin_module_declaration_signature,
+                                                            ) => origin_module_declaration_signature
+                                                                .name
+                                                                .range,
+                                                            None => *origin_module_declaration_implementation_name_range,
+                                                        },
+                                                    })
+                                            } else {
+                                                None
+                                            },
+                                        },
+                                    )
+                                    .or_else(|| {
+                                        eprintln!(
+                                            "could not find reference {} in module {}",
+                                            reference_name,
+                                            &full_hovered_reference.module_origin
+                                        );
+                                        None
+                                    })
+                            },
+                        }
+                    });
+            async move {
+                Ok(maybe_declaration_range.map(|location| lsp_types::GotoDefinitionResponse::Scalar(location)))
+            }
         }).request::<lsp_types::request::SemanticTokensFullRequest, _>(|state, semantic_tokens_arguments| {
             let semantic_tokens =
                 semantic_tokens_arguments
