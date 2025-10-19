@@ -625,14 +625,32 @@ declarationSyntaxKindMap declarationNode =
                 |> Dict.union
                     (signature |> signatureSyntaxKindMap)
 
-        ElmSyntax.DeclarationOperator _ ->
+        ElmSyntax.DeclarationOperator operatorDeclaration ->
             RangeDict.singleton
                 { start = declarationNode.range.start
                 , end =
                     declarationNode.range.start
-                        |> locationAddColumn 4
+                        |> locationAddColumn 5
                 }
                 KeySymbol
+                |> RangeDict.insert
+                    operatorDeclaration.direction.range
+                    KeySymbol
+                |> RangeDict.insert
+                    { start =
+                        operatorDeclaration.operator.range.start
+                            |> locationAddColumn 1
+                    , end =
+                        operatorDeclaration.operator.range.end
+                            |> locationAddColumn -1
+                    }
+                    KeySymbol
+                |> RangeDict.insert
+                    operatorDeclaration.precedence.range
+                    Number
+                |> RangeDict.insert
+                    operatorDeclaration.function.range
+                    Variable
 
 
 {-| Assumes `elm-format`ed code
