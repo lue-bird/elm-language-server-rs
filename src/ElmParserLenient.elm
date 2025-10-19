@@ -1874,11 +1874,11 @@ maybeDotNamesUppercaseTuple =
 typeConstructWithArgumentsFollowedByWhitespaceAndComments : Parser (WithComments (ElmSyntax.Node ElmSyntax.Type))
 typeConstructWithArgumentsFollowedByWhitespaceAndComments =
     ParserFast.map3
-        (\nameNode commentsAfterName argsReverse ->
+        (\nameNode commentsAfterName argumentsReverse ->
             let
                 range : TextGrid.Range
                 range =
-                    case argsReverse.syntax of
+                    case argumentsReverse.syntax of
                         [] ->
                             nameNode.range
 
@@ -1887,13 +1887,14 @@ typeConstructWithArgumentsFollowedByWhitespaceAndComments =
             in
             { comments =
                 commentsAfterName
-                    |> ropePrependTo argsReverse.comments
+                    |> ropePrependTo argumentsReverse.comments
             , syntax =
                 { range = range
                 , value =
                     ElmSyntax.TypeConstruct
                         { reference = nameNode
-                        , arguments = List.reverse argsReverse.syntax
+                        , arguments =
+                            argumentsReverse.syntax |> List.reverse
                         }
                 }
             }
@@ -3711,9 +3712,9 @@ followedByMultiArgumentApplication appliedExpressionParser =
         (manyWithCommentsReverse
             (positivelyIndentedFollowedBy
                 (ParserFast.map2
-                    (\arg commentsAfter ->
-                        { comments = arg.comments |> ropePrependTo commentsAfter
-                        , syntax = arg.syntax
+                    (\argument commentsAfter ->
+                        { comments = argument.comments |> ropePrependTo commentsAfter
+                        , syntax = argument.syntax
                         }
                     )
                     subExpression
@@ -4141,7 +4142,7 @@ patternNotSpaceSeparated : Parser (WithComments (ElmSyntax.Node ElmSyntax.Patter
 patternNotSpaceSeparated =
     ParserFast.oneOf9
         varPattern
-        qualifiedPatternWithoutConsumeArgs
+        qualifiedPatternWithoutConsumeArguments
         allPattern
         patternUnitOrParenthesizedOrTupleOrTriple
         recordPattern
@@ -4240,8 +4241,8 @@ qualifiedPatternWithConsumeValues =
         )
 
 
-qualifiedPatternWithoutConsumeArgs : Parser (WithComments (ElmSyntax.Node ElmSyntax.Pattern))
-qualifiedPatternWithoutConsumeArgs =
+qualifiedPatternWithoutConsumeArguments : Parser (WithComments (ElmSyntax.Node ElmSyntax.Pattern))
+qualifiedPatternWithoutConsumeArguments =
     ParserFast.map2WithRange
         (\range startName after ->
             { comments = ropeEmpty
