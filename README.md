@@ -13,8 +13,9 @@ A minimal LSP language server for [elm](https://elm-lang.org/), written in rust 
 - type inference
 - directly integrating `elm-test`. `elm-review` or `elm-format`
 - codelens
-- code folding
 - outline symbols
+- code folding
+- linked editing
 - `elm.json` help
 - inline GLSL blocks
 
