@@ -1088,16 +1088,7 @@ fn elm_syntax_type_find_reference_at_position(
                     module_origin_lookup,
                     elm_syntax_node_unbox(output),
                     position,
-                ).or_else(|| {
-                    eprintln!(
-                        "unexpected: hover position {:?} not in function output range {:?} (also not in function input range {:?}, whole syntax is {:?})",
-                        position,
-                        output.range,
-                        input.range,
-                        elm_syntax_type_node.value
-                    );
-                    None
-                }),
+                ),
             ),
             ElmSyntaxType::Parenthesized(in_parens) => elm_syntax_type_find_reference_at_position(
                 module_origin_lookup,
