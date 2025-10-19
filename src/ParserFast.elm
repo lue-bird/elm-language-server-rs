@@ -7,7 +7,7 @@ module ParserFast exposing
     , skipWhileWhitespaceBacktrackableFollowedBy, followedBySkipWhileWhitespace, nestableMultiCommentMapWithRange
     , map, validate, mapOrFail, lazy
     , map2, map2WithStartLocation, map2WithRange, map3, map3WithStartLocation, map3WithRange, map4, map4WithStartLocation, map4WithRange, map5, map5WithStartLocation, map5WithRange, map6, map6WithStartLocation, map7, map7WithRange, map8WithStartLocation, map9WithRange
-    , loopWhileSucceeds, loopWhileSucceedsOntoResultFromParser, loopWhileSucceedsOntoResultFromParserRightToLeftStackUnsafe, loopWhileSucceedsRightToLeftStackUnsafe, loopUntil
+    , loopWhileSucceeds, loopWhileSucceedsOntoResultFromParser, loopWhileSucceedsCombiningRightToLeftStackUnsafe, loopWhileSucceedsRightToLeftStackUnsafe, loopUntil
     , orSucceed, orSucceedWithLocation, mapOrSucceed, map2OrSucceed, map2WithRangeOrSucceed, map3OrSucceed, map3WithStartLocationOrSucceed, map4OrSucceed, oneOf2, oneOf2Map, oneOf2MapWithStartRowColumnAndEndRowColumn, oneOf2OrSucceed, oneOf3, oneOf4, oneOf5, oneOf7, oneOf9
     , withIndentSetToColumn, columnIndentAndThen, validateEndColumnIndentation
     , mapWithStartLocation, mapWithEndLocation, mapWithRange, offsetSourceAndThen, offsetSourceAndThenOrSucceed
@@ -58,24 +58,24 @@ With `ParserFast`, you need to either
 (this note does not just apply to whitespace!)
 
 
-# Exact match primitives
+# exact match
 
 @docs symbol, symbolWithEndLocation, symbolWithRange, symbolFollowedBy, symbolBacktrackableFollowedBy, followedBySymbol
 @docs keyword, keywordRange, keywordFollowedBy
 
 
-# Fuzzy match primitives
+# fuzzy match
 
 @docs anyChar, while, whileAtLeast1WithoutLinebreak, whileMapWithRange, ifFollowedByWhileWithoutLinebreak, ifFollowedByWhileMapWithoutLinebreak, ifFollowedByWhileMapWithRangeWithoutLinebreak, ifFollowedByWhileValidateWithoutLinebreak, ifFollowedByWhileValidateMapWithRangeWithoutLinebreak, whileAtMost3WithoutLinebreakAnd2PartUtf16ToResultAndThen, whileAtMost3WithoutLinebreakAnd2PartUtf16ValidateMapWithRangeBacktrackableFollowedBySymbol
 @docs integerDecimalMapWithRange, integerDecimalOrHexadecimalMapWithRange, floatOrIntegerDecimalOrHexadecimalMapWithRange
 
 
-# Whitespace primitives
+# whitespace
 
 @docs skipWhileWhitespaceBacktrackableFollowedBy, followedBySkipWhileWhitespace, nestableMultiCommentMapWithRange
 
 
-# Flow
+# flow
 
 @docs map, validate, mapOrFail, lazy
 
@@ -84,7 +84,7 @@ With `ParserFast`, you need to either
 
 @docs map2, map2WithStartLocation, map2WithRange, map3, map3WithStartLocation, map3WithRange, map4, map4WithStartLocation, map4WithRange, map5, map5WithStartLocation, map5WithRange, map6, map6WithStartLocation, map7, map7WithRange, map8WithStartLocation, map9WithRange
 
-@docs loopWhileSucceeds, loopWhileSucceedsOntoResultFromParser, loopWhileSucceedsOntoResultFromParserRightToLeftStackUnsafe, loopWhileSucceedsRightToLeftStackUnsafe, loopUntil
+@docs loopWhileSucceeds, loopWhileSucceedsOntoResultFromParser, loopWhileSucceedsCombiningRightToLeftStackUnsafe, loopWhileSucceedsRightToLeftStackUnsafe, loopUntil
 
 
 ## choice
@@ -1648,52 +1648,37 @@ loopWhileSucceedsFromRightToLeftStackUnsafeHelp ((Parser parseElement) as elemen
                 Good initialFolded s0
 
 
-loopWhileSucceedsOntoResultFromParserRightToLeftStackUnsafe : Parser base -> Parser element -> (base -> element -> base) -> Parser base
-loopWhileSucceedsOntoResultFromParserRightToLeftStackUnsafe (Parser parseLeftestElement) taiElement reduce =
+loopWhileSucceedsCombiningRightToLeftStackUnsafe : Parser a -> (a -> a -> a) -> Parser a
+loopWhileSucceedsCombiningRightToLeftStackUnsafe taiElement reduce =
     Parser
         (\s0 ->
-            case parseLeftestElement s0 of
-                Good leftestElementResult s1 ->
-                    case
-                        loopWhileSucceedsRightToLeftStackUnsafeHelp
-                            taiElement
-                            leftestElementResult
-                            reduce
-                            s1
-                    of
-                        (Good _ _) as good ->
-                            good
+            case loopWhileSucceedsCombiningRightToLeftStackUnsafeHelp taiElement reduce s0 of
+                Good tailFolded s1 ->
+                    Good tailFolded s1
 
-                        Bad elementCommitted () ->
-                            if elementCommitted then
-                                Bad True ()
-
-                            else
-                                Good leftestElementResult s1
-
-                Bad leftestElementCommitted () ->
-                    Bad leftestElementCommitted ()
+                (Bad _ ()) as tailBad ->
+                    tailBad
         )
 
 
-loopWhileSucceedsRightToLeftStackUnsafeHelp : Parser element -> base -> (base -> element -> base) -> State -> PStep base
-loopWhileSucceedsRightToLeftStackUnsafeHelp ((Parser parseElement) as element) base reduce s0 =
+loopWhileSucceedsCombiningRightToLeftStackUnsafeHelp : Parser a -> (a -> a -> a) -> State -> PStep a
+loopWhileSucceedsCombiningRightToLeftStackUnsafeHelp ((Parser parseElement) as element) reduce s0 =
     -- IGNORE TCO
     case parseElement s0 of
         Good elementResult s1 ->
-            case loopWhileSucceedsRightToLeftStackUnsafeHelp element base reduce s1 of
+            case loopWhileSucceedsCombiningRightToLeftStackUnsafeHelp element reduce s1 of
                 Good tailFolded s2 ->
-                    Good (reduce tailFolded elementResult) s2
+                    Good (reduce elementResult tailFolded) s2
 
-                Bad tailCommitted () ->
+                (Bad tailCommitted _) as tailBad ->
                     if tailCommitted then
-                        Bad True ()
+                        tailBad
 
                     else
-                        Good (reduce base elementResult) s1
+                        Good elementResult s1
 
-        Bad elementCommitted () ->
-            Bad elementCommitted ()
+        Bad elementCommitted x ->
+            Bad elementCommitted x
 
 
 loopWhileSucceedsOntoResultFromParser :

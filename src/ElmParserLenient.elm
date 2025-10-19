@@ -5,9 +5,8 @@ module ElmParserLenient exposing
     , moduleHeader, import_, declarations, declaration
     , type_, pattern, expression
     , multiLineComment, singleLineComment, whitespaceAndComments
-    , nameLowercase, nameUppercase
+    , nameUppercaseWithDots, nameLowercase, nameUppercase
     , RopeFilled(..)
-    , nameUppercaseWithDots
     )
 
 {-| Like [`Elm.Parser`](https://elm-lang.org/packages/stil4m/elm-syntax/latest/Elm-Parser)
@@ -71,7 +70,7 @@ or reparse only the touched declarations on save.
 
 ### low-level
 
-@docs moduleName, nameLowercase, nameUppercase
+@docs nameUppercaseWithDots, nameLowercase, nameUppercase
 @docs RopeFilled
 
 -}
@@ -1365,60 +1364,90 @@ typeParameterListEquals =
 -}
 type_ : Parser { comments : Comments, syntax : ElmSyntax.Node ElmSyntax.Type }
 type_ =
-    ParserFast.loopWhileSucceedsOntoResultFromParserRightToLeftStackUnsafe
-        (ParserFast.map2
-            (\startType commentsAfter ->
-                { comments =
-                    startType.comments
-                        |> ropePrependTo commentsAfter
-                , syntax = startType.syntax
-                }
-            )
-            (ParserFast.lazy (\() -> typeNotFunction))
-            whitespaceAndComments
-        )
-        (ParserFast.symbolFollowedBy "->"
-            (ParserFast.map4WithStartLocation
-                (\arrowKeySymbolEndLocation commentsAfterArrow commentsWithExtraArrow typeResult commentsAfterType ->
+    ParserFast.map3
+        (\startType commentsAfter maybeOutput ->
+            case maybeOutput of
+                Nothing ->
                     { comments =
-                        commentsAfterArrow
-                            |> ropePrependTo commentsWithExtraArrow
-                            |> ropePrependTo typeResult.comments
-                            |> ropePrependTo commentsAfterType
-                    , syntax = typeResult.syntax
-                    , arrowKeySymbolEndLocation = arrowKeySymbolEndLocation
+                        startType.comments
+                            |> ropePrependTo commentsAfter
+                    , syntax = startType.syntax
+                    }
+
+                Just arrowToOutType ->
+                    { comments =
+                        startType.comments
+                            |> ropePrependTo commentsAfter
+                            |> ropePrependTo arrowToOutType.comments
+                    , syntax =
+                        ElmSyntax.nodeCombine
+                            (\input output ->
+                                ElmSyntax.TypeFunction
+                                    { input = input
+                                    , arrowKeySymbolRange =
+                                        { start =
+                                            arrowToOutType.arrowKeySymbolEndLocation
+                                                |> locationAddColumn -2
+                                        , end = arrowToOutType.arrowKeySymbolEndLocation
+                                        }
+                                    , output = output
+                                    }
+                            )
+                            startType.syntax
+                            arrowToOutType.syntax
+                    }
+        )
+        (ParserFast.lazy (\() -> typeNotFunction))
+        whitespaceAndComments
+        (ParserFast.mapOrSucceed
+            Just
+            (ParserFast.loopWhileSucceedsCombiningRightToLeftStackUnsafe
+                (ParserFast.symbolFollowedBy "->"
+                    (ParserFast.map4WithStartLocation
+                        (\arrowKeySymbolEndLocation commentsAfterArrow commentsWithExtraArrow typeResult commentsAfterType ->
+                            { comments =
+                                commentsAfterArrow
+                                    |> ropePrependTo commentsWithExtraArrow
+                                    |> ropePrependTo typeResult.comments
+                                    |> ropePrependTo commentsAfterType
+                            , syntax = typeResult.syntax
+                            , arrowKeySymbolEndLocation = arrowKeySymbolEndLocation
+                            }
+                        )
+                        whitespaceAndComments
+                        (ParserFast.orSucceed
+                            (ParserFast.symbolFollowedBy "->" whitespaceAndComments)
+                            ropeEmpty
+                        )
+                        (ParserFast.lazy (\() -> typeNotFunction))
+                        whitespaceAndComments
+                    )
+                )
+                (\arrowToInType arrowToOutType ->
+                    { arrowKeySymbolEndLocation = arrowToInType.arrowKeySymbolEndLocation
+                    , comments =
+                        arrowToInType.comments
+                            |> ropePrependTo arrowToOutType.comments
+                    , syntax =
+                        ElmSyntax.nodeCombine
+                            (\input output ->
+                                ElmSyntax.TypeFunction
+                                    { input = input
+                                    , arrowKeySymbolRange =
+                                        { start =
+                                            arrowToOutType.arrowKeySymbolEndLocation
+                                                |> locationAddColumn -2
+                                        , end = arrowToOutType.arrowKeySymbolEndLocation
+                                        }
+                                    , output = output
+                                    }
+                            )
+                            arrowToInType.syntax
+                            arrowToOutType.syntax
                     }
                 )
-                whitespaceAndComments
-                (ParserFast.orSucceed
-                    (ParserFast.symbolFollowedBy "->" whitespaceAndComments)
-                    ropeEmpty
-                )
-                (ParserFast.lazy (\() -> typeNotFunction))
-                whitespaceAndComments
             )
-        )
-        (\inType arrowToOutType ->
-            { comments =
-                inType.comments
-                    |> ropePrependTo arrowToOutType.comments
-            , syntax =
-                ElmSyntax.nodeCombine
-                    (\input output ->
-                        ElmSyntax.TypeFunction
-                            { input = input
-                            , arrowKeySymbolRange =
-                                { start =
-                                    arrowToOutType.arrowKeySymbolEndLocation
-                                        |> locationAddColumn -2
-                                , end = arrowToOutType.arrowKeySymbolEndLocation
-                                }
-                            , output = output
-                            }
-                    )
-                    inType.syntax
-                    arrowToOutType.syntax
-            }
+            Nothing
         )
 
 
@@ -3861,51 +3890,83 @@ pattern =
                         }
                     }
         )
-        (ParserFast.loopWhileSucceedsOntoResultFromParserRightToLeftStackUnsafe
-            (ParserFast.map2
-                (\startPatternResult commentsAfter ->
-                    { comments = startPatternResult.comments |> ropePrependTo commentsAfter
-                    , syntax = startPatternResult.syntax
-                    }
-                )
-                (ParserFast.lazy (\() -> composablePattern))
-                whitespaceAndComments
-            )
-            (ParserFast.symbolFollowedBy "::"
-                (ParserFast.map3WithStartLocation
-                    (\consKeySymbolEndLocation commentsAfterCons patternResult commentsAfterTailSubPattern ->
+        (ParserFast.map3
+            (\startPatternResult commentsAfter maybeConsTail ->
+                case maybeConsTail of
+                    Nothing ->
                         { comments =
-                            commentsAfterCons
-                                |> ropePrependTo patternResult.comments
-                                |> ropePrependTo commentsAfterTailSubPattern
-                        , syntax = patternResult.syntax
-                        , consKeySymbolEndLocation = consKeySymbolEndLocation
+                            startPatternResult.comments
+                                |> ropePrependTo commentsAfter
+                        , syntax = startPatternResult.syntax
+                        }
+
+                    Just consTail ->
+                        { comments =
+                            startPatternResult.comments
+                                |> ropePrependTo commentsAfter
+                                |> ropePrependTo consTail.comments
+                        , syntax =
+                            ElmSyntax.nodeCombine
+                                (\head tail ->
+                                    ElmSyntax.PatternListCons
+                                        { head = head
+                                        , consKeySymbolRange =
+                                            { start =
+                                                consTail.consKeySymbolEndLocation
+                                                    |> locationAddColumn -2
+                                            , end = consTail.consKeySymbolEndLocation
+                                            }
+                                        , tail = tail
+                                        }
+                                )
+                                startPatternResult.syntax
+                                consTail.syntax
+                        }
+            )
+            (ParserFast.lazy (\() -> composablePattern))
+            whitespaceAndComments
+            (ParserFast.mapOrSucceed
+                Just
+                (ParserFast.loopWhileSucceedsCombiningRightToLeftStackUnsafe
+                    (ParserFast.symbolFollowedBy "::"
+                        (ParserFast.map3WithStartLocation
+                            (\consKeySymbolEndLocation commentsAfterCons patternResult commentsAfterTailSubPattern ->
+                                { comments =
+                                    commentsAfterCons
+                                        |> ropePrependTo patternResult.comments
+                                        |> ropePrependTo commentsAfterTailSubPattern
+                                , syntax = patternResult.syntax
+                                , consKeySymbolEndLocation = consKeySymbolEndLocation
+                                }
+                            )
+                            whitespaceAndComments
+                            (ParserFast.lazy (\() -> composablePattern))
+                            whitespaceAndComments
+                        )
+                    )
+                    (\consed fromCons ->
+                        { consKeySymbolEndLocation = consed.consKeySymbolEndLocation
+                        , comments = consed.comments |> ropePrependTo fromCons.comments
+                        , syntax =
+                            ElmSyntax.nodeCombine
+                                (\head tail ->
+                                    ElmSyntax.PatternListCons
+                                        { head = head
+                                        , consKeySymbolRange =
+                                            { start =
+                                                fromCons.consKeySymbolEndLocation
+                                                    |> locationAddColumn -2
+                                            , end = fromCons.consKeySymbolEndLocation
+                                            }
+                                        , tail = tail
+                                        }
+                                )
+                                consed.syntax
+                                fromCons.syntax
                         }
                     )
-                    whitespaceAndComments
-                    (ParserFast.lazy (\() -> composablePattern))
-                    whitespaceAndComments
                 )
-            )
-            (\consed fromCons ->
-                { comments = consed.comments |> ropePrependTo fromCons.comments
-                , syntax =
-                    ElmSyntax.nodeCombine
-                        (\head tail ->
-                            ElmSyntax.PatternListCons
-                                { head = head
-                                , consKeySymbolRange =
-                                    { start =
-                                        fromCons.consKeySymbolEndLocation
-                                            |> locationAddColumn -2
-                                    , end = fromCons.consKeySymbolEndLocation
-                                    }
-                                , tail = tail
-                                }
-                        )
-                        consed.syntax
-                        fromCons.syntax
-                }
+                Nothing
             )
         )
         (ParserFast.orSucceed
