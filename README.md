@@ -11,9 +11,20 @@ A minimal LSP language server for [elm](https://elm-lang.org/), written in rust 
 ## not planned
 - support for elm version <= 0.18
 - type inference
-- directly integrating `elm-review` or `elm-format`
+- directly integrating `elm-test`. `elm-review` or `elm-format`
+- codelens
+- code folding
+- outline symbols
 - `elm.json` help
 - inline GLSL blocks
+
+## TODO
+- hover and go to definition for let declared values and functions (and pattern introduced bindings?)
+- rename
+- autocomplete
+- incremental reparsing
+- partial parsing
+- show errors inline
 
 ## installation (warning: not trivial)
 You'll need to [install `elm-to-rust`](https://github.com/lue-bird/elm-syntax-to-rust/tree/main/node-elm-to-rust) and rust itself.
