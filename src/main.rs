@@ -283,7 +283,7 @@ A list of elements. The elements in a list must have the same type. Here are som
                                                             value: match &origin_module_declaration.documentation {
                                                                 None => description,
                                                                 Some(documentation) => description + "-----\n" +
-                                                                    documentation_comment_to_markdown(
+                                                                    &documentation_comment_to_markdown(
                                                                         &documentation.value,
                                                                     ),
                                                             },
@@ -366,7 +366,7 @@ A list of elements. The elements in a list must have the same type. Here are som
                                                         match origin_operator_function_maybe_documentation {
                                                             None => description,
                                                             Some(documentation) => description + "-----\n" +
-                                                                documentation_comment_to_markdown(
+                                                                &documentation_comment_to_markdown(
                                                                     &documentation.value,
                                                                 ),
                                                         }
@@ -391,7 +391,7 @@ A list of elements. The elements in a list must have the same type. Here are som
                                                         match &origin_module_declaration.documentation {
                                                             None => description,
                                                             Some(documentation) => description + "-----\n" +
-                                                                documentation_comment_to_markdown(
+                                                                &documentation_comment_to_markdown(
                                                                     &documentation.value,
                                                                 ),
                                                         }
@@ -432,7 +432,7 @@ A list of elements. The elements in a list must have the same type. Here are som
                                                                 value: match &origin_module_declaration.documentation {
                                                                     None => description,
                                                                     Some(documentation) => description + "-----\n" +
-                                                                        documentation_comment_to_markdown(
+                                                                        &documentation_comment_to_markdown(
                                                                             &documentation.value,
                                                                         ),
                                                                 },
@@ -477,7 +477,7 @@ A list of elements. The elements in a list must have the same type. Here are som
                                                                 value: match &origin_module_declaration.documentation {
                                                                     None => description,
                                                                     Some(documentation) => description + "-----\n" +
-                                                                        documentation_comment_to_markdown(
+                                                                        &documentation_comment_to_markdown(
                                                                             &documentation.value,
                                                                         ),
                                                                 },
@@ -522,7 +522,7 @@ A list of elements. The elements in a list must have the same type. Here are som
                                                             value: match &origin_module_declaration.documentation {
                                                                 None => description,
                                                                 Some(documentation) => description + "-----\n" +
-                                                                    documentation_comment_to_markdown(
+                                                                    &documentation_comment_to_markdown(
                                                                         &documentation.value,
                                                                     ),
                                                             },
@@ -848,10 +848,101 @@ A list of elements. The elements in a list must have the same type. Here are som
     server.run_buffered(stdin, stdout).await.unwrap();
 }
 
-fn documentation_comment_to_markdown(documentation: &str) -> &str {
-    // TODO find a way to replace code blocks by fenced `elm...` blocks. Seems to be
-    // tough for a small improvement?
-    documentation.trim_start_matches("{-|").trim_end_matches("-}").trim()
+fn documentation_comment_to_markdown(documentation: &str) -> String {
+    let markdown_source = documentation.trim_start_matches("{-|").trim_end_matches("-}").trim();
+
+    // because I don't want to introduce a full markdown parser for just this tiny
+    // improvement, the code below only approximates where code blocks are.
+    let with_fenced_blocks_converted: String = markdown_convert_unspecific_fenced_code_blocks_to_elm(markdown_source);
+    markdown_convert_indented_code_blocks_to_elm(&with_fenced_blocks_converted)
+}
+
+/// replace fenced no-language-specified code blocks by `elm...`
+fn markdown_convert_unspecific_fenced_code_blocks_to_elm(markdown_source: &str) -> String {
+    let mut result_builder: String = String::new();
+    let mut current_source_index: usize = 0;
+    'converting_fenced: while current_source_index <= (markdown_source.len() - 1) {
+        match markdown_source[current_source_index..].find("```").map(|i| i + current_source_index) {
+            None => {
+                result_builder.push_str(&markdown_source[current_source_index..]);
+                break 'converting_fenced
+            },
+            Some(index_at_opening_fence) => {
+                let index_after_opening_fence = index_at_opening_fence + 3;
+                match markdown_source[index_after_opening_fence..]
+                    .find("```")
+                    .map(|i| i + index_after_opening_fence) {
+                    None => {
+                        result_builder.push_str(&markdown_source[current_source_index..]);
+                        break 'converting_fenced
+                    },
+                    Some(index_at_closing_fence) => {
+                        match markdown_source[index_after_opening_fence..].chars().next() {
+                            // fenced block without a specific language
+                            Some('\n') => {
+                                result_builder.push_str(
+                                    &markdown_source[current_source_index .. index_at_opening_fence],
+                                );
+                                result_builder.push_str("```elm");
+                                result_builder.push_str(
+                                    &markdown_source[index_after_opening_fence .. index_at_closing_fence],
+                                );
+                                result_builder.push_str("```");
+                                current_source_index = index_at_closing_fence + 3;
+                            },
+                            // fenced block with a specific language
+                            _ => {
+                                result_builder.push_str(
+                                    &markdown_source[current_source_index .. (index_at_closing_fence + 3)],
+                                );
+                                current_source_index = index_at_closing_fence + 3;
+                            },
+                        }
+                    },
+                }
+            },
+        }
+    }
+    result_builder
+}
+
+fn markdown_convert_indented_code_blocks_to_elm(markdown_source: &str) -> String {
+    let mut result_builder: String = String::new();
+    let mut current_indent: usize = 0;
+    let mut is_in_code_block = false;
+    for source_line in markdown_source.lines() {
+        let current_line_indent = source_line.chars().take_while(|c| c.is_ascii_whitespace()).count();
+        if current_line_indent == source_line.len() {
+            // ignore blank line
+            result_builder.push_str(source_line);
+            result_builder.push('\n');
+        } else if current_line_indent >= current_indent + 4 {
+            is_in_code_block = true;
+            current_indent = current_line_indent;
+            result_builder.push_str("```elm\n");
+            result_builder.push_str(&source_line[current_line_indent..]);
+            result_builder.push('\n');
+        } else if is_in_code_block {
+            if current_line_indent <= current_indent - 4 {
+                is_in_code_block = false;
+                current_indent = current_line_indent;
+                result_builder.push_str("```\n");
+                result_builder.push_str(source_line);
+                result_builder.push('\n');
+            } else {
+                result_builder.push_str(&source_line[current_indent..]);
+                result_builder.push('\n');
+            }
+        } else {
+            current_indent = current_line_indent;
+            result_builder.push_str(source_line);
+            result_builder.push('\n');
+        }
+    }
+    if is_in_code_block {
+        result_builder.push_str("```\n");
+    }
+    result_builder
 }
 
 fn state_file_path_for_module_name(state: &State, module_name: &str) -> Option<std::path::PathBuf> {
