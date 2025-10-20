@@ -148,6 +148,30 @@ async fn main() {
                                 module_syntax,
                                 hover_arguments.text_document_position_params.position,
                             )?;
+                        if (&hovered_reference.module_origin == "List") &&
+                            (hovered_reference.name.as_ref().map(|s| s.as_str()) == Some("List")) {
+                            // module List has no type List.List exposed in an oversight so we make one up.
+                            // See https://github.com/elm/core/issues/1037
+                            return Some(lsp_types::Hover {
+                                contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
+                                    kind: lsp_types::MarkupKind::Markdown,
+                                    value: "```elm
+type List.List element
+```
+-----
+A list of elements. The elements in a list must have the same type. Here are some examples:
+```elm
+[ \"one\", \"two\", \"three\" ] --: List String
+[ 3.14, 0.1234 ] --: List Float
+[ 'a', 'Z', '0' ] --: List Char
+[ 42, 43 ] --: List number
+[] --: List any
+```
+".to_string(),
+                                }),
+                                range: Some(hovered_reference.range),
+                            })
+                        }
                         let full_hovered_reference = match hovered_reference.module_origin.as_str() {
                             "" => ElmSyntaxReference {
                                 module_origin: module_syntax.header.value.module_name.value.clone(),
@@ -512,9 +536,11 @@ async fn main() {
                                         },
                                     )
                                     .or_else(|| {
-                                        // TODO check if List.List. If so, that is a special case where we need to provide
-                                        // the documentation separately because it has no associated declaration
-                                        eprintln!("could not find reference {} in module {}", reference_name, &full_hovered_reference.module_origin);
+                                        eprintln!(
+                                            "could not find reference {} in module {}",
+                                            reference_name,
+                                            &full_hovered_reference.module_origin
+                                        );
                                         None
                                     })
                             },
