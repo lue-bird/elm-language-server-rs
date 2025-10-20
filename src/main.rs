@@ -259,7 +259,7 @@ async fn main() {
                                                             value: match &origin_module_declaration.documentation {
                                                                 None => description,
                                                                 Some(documentation) => description + "-----\n" +
-                                                                    documentation_to_hover_string(
+                                                                    documentation_comment_to_markdown(
                                                                         &documentation.value,
                                                                     ),
                                                             },
@@ -274,34 +274,110 @@ async fn main() {
                                             ::Operator {
                                                 direction: origin_module_declaration_direction,
                                                 operator: origin_module_declaration_operator,
-                                                function: _,
+                                                function: origin_module_declaration_function,
                                                 precedence: origin_module_declaration_precedence,
                                             } => if reference_name ==
                                                 &origin_module_declaration_operator.value {
-                                                let description =
-                                                    // TODO associate function type
-                                                    "```elm\ninfix ".to_string() + match origin_module_declaration_direction.value {
-                                                        elm::ElmSyntaxInfixDirection::Left => "left",
-                                                        elm::ElmSyntaxInfixDirection::Non => "non",
-                                                        elm::ElmSyntaxInfixDirection::Right => "right",
-                                                    } + " " + &origin_module_declaration_precedence.value.to_string() +
-                                                        " " +
-                                                        &full_hovered_reference.module_origin +
-                                                        ".(" +
-                                                        &origin_module_declaration_operator.value +
-                                                        ")" +
-                                                        "\n```\n";
+                                                let maybe_origin_operator_function_declaration =
+                                                    origin_module_syntax
+                                                        .declarations
+                                                        .iter()
+                                                        .find_map(|origin_module_declaration| {
+                                                            match &origin_module_declaration.declaration.value {
+                                                                ElmSyntaxDeclaration
+                                                                ::ValueOrFunction {
+                                                                    name: origin_module_declaration_name,
+                                                                    signature: origin_module_declaration_signature,
+                                                                    implementation_name_range: _,
+                                                                    parameters: _,
+                                                                    equals_key_symbol_range: _,
+                                                                    result: _,
+                                                                } if
+                                                                    origin_module_declaration_name ==
+                                                                        &origin_module_declaration_function.value => Some(
+                                                                    (
+                                                                        origin_module_declaration_signature,
+                                                                        origin_module_declaration
+                                                                            .documentation
+                                                                            .as_ref(),
+                                                                    ),
+                                                                ),
+                                                                _ => None,
+                                                            }
+                                                        });
+                                                let hover_markdown = match maybe_origin_operator_function_declaration {
+                                                    Some(
+                                                        (
+                                                            origin_operator_function_maybe_signature,
+                                                            origin_operator_function_maybe_documentation,
+                                                        ),
+                                                    ) => {
+                                                        let description =
+                                                            "```elm\ninfix ".to_string() +
+                                                                match origin_module_declaration_direction.value {
+                                                                    elm::ElmSyntaxInfixDirection::Left => "left",
+                                                                    elm::ElmSyntaxInfixDirection::Non => "non",
+                                                                    elm::ElmSyntaxInfixDirection::Right => "right",
+                                                                } + " " +
+                                                                &origin_module_declaration_precedence
+                                                                    .value
+                                                                    .to_string() +
+                                                                " " +
+                                                                &full_hovered_reference.module_origin +
+                                                                ".(" +
+                                                                &origin_module_declaration_operator.value +
+                                                                ")" +
+                                                                &(match origin_operator_function_maybe_signature {
+                                                                    None => "".to_string(),
+                                                                    Some(origin_operator_function_signature) => {
+                                                                        " : ".to_string() +
+                                                                            &elm_syntax_type_to_single_line_string(
+                                                                                &module_origin_lookup,
+                                                                                &origin_operator_function_signature
+                                                                                    .type_1
+                                                                                    .value,
+                                                                            )
+                                                                    },
+                                                                }) + "\n```\n";
+                                                        match origin_operator_function_maybe_documentation {
+                                                            None => description,
+                                                            Some(documentation) => description + "-----\n" +
+                                                                documentation_comment_to_markdown(
+                                                                    &documentation.value,
+                                                                ),
+                                                        }
+                                                    },
+                                                    None => {
+                                                        let description =
+                                                            "```elm\ninfix ".to_string() +
+                                                                match origin_module_declaration_direction.value {
+                                                                    elm::ElmSyntaxInfixDirection::Left => "left",
+                                                                    elm::ElmSyntaxInfixDirection::Non => "non",
+                                                                    elm::ElmSyntaxInfixDirection::Right => "right",
+                                                                } + " " +
+                                                                &origin_module_declaration_precedence
+                                                                    .value
+                                                                    .to_string() +
+                                                                " " +
+                                                                &full_hovered_reference.module_origin +
+                                                                ".(" +
+                                                                &origin_module_declaration_operator.value +
+                                                                ")" +
+                                                                "\n```\n";
+                                                        match &origin_module_declaration.documentation {
+                                                            None => description,
+                                                            Some(documentation) => description + "-----\n" +
+                                                                documentation_comment_to_markdown(
+                                                                    &documentation.value,
+                                                                ),
+                                                        }
+                                                    },
+                                                };
                                                 Some(lsp_types::Hover {
                                                     contents: lsp_types::HoverContents::Markup(
                                                         lsp_types::MarkupContent {
                                                             kind: lsp_types::MarkupKind::Markdown,
-                                                            value: match &origin_module_declaration.documentation {
-                                                                None => description,
-                                                                Some(documentation) => description + "-----\n" +
-                                                                    documentation_to_hover_string(
-                                                                        &documentation.value,
-                                                                    ),
-                                                            },
+                                                            value: hover_markdown,
                                                         },
                                                     ),
                                                     range: Some(full_hovered_reference.range),
@@ -332,7 +408,7 @@ async fn main() {
                                                                 value: match &origin_module_declaration.documentation {
                                                                     None => description,
                                                                     Some(documentation) => description + "-----\n" +
-                                                                        documentation_to_hover_string(
+                                                                        documentation_comment_to_markdown(
                                                                             &documentation.value,
                                                                         ),
                                                                 },
@@ -377,7 +453,7 @@ async fn main() {
                                                                 value: match &origin_module_declaration.documentation {
                                                                     None => description,
                                                                     Some(documentation) => description + "-----\n" +
-                                                                        documentation_to_hover_string(
+                                                                        documentation_comment_to_markdown(
                                                                             &documentation.value,
                                                                         ),
                                                                 },
@@ -422,7 +498,7 @@ async fn main() {
                                                             value: match &origin_module_declaration.documentation {
                                                                 None => description,
                                                                 Some(documentation) => description + "-----\n" +
-                                                                    documentation_to_hover_string(
+                                                                    documentation_comment_to_markdown(
                                                                         &documentation.value,
                                                                     ),
                                                             },
@@ -436,11 +512,9 @@ async fn main() {
                                         },
                                     )
                                     .or_else(|| {
-                                        eprintln!(
-                                            "could not find reference {} in module {}",
-                                            reference_name,
-                                            &full_hovered_reference.module_origin
-                                        );
+                                        // TODO check if List.List. If so, that is a special case where we need to provide
+                                        // the documentation separately because it has no associated declaration
+                                        eprintln!("could not find reference {} in module {}", reference_name, &full_hovered_reference.module_origin);
                                         None
                                     })
                             },
@@ -748,7 +822,9 @@ async fn main() {
     server.run_buffered(stdin, stdout).await.unwrap();
 }
 
-fn documentation_to_hover_string(documentation: &str) -> &str {
+fn documentation_comment_to_markdown(documentation: &str) -> &str {
+    // TODO find a way to replace code blocks by fenced `elm...` blocks. Seems to be
+    // tough for a small improvement?
     documentation.trim_start_matches("{-|").trim_end_matches("-}").trim()
 }
 
