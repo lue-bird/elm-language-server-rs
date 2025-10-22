@@ -126,7 +126,12 @@ async fn main() {
                         text_document_sync: Some(
                             lsp_types::TextDocumentSyncCapability::Kind(lsp_types::TextDocumentSyncKind::FULL),
                         ),
-                        rename_provider: Some(lsp_types::OneOf::Left(true)),
+                        rename_provider: Some(lsp_types::OneOf::Right(lsp_types::RenameOptions {
+                            prepare_provider: Some(true),
+                            work_done_progress_options: lsp_types::WorkDoneProgressOptions {
+                                work_done_progress: None,
+                            },
+                        })),
                         ..lsp_types::ServerCapabilities::default()
                     },
                     server_info: None,
@@ -923,6 +928,49 @@ async fn main() {
             async move {
                 Ok(maybe_declaration_range.map(|location| lsp_types::GotoDefinitionResponse::Scalar(location)))
             }
+        }).request::<lsp_types::request::PrepareRenameRequest, _>(|state, prepare_rename_arguments| {
+            let prepared =
+                prepare_rename_arguments.text_document.uri.to_file_path().ok().and_then(|prepare_rename_file_path| {
+                    let prepare_rename_module_syntax =
+                        state.parsed_modules.get(&prepare_rename_file_path).and_then(|m| m.syntax.as_ref())?;
+                    let prepare_rename_symbol: ElmSyntaxNode<ElmSymbolOwned> =
+                        elm_syntax_module_find_reference_at_position(
+                            state,
+                            prepare_rename_module_syntax,
+                            prepare_rename_arguments.position,
+                        )?;
+                    let placeholder = match &prepare_rename_symbol.value {
+                        ElmSymbolOwned::ImportAlias { module_origin: _, alias_name: alias_name } => {
+                            alias_name.clone()
+                        },
+                        ElmSymbolOwned::ModuleName(module_name) => {
+                            module_name.clone()
+                        },
+                        ElmSymbolOwned::VariableOrVariantOrOperator { module_origin: _, name } => {
+                            name.clone()
+                        },
+                        ElmSymbolOwned::Type { module_origin: _, name } => {
+                            name.clone()
+                        },
+                    };
+                    Some(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
+                        range: lsp_types::Range {
+                            start: 
+                            // if qualified, only the actual, unqualified name is relevant
+                            lsp_position_add_characters(prepare_rename_symbol.range.end, -(placeholder.len() as i32)),
+                            end: prepare_rename_symbol.range.end,
+                        },
+                        placeholder: placeholder,
+                    })
+                });
+            async move {
+                Ok(prepared)
+            }
+        }).request::<lsp_types::request::Shutdown, _>(|_state, ()| {
+            // ?
+            async {
+                Ok(())
+            }
         }).request::<lsp_types::request::Rename, _>(|state, rename_arguments| {
             let maybe_rename_edits =
                 rename_arguments
@@ -934,13 +982,13 @@ async fn main() {
                     .and_then(|to_rename_file_path| {
                         let to_rename_module_syntax =
                             state.parsed_modules.get(&to_rename_file_path).and_then(|m| m.syntax.as_ref())?;
-                        let reference_to_rename: ElmSyntaxNode<ElmSymbolOwned> =
+                        let symbol_to_rename: ElmSyntaxNode<ElmSymbolOwned> =
                             elm_syntax_module_find_reference_at_position(
                                 state,
                                 to_rename_module_syntax,
                                 rename_arguments.text_document_position.position,
                             )?;
-                        Some(match &reference_to_rename.value {
+                        Some(match &symbol_to_rename.value {
                             ElmSymbolOwned
                             ::ImportAlias {
                                 module_origin: import_alias_to_rename_module_origin,
@@ -1208,6 +1256,9 @@ async fn main() {
         }).notification::<lsp_types::notification::DidSaveTextDocument>(|_state, _| {
             std::ops::ControlFlow::Continue(())
         }).notification::<lsp_types::notification::DidCloseTextDocument>(|_state, _| {
+            std::ops::ControlFlow::Continue(())
+        }).notification::<lsp_types::notification::Exit>(|_state, _| {
+            // ?
             std::ops::ControlFlow::Continue(())
         });
         tower::ServiceBuilder::new()
