@@ -20,8 +20,9 @@ A minimal LSP language server for [elm](https://elm-lang.org/), written in rust 
 - inline GLSL blocks
 
 ## TODO
+- correctly assign an import alias that overlaps with another module name or import alias to a module origin
 - hover and go to definition for let declared variables (and pattern introduced bindings?)
-- rename import alias, type variable, let declared variable and patten-introduced binding
+- rename type variable, let declared variable and patten-introduced binding
 - autocomplete
 - incremental reparsing
 - partial parsing

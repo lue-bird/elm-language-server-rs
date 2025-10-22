@@ -151,7 +151,8 @@ async fn main() {
                             )?;
                         match &hovered_reference.value {
                             // referencing a module
-                            ElmSymbolOwned::ModuleName(hovered_module_name) => {
+                            ElmSymbolOwned::ModuleName(hovered_module_name) |
+                            ElmSymbolOwned::ImportAlias { module_origin: hovered_module_name, alias_name: _ } => {
                                 let origin_module_file_path =
                                     state_file_path_for_module_name(state, hovered_module_name)?;
                                 let origin_module_syntax =
@@ -693,19 +694,20 @@ async fn main() {
                     .uri
                     .to_file_path()
                     .ok()
-                    .and_then(|hovered_file_path| {
+                    .and_then(|goto_file_path| {
                         let module_syntax =
-                            state.parsed_modules.get(&hovered_file_path).and_then(|m| m.syntax.as_ref())?;
-                        let hovered_reference =
+                            state.parsed_modules.get(&goto_file_path).and_then(|m| m.syntax.as_ref())?;
+                        let goto_reference =
                             elm_syntax_module_find_reference_at_position(
                                 state,
                                 module_syntax,
                                 goto_definition_arguments.text_document_position_params.position,
                             )?;
-                        match &hovered_reference.value {
-                            ElmSymbolOwned::ModuleName(hovered_module_name) => {
+                        match &goto_reference.value {
+                            ElmSymbolOwned::ModuleName(goto_module_name) |
+                            ElmSymbolOwned::ImportAlias { module_origin: goto_module_name, alias_name: _ } => {
                                 let origin_module_file_path =
-                                    state_file_path_for_module_name(state, hovered_module_name)?;
+                                    state_file_path_for_module_name(state, goto_module_name)?;
                                 let origin_module_syntax =
                                     state
                                         .parsed_modules
@@ -720,11 +722,11 @@ async fn main() {
                             },
                             ElmSymbolOwned
                             ::VariableOrVariantOrOperator {
-                                module_origin: hovered_module_origin,
-                                name: hovered_name,
+                                module_origin: goto_module_origin,
+                                name: goto_name,
                             } => {
                                 let origin_module_file_path =
-                                    state_file_path_for_module_name(state, &hovered_module_origin)?;
+                                    state_file_path_for_module_name(state, &goto_module_origin)?;
                                 let origin_module_syntax =
                                     state
                                         .parsed_modules
@@ -747,7 +749,7 @@ async fn main() {
                                             } => if &origin_module_declaration_variant0
                                                 .name
                                                 .value ==
-                                                hovered_name {
+                                                goto_name {
                                                 lsp_types::Url::from_file_path(&origin_module_file_path)
                                                     .ok()
                                                     .map(|origin_module_file_url| lsp_types::Location {
@@ -757,7 +759,7 @@ async fn main() {
                                             } else {
                                                 origin_module_declaration_variant1_up
                                                     .iter()
-                                                    .find(|variant| &variant.name.value == hovered_name)
+                                                    .find(|variant| &variant.name.value == goto_name)
                                                     .and_then(
                                                         |variant| lsp_types::Url::from_file_path(
                                                             &origin_module_file_path,
@@ -775,7 +777,7 @@ async fn main() {
                                                 operator: origin_module_declaration_operator,
                                                 function: origin_module_declaration_function,
                                                 precedence: _,
-                                            } => if hovered_name ==
+                                            } => if goto_name ==
                                                 &origin_module_declaration_operator.value {
                                                 lsp_types::Url::from_file_path(&origin_module_file_path)
                                                     .ok()
@@ -783,7 +785,7 @@ async fn main() {
                                                         uri: origin_module_file_url,
                                                         range: origin_module_declaration_operator.range,
                                                     })
-                                            } else if hovered_name == &origin_module_declaration_function.value {
+                                            } else if goto_name == &origin_module_declaration_function.value {
                                                 lsp_types::Url::from_file_path(&origin_module_file_path)
                                                     .ok()
                                                     .map(|origin_module_file_url| lsp_types::Location {
@@ -798,7 +800,7 @@ async fn main() {
                                                 name: origin_module_declaration_name,
                                                 type_: _,
                                             } => {
-                                                if &origin_module_declaration_name.value == hovered_name {
+                                                if &origin_module_declaration_name.value == goto_name {
                                                     lsp_types::Url::from_file_path(&origin_module_file_path)
                                                         .ok()
                                                         .map(|origin_module_file_url| lsp_types::Location {
@@ -818,7 +820,7 @@ async fn main() {
                                                 type_: _,
                                             } => {
                                                 // record type alias constructor function
-                                                if &origin_module_declaration_name.value == hovered_name {
+                                                if &origin_module_declaration_name.value == goto_name {
                                                     lsp_types::Url::from_file_path(&origin_module_file_path)
                                                         .ok()
                                                         .map(|origin_module_file_url| lsp_types::Location {
@@ -838,7 +840,7 @@ async fn main() {
                                                 equals_key_symbol_range: _,
                                                 result: _,
                                             } => if origin_module_declaration_name ==
-                                                hovered_name {
+                                                goto_name {
                                                 lsp_types::Url::from_file_path(&origin_module_file_path)
                                                     .ok()
                                                     .map(|origin_module_file_url| lsp_types::Location {
@@ -858,9 +860,9 @@ async fn main() {
                                         },
                                     )
                             },
-                            ElmSymbolOwned::Type { module_origin: hovered_module_origin, name: hovered_name } => {
+                            ElmSymbolOwned::Type { module_origin: goto_module_origin, name: goto_name } => {
                                 let origin_module_file_path =
-                                    state_file_path_for_module_name(state, &hovered_module_origin)?;
+                                    state_file_path_for_module_name(state, &goto_module_origin)?;
                                 let origin_module_syntax =
                                     state
                                         .parsed_modules
@@ -881,7 +883,7 @@ async fn main() {
                                                 variant0: _,
                                                 variant1_up: _,
                                             } => if &origin_module_declaration_name.value ==
-                                                hovered_name {
+                                                goto_name {
                                                 lsp_types::Url::from_file_path(&origin_module_file_path)
                                                     .ok()
                                                     .map(|origin_module_file_url| lsp_types::Location {
@@ -901,7 +903,7 @@ async fn main() {
                                                 equals_key_symbol_range: _,
                                                 type_: _,
                                             } => {
-                                                if &origin_module_declaration_name.value == hovered_name {
+                                                if &origin_module_declaration_name.value == goto_name {
                                                     lsp_types::Url::from_file_path(&origin_module_file_path)
                                                         .ok()
                                                         .map(|origin_module_file_url| lsp_types::Location {
@@ -929,16 +931,47 @@ async fn main() {
                     .uri
                     .to_file_path()
                     .ok()
-                    .and_then(|hovered_file_path| {
-                        let module_syntax =
-                            state.parsed_modules.get(&hovered_file_path).and_then(|m| m.syntax.as_ref())?;
+                    .and_then(|to_rename_file_path| {
+                        let to_rename_module_syntax =
+                            state.parsed_modules.get(&to_rename_file_path).and_then(|m| m.syntax.as_ref())?;
                         let reference_to_rename: ElmSyntaxNode<ElmSymbolOwned> =
                             elm_syntax_module_find_reference_at_position(
                                 state,
-                                module_syntax,
+                                to_rename_module_syntax,
                                 rename_arguments.text_document_position.position,
                             )?;
                         Some(match &reference_to_rename.value {
+                            ElmSymbolOwned
+                            ::ImportAlias {
+                                module_origin: import_alias_to_rename_module_origin,
+                                alias_name: import_alias_to_rename,
+                            } => {
+                                let mut all_uses_of_renamed_module_name: Vec<lsp_types::Range> = Vec::new();
+                                elm_syntax_module_uses_of_reference_into(
+                                    &mut all_uses_of_renamed_module_name,
+                                    state,
+                                    to_rename_module_syntax,
+                                    ElmDeclaredSymbol::ImportAlias {
+                                        module_origin: import_alias_to_rename_module_origin,
+                                        alias_name: import_alias_to_rename,
+                                    },
+                                );
+                                vec!(lsp_types::TextDocumentEdit {
+                                    text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
+                                        uri: rename_arguments.text_document_position.text_document.uri,
+                                        version: None,
+                                    },
+                                    edits: all_uses_of_renamed_module_name
+                                        .into_iter()
+                                        .map(
+                                            |use_range_of_renamed_module| lsp_types::OneOf::Left(lsp_types::TextEdit {
+                                                range: use_range_of_renamed_module,
+                                                new_text: rename_arguments.new_name.clone(),
+                                            }),
+                                        )
+                                        .collect::<Vec<_>>(),
+                                })
+                            },
                             ElmSymbolOwned::ModuleName(module_name_to_rename) => {
                                 state.parsed_modules.iter().filter_map(|(elm_module_file_path, elm_module_state)| {
                                     let elm_module_syntax = elm_module_state.syntax.as_ref()?;
@@ -3702,7 +3735,10 @@ fn elm_syntax_type_to_single_line_string_into(
 #[derive(Clone, Debug)]
 enum ElmSymbolOwned {
     ModuleName(String),
-    // TODO rename to include operator
+    ImportAlias {
+        module_origin: String,
+        alias_name: String,
+    },
     VariableOrVariantOrOperator {
         module_origin: String,
         name: String,
@@ -3712,7 +3748,7 @@ enum ElmSymbolOwned {
         name: String,
     },
     // TODO add TypeVariable { scope_declaration : &ElmSyntaxDeclaration, name :
-    // String }, TODO add ImportAlias(String), TODO add local references,
+    // String }, TODO add , TODO add local references,
 }
 
 fn elm_syntax_module_find_reference_at_position(
@@ -3766,25 +3802,32 @@ fn elm_syntax_import_find_reference_at_position(
 ) -> Option<ElmSyntaxNode<ElmSymbolOwned>> {
     if !lsp_range_includes_position(elm_syntax_import_node.range, position) {
         None
+    } else if lsp_range_includes_position(elm_syntax_import_node.value.module_name.range, position) {
+        Some(ElmSyntaxNode {
+            value: ElmSymbolOwned::ModuleName(elm_syntax_import_node.value.module_name.value.clone()),
+            range: elm_syntax_import_node.value.module_name.range,
+        })
+    } else if let Some(ref import_alias) = elm_syntax_import_node.value.alias &&
+        lsp_range_includes_position(import_alias.name.range, position) {
+        Some(ElmSyntaxNode {
+            value: ElmSymbolOwned::ImportAlias {
+                module_origin: elm_syntax_import_node.value.module_name.value.clone(),
+                alias_name: import_alias.name.value.clone(),
+            },
+            range: elm_syntax_import_node.value.module_name.range,
+        })
     } else {
-        if lsp_range_includes_position(elm_syntax_import_node.value.module_name.range, position) {
-            Some(ElmSyntaxNode {
-                value: ElmSymbolOwned::ModuleName(elm_syntax_import_node.value.module_name.value.clone()),
-                range: elm_syntax_import_node.value.module_name.range,
-            })
-        } else {
-            elm_syntax_import_node
-                .value
-                .exposing
-                .as_ref()
-                .and_then(
-                    |exposing_node| elm_syntax_exposing_from_module_find_reference_at_position(
-                        elm_syntax_node_as_ref(exposing_node),
-                        &elm_syntax_import_node.value.module_name.value,
-                        position,
-                    ),
-                )
-        }
+        elm_syntax_import_node
+            .value
+            .exposing
+            .as_ref()
+            .and_then(
+                |exposing_node| elm_syntax_exposing_from_module_find_reference_at_position(
+                    elm_syntax_node_as_ref(exposing_node),
+                    &elm_syntax_import_node.value.module_name.value,
+                    position,
+                ),
+            )
     }
 }
 
@@ -4666,7 +4709,10 @@ fn elm_syntax_let_declaration_find_reference_at_position(
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ElmDeclaredSymbol<'a> {
     ModuleName(&'a str),
-    ImportAlias(&'a str),
+    ImportAlias {
+        module_origin: &'a str,
+        alias_name: &'a str,
+    },
     TypeVariable(&'a str),
     // type is tracked separately from VariableOrVariant because e.g. variants and
     // type names are allowed to overlap
@@ -4739,7 +4785,10 @@ fn elm_syntax_import_uses_of_reference_into(
     match elm_syntax_import.alias {
         None => { },
         Some(elm::GeneratedAsKeywordRangeName { as_keyword_range: _, name: ref import_alias_name }) => {
-            if symbol_to_collect_uses_of == ElmDeclaredSymbol::ImportAlias(&import_alias_name.value) {
+            if symbol_to_collect_uses_of == (ElmDeclaredSymbol::ImportAlias {
+                module_origin: &elm_syntax_import.module_name.value,
+                alias_name: &import_alias_name.value,
+            }) {
                 uses_so_far.push(import_alias_name.range);
             }
         },
@@ -4971,7 +5020,10 @@ fn elm_syntax_type_uses_of_reference_into(
                     end: reference.range.end,
                 });
             }
-            if symbol_to_collect_uses_of == ElmDeclaredSymbol::ImportAlias(&reference.value.qualification) {
+            if symbol_to_collect_uses_of == (ElmDeclaredSymbol::ImportAlias {
+                module_origin: module_origin,
+                alias_name: &reference.value.qualification,
+            }) {
                 uses_so_far.push(lsp_types::Range {
                     start: reference.range.start,
                     end: lsp_position_add_characters(
@@ -5332,7 +5384,10 @@ fn elm_syntax_expression_uses_of_reference_into(
                     ),
                     end: elm_syntax_expression_node.range.end,
                 });
-            } else if symbol_to_collect_uses_of == ElmDeclaredSymbol::ImportAlias(&reference.qualification) {
+            } else if symbol_to_collect_uses_of == (ElmDeclaredSymbol::ImportAlias {
+                module_origin: module_origin,
+                alias_name: &reference.qualification,
+            }) {
                 uses_so_far.push(lsp_types::Range {
                     start: elm_syntax_expression_node.range.start,
                     end: lsp_position_add_characters(
@@ -5583,7 +5638,10 @@ fn elm_syntax_pattern_uses_of_reference_into(
                     end: reference.range.end,
                 });
             }
-            if symbol_to_collect_uses_of == ElmDeclaredSymbol::ImportAlias(&reference.value.qualification) {
+            if symbol_to_collect_uses_of == (ElmDeclaredSymbol::ImportAlias {
+                module_origin: module_origin,
+                alias_name: &reference.value.qualification,
+            }) {
                 uses_so_far.push(lsp_types::Range {
                     start: reference.range.start,
                     end: lsp_position_add_characters(
