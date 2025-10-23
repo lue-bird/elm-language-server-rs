@@ -143,7 +143,8 @@ async fn main() {
                     server_info: None,
                 })
             }
-        }).request::<lsp_types::request::HoverRequest, _>(|state, hover_arguments| {
+        });
+        router.request::<lsp_types::request::HoverRequest, _>(|state, hover_arguments| {
             let maybe_hover_result =
                 hover_arguments
                     .text_document_position_params
@@ -171,29 +172,28 @@ async fn main() {
                                         .parsed_modules
                                         .get(&origin_module_file_path)
                                         .and_then(|m| m.syntax.as_ref())?;
+                                let maybe_module_documentation_comment =
+                                    origin_module_syntax
+                                        .comments
+                                        .iter()
+                                        .find(|comment_node| comment_node.value.starts_with("{-|"));
                                 Some(lsp_types::Hover {
                                     contents: lsp_types::HoverContents::Scalar(
                                         lsp_types::MarkedString::String(
-                                            match origin_module_syntax
-                                                .comments
-                                                .iter()
-                                                .find(|comment_node| comment_node.value.starts_with("{-|")) {
+                                            // also show list of exports maybe?
+                                            match maybe_module_documentation_comment {
                                                 None =>
-                                                // show list of exports or something
-                                                "_module has no documentation comment_".to_string(),
-                                                Some(module_documentation) => module_documentation
-                                                    .value
-                                                    .trim_start_matches("{-|")
-                                                    .trim_end_matches("-}")
-                                                    .trim()
-                                                    .to_string(),
+                                                    "_module has no documentation comment_".to_string(),
+                                                Some(module_documentation) =>
+                                                    documentation_comment_to_markdown(
+                                                        &module_documentation.value
+                                                    ),
                                             },
                                         ),
                                     ),
                                     range: Some(hovered_reference.range),
                                 })
                             },
-                            // referencing a module-declared member
                             ElmSyntaxSymbol::VariableOrVariantOrOperator { module_origin: hovered_module_origin, name: hovered_name } => {
                                 let origin_module_file_path =
                                     state_file_path_for_module_name(state, &hovered_module_origin)?;
@@ -207,10 +207,8 @@ async fn main() {
                                 origin_module_syntax
                                     .declarations
                                     .iter()
-                                    .find_map(
-                                        |origin_module_declaration| match &origin_module_declaration
-                                            .declaration
-                                            .value {
+                                    .find_map(|origin_module_declaration| -> Option<lsp_types::Hover> {
+                                        match &origin_module_declaration.declaration.value {
                                             ElmSyntaxDeclaration
                                             ::ChoiceType {
                                                 name: origin_module_declaration_name,
@@ -218,10 +216,7 @@ async fn main() {
                                                 equals_key_symbol_range: _,
                                                 variant0: origin_module_declaration_variant0,
                                                 variant1_up: origin_module_declaration_variant1_up,
-                                            } => if (&origin_module_declaration_variant0
-                                                .name
-                                                .value ==
-                                                hovered_name) ||
+                                            } => if (&origin_module_declaration_variant0.name.value == hovered_name) ||
                                                 (origin_module_declaration_variant1_up
                                                     .iter()
                                                     .any(|variant| &variant.name.value == hovered_name)) {
@@ -527,8 +522,8 @@ async fn main() {
                                             } else {
                                                 None
                                             },
-                                        },
-                                    )
+                                        }
+                                })
                             },
                             ElmSyntaxSymbol::Type { module_origin: hovered_module_origin, name: hovered_name } => {
                                 if (hovered_module_origin == "List") && (hovered_name == "List") {
@@ -566,10 +561,8 @@ async fn main() {
                                 origin_module_syntax
                                     .declarations
                                     .iter()
-                                    .find_map(
-                                        |origin_module_declaration| match &origin_module_declaration
-                                            .declaration
-                                            .value {
+                                    .find_map(|origin_module_declaration| {
+                                        match &origin_module_declaration.declaration.value {
                                             ElmSyntaxDeclaration
                                             ::ChoiceType {
                                                 name: origin_module_declaration_name,
@@ -689,15 +682,16 @@ async fn main() {
                                                 }
                                             },
                                             ElmSyntaxDeclaration::ValueOrFunction { .. } => None,
-                                        },
-                                    )
+                                        }
+                            })
                             },
                         }
                     });
             async move {
                 Ok(maybe_hover_result)
             }
-        }).request::<lsp_types::request::GotoDefinition, _>(|state, goto_definition_arguments| {
+        });
+        router.request::<lsp_types::request::GotoDefinition, _>(|state, goto_definition_arguments| {
             let maybe_declaration_range: Option<lsp_types::Location> =
                 goto_definition_arguments
                     .text_document_position_params
@@ -804,10 +798,8 @@ async fn main() {
                                 origin_module_syntax
                                     .declarations
                                     .iter()
-                                    .find_map(
-                                        |origin_module_declaration| match &origin_module_declaration
-                                            .declaration
-                                            .value {
+                                    .find_map(|origin_module_declaration| {
+                                        match &origin_module_declaration.declaration.value {
                                             ElmSyntaxDeclaration
                                             ::ChoiceType {
                                                 name: _,
@@ -908,26 +900,26 @@ async fn main() {
                                                 parameters: _,
                                                 equals_key_symbol_range: _,
                                                 result: _,
-                                            } => if origin_module_declaration_name ==
-                                                goto_name {
-                                                lsp_types::Url::from_file_path(&origin_module_file_path)
-                                                    .ok()
-                                                    .map(|origin_module_file_url| lsp_types::Location {
-                                                        uri: origin_module_file_url,
-                                                        range: match origin_module_declaration_maybe_signature {
-                                                            Some(
-                                                                origin_module_declaration_signature,
-                                                            ) => origin_module_declaration_signature
-                                                                .name
-                                                                .range,
-                                                            None => *origin_module_declaration_implementation_name_range,
-                                                        },
-                                                    })
-                                            } else {
-                                                None
+                                            } => {
+                                                if origin_module_declaration_name == goto_name {
+                                                    lsp_types::Url::from_file_path(&origin_module_file_path)
+                                                        .ok()
+                                                        .map(|origin_module_file_url| lsp_types::Location {
+                                                            uri: origin_module_file_url,
+                                                            range: match origin_module_declaration_maybe_signature {
+                                                                Some(origin_module_declaration_signature) =>
+                                                                    origin_module_declaration_signature
+                                                                        .name
+                                                                        .range,
+                                                                None => *origin_module_declaration_implementation_name_range,
+                                                            },
+                                                        })
+                                                } else {
+                                                    None
+                                                }
                                             },
-                                        },
-                                    )
+                                        }
+                            })
                             },
                             ElmSyntaxSymbol::Type { module_origin: goto_module_origin, name: goto_name } => {
                                 let origin_module_file_path =
@@ -992,7 +984,8 @@ async fn main() {
             async move {
                 Ok(maybe_declaration_range.map(|location| lsp_types::GotoDefinitionResponse::Scalar(location)))
             }
-        }).request::<lsp_types::request::PrepareRenameRequest, _>(|state, prepare_rename_arguments| {
+        });
+        router.request::<lsp_types::request::PrepareRenameRequest, _>(|state, prepare_rename_arguments| {
             let prepared =
                 prepare_rename_arguments.text_document.uri.to_file_path().ok().and_then(|prepare_rename_file_path| {
                     let prepare_rename_module_syntax =
@@ -1031,85 +1024,100 @@ async fn main() {
             async move {
                 Ok(prepared)
             }
-        }).request::<lsp_types::request::Rename, _>(|state, rename_arguments| {
-            let maybe_rename_edits =
-                rename_arguments
-                    .text_document_position
-                    .text_document
-                    .uri
-                    .to_file_path()
-                    .ok()
-                    .and_then(|to_rename_file_path| {
-                        let to_rename_module_syntax =
-                            state.parsed_modules.get(&to_rename_file_path).and_then(|m| m.syntax.as_ref())?;
-                        let symbol_to_rename: ElmSyntaxNode<ElmSyntaxSymbol> =
-                            elm_syntax_module_find_reference_at_position(
+        });
+        router.request::<lsp_types::request::Rename, _>(|state, rename_arguments| {
+            let maybe_rename_edits = rename_arguments
+                .text_document_position
+                .text_document
+                .uri
+                .to_file_path()
+                .ok()
+                .and_then(|to_rename_file_path| {
+                    let to_rename_module_syntax = state
+                        .parsed_modules
+                        .get(&to_rename_file_path)
+                        .and_then(|m| m.syntax.as_ref())?;
+                    let symbol_to_rename: ElmSyntaxNode<ElmSyntaxSymbol> =
+                        elm_syntax_module_find_reference_at_position(
+                            state,
+                            to_rename_module_syntax,
+                            rename_arguments.text_document_position.position,
+                        )?;
+                    Some(match symbol_to_rename.value {
+                        ElmSyntaxSymbol::ImportAlias {
+                            module_origin: import_alias_to_rename_module_origin,
+                            alias_name: import_alias_to_rename,
+                        } => {
+                            let mut all_uses_of_renamed_module_name: Vec<lsp_types::Range> =
+                                Vec::new();
+                            elm_syntax_module_uses_of_reference_into(
+                                &mut all_uses_of_renamed_module_name,
                                 state,
                                 to_rename_module_syntax,
-                                rename_arguments.text_document_position.position,
-                            )?;
-                        Some(match symbol_to_rename.value {
-                            ElmSyntaxSymbol
-                            ::ImportAlias {
-                                module_origin: import_alias_to_rename_module_origin,
-                                alias_name: import_alias_to_rename,
-                            } => {
-                                let mut all_uses_of_renamed_module_name: Vec<lsp_types::Range> = Vec::new();
-                                elm_syntax_module_uses_of_reference_into(
-                                    &mut all_uses_of_renamed_module_name,
+                                ElmDeclaredSymbol::ImportAlias {
+                                    module_origin: import_alias_to_rename_module_origin,
+                                    alias_name: import_alias_to_rename,
+                                },
+                            );
+                            vec![lsp_types::TextDocumentEdit {
+                                text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
+                                    uri: rename_arguments.text_document_position.text_document.uri,
+                                    version: None,
+                                },
+                                edits: all_uses_of_renamed_module_name
+                                    .into_iter()
+                                    .map(|use_range_of_renamed_module| {
+                                        lsp_types::OneOf::Left(lsp_types::TextEdit {
+                                            range: use_range_of_renamed_module,
+                                            new_text: rename_arguments.new_name.clone(),
+                                        })
+                                    })
+                                    .collect::<Vec<_>>(),
+                            }]
+                        }
+                        ElmSyntaxSymbol::TypeVariable {
+                            scope_declaration,
+                            name: type_variable_to_rename,
+                        } => {
+                            let mut all_uses_of_renamed_module_name: Vec<lsp_types::Range> =
+                                Vec::new();
+                            elm_syntax_declaration_uses_of_reference_into(
+                                &mut all_uses_of_renamed_module_name,
+                                &to_rename_module_syntax.header.value.module_name.value,
+                                &elm_syntax_module_create_origin_lookup(
                                     state,
                                     to_rename_module_syntax,
-                                    ElmDeclaredSymbol::ImportAlias {
-                                        module_origin: import_alias_to_rename_module_origin,
-                                        alias_name: import_alias_to_rename,
-                                    },
-                                );
-                                vec!(lsp_types::TextDocumentEdit {
-                                    text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
-                                        uri: rename_arguments.text_document_position.text_document.uri,
-                                        version: None,
-                                    },
-                                    edits: all_uses_of_renamed_module_name
-                                        .into_iter()
-                                        .map(
-                                            |use_range_of_renamed_module| lsp_types::OneOf::Left(lsp_types::TextEdit {
-                                                range: use_range_of_renamed_module,
-                                                new_text: rename_arguments.new_name.clone(),
-                                            }),
-                                        )
-                                        .collect::<Vec<_>>(),
-                                })
-                            },
-                            ElmSyntaxSymbol::TypeVariable { scope_declaration, name: type_variable_to_rename } => {
-                                let mut all_uses_of_renamed_module_name: Vec<lsp_types::Range> = Vec::new();
-                                elm_syntax_declaration_uses_of_reference_into(
-                                    &mut all_uses_of_renamed_module_name,
-                                    &to_rename_module_syntax.header.value.module_name.value,
-                                    &elm_syntax_module_create_origin_lookup(state, to_rename_module_syntax),
-                                    scope_declaration,
-                                    ElmDeclaredSymbol::TypeVariable(type_variable_to_rename),
-                                );
-                                vec!(lsp_types::TextDocumentEdit {
-                                    text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
-                                        uri: rename_arguments.text_document_position.text_document.uri,
-                                        version: None,
-                                    },
-                                    edits: all_uses_of_renamed_module_name
-                                        .into_iter()
-                                        .map(
-                                            |use_range_of_renamed_module| lsp_types::OneOf::Left(lsp_types::TextEdit {
-                                                range: use_range_of_renamed_module,
-                                                new_text: rename_arguments.new_name.clone(),
-                                            }),
-                                        )
-                                        .collect::<Vec<_>>(),
-                                })
-                            },
-                            ElmSyntaxSymbol::ModuleName(module_name_to_rename) => {
-                                state.parsed_modules.iter().filter_map(|(elm_module_file_path, elm_module_state)| {
+                                ),
+                                scope_declaration,
+                                ElmDeclaredSymbol::TypeVariable(type_variable_to_rename),
+                            );
+                            vec![lsp_types::TextDocumentEdit {
+                                text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
+                                    uri: rename_arguments.text_document_position.text_document.uri,
+                                    version: None,
+                                },
+                                edits: all_uses_of_renamed_module_name
+                                    .into_iter()
+                                    .map(|use_range_of_renamed_module| {
+                                        lsp_types::OneOf::Left(lsp_types::TextEdit {
+                                            range: use_range_of_renamed_module,
+                                            new_text: rename_arguments.new_name.clone(),
+                                        })
+                                    })
+                                    .collect::<Vec<_>>(),
+                            }]
+                        }
+                        ElmSyntaxSymbol::ModuleName(module_name_to_rename) => {
+                            state
+                                .parsed_modules
+                                .iter()
+                                .filter_map(|(elm_module_file_path, elm_module_state)| {
                                     let elm_module_syntax = elm_module_state.syntax.as_ref()?;
-                                    let elm_module_uri = lsp_types::Url::from_file_path(elm_module_file_path).ok()?;
-                                    let mut all_uses_of_renamed_module_name: Vec<lsp_types::Range> = Vec::new();
+                                    let elm_module_uri =
+                                        lsp_types::Url::from_file_path(elm_module_file_path)
+                                            .ok()?;
+                                    let mut all_uses_of_renamed_module_name: Vec<lsp_types::Range> =
+                                        Vec::new();
                                     elm_syntax_module_uses_of_reference_into(
                                         &mut all_uses_of_renamed_module_name,
                                         state,
@@ -1119,113 +1127,114 @@ async fn main() {
 
                                     // should this also rename the actual module origin file?
                                     Some(lsp_types::TextDocumentEdit {
-                                        text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
-                                            uri: elm_module_uri,
-                                            version: None,
-                                        },
-                                        edits: all_uses_of_renamed_module_name
-                                            .into_iter()
-                                            .map(
-                                                |use_range_of_renamed_module| lsp_types::OneOf::Left(
-                                                    lsp_types::TextEdit {
-                                                        range: use_range_of_renamed_module,
-                                                        new_text: rename_arguments.new_name.clone(),
-                                                    },
-                                                ),
-                                            )
-                                            .collect::<Vec<_>>(),
-                                    })
-                                }).collect::<Vec<_>>()
-                            },
-                            ElmSyntaxSymbol
-                            ::VariableOrVariantOrOperator {
-                                module_origin: to_rename_module_origin,
-                                name: to_rename_name,
-                            } => {
-                                state.parsed_modules.iter().filter_map(|(elm_module_file_path, elm_module_syntax)| {
-                                    let elm_module_syntax = elm_module_syntax.syntax.as_ref()?;
-                                    let mut all_uses_of_renamed_module_name: Vec<lsp_types::Range> = Vec::new();
-                                    elm_syntax_module_uses_of_reference_into(
-                                        &mut all_uses_of_renamed_module_name,
-                                        state,
-                                        elm_module_syntax,
-                                        ElmDeclaredSymbol::VariableOrVariant {
-                                            module_origin: to_rename_module_origin,
-                                            name: to_rename_name,
-                                        },
-                                    );
-                                    lsp_types::Url::from_file_path(elm_module_file_path)
-                                        .ok()
-                                        .map(|elm_module_uri| lsp_types::TextDocumentEdit {
-                                            text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
+                                        text_document:
+                                            lsp_types::OptionalVersionedTextDocumentIdentifier {
                                                 uri: elm_module_uri,
                                                 version: None,
                                             },
-                                            edits: all_uses_of_renamed_module_name
-                                                .into_iter()
-                                                .map(
-                                                    |use_range_of_renamed_module| lsp_types::OneOf::Left(
-                                                        lsp_types::TextEdit {
-                                                            range: use_range_of_renamed_module,
-                                                            new_text: rename_arguments.new_name.clone(),
+                                        edits: all_uses_of_renamed_module_name
+                                            .into_iter()
+                                            .map(|use_range_of_renamed_module| {
+                                                lsp_types::OneOf::Left(lsp_types::TextEdit {
+                                                    range: use_range_of_renamed_module,
+                                                    new_text: rename_arguments.new_name.clone(),
+                                                })
+                                            })
+                                            .collect::<Vec<_>>(),
+                                    })
+                                })
+                                .collect::<Vec<_>>()
+                        }
+                        ElmSyntaxSymbol::VariableOrVariantOrOperator {
+                            module_origin: to_rename_module_origin,
+                            name: to_rename_name,
+                        } => state
+                            .parsed_modules
+                            .iter()
+                            .filter_map(|(elm_module_file_path, elm_module_syntax)| {
+                                let elm_module_syntax = elm_module_syntax.syntax.as_ref()?;
+                                let mut all_uses_of_renamed_module_name: Vec<lsp_types::Range> =
+                                    Vec::new();
+                                elm_syntax_module_uses_of_reference_into(
+                                    &mut all_uses_of_renamed_module_name,
+                                    state,
+                                    elm_module_syntax,
+                                    ElmDeclaredSymbol::VariableOrVariant {
+                                        module_origin: to_rename_module_origin,
+                                        name: to_rename_name,
+                                    },
+                                );
+                                lsp_types::Url::from_file_path(elm_module_file_path)
+                                    .ok()
+                                    .map(|elm_module_uri| lsp_types::TextDocumentEdit {
+                                        text_document:
+                                            lsp_types::OptionalVersionedTextDocumentIdentifier {
+                                                uri: elm_module_uri,
+                                                version: None,
+                                            },
+                                        edits: all_uses_of_renamed_module_name
+                                            .into_iter()
+                                            .map(|use_range_of_renamed_module| {
+                                                lsp_types::OneOf::Left(lsp_types::TextEdit {
+                                                    range: use_range_of_renamed_module,
+                                                    new_text: rename_arguments.new_name.clone(),
+                                                })
+                                            })
+                                            .collect::<Vec<_>>(),
+                                    })
+                            })
+                            .collect::<Vec<_>>(),
+                        ElmSyntaxSymbol::Type {
+                            module_origin: to_rename_module_origin,
+                            name: type_name_to_rename,
+                        } => {
+                            let to_rename_is_record_type_alias =
+                                state_file_path_for_module_name(state, to_rename_module_origin)
+                                    .and_then(|to_rename_module_file_path| {
+                                        state.parsed_modules.get(&to_rename_module_file_path)
+                                    })
+                                    .and_then(|to_rename_module_state| {
+                                        to_rename_module_state.syntax.as_ref()
+                                    })
+                                    .is_some_and(|to_rename_module_syntax| {
+                                        to_rename_module_syntax.declarations.iter().any(
+                                            |documented_declaration| match &documented_declaration
+                                                .declaration
+                                                .value
+                                            {
+                                                ElmSyntaxDeclaration::TypeAlias {
+                                                    type_:
+                                                        ElmSyntaxNode {
+                                                            value: ElmSyntaxType::Record(_),
+                                                            range: _,
                                                         },
-                                                    ),
-                                                )
-                                                .collect::<Vec<_>>(),
-                                        })
-                                }).collect::<Vec<_>>()
-                            },
-                            ElmSyntaxSymbol
-                            ::Type {
-                                module_origin: to_rename_module_origin,
-                                name: type_name_to_rename,
-                            } => {
-                                let to_rename_is_record_type_alias =
-                                    state_file_path_for_module_name(state, to_rename_module_origin)
-                                        .and_then(
-                                            |to_rename_module_file_path| state
-                                                .parsed_modules
-                                                .get(&to_rename_module_file_path),
+                                                    alias_keyword_range: _,
+                                                    name: record_type_alias,
+                                                    parameters: _,
+                                                    equals_key_symbol_range: _,
+                                                } => record_type_alias.value == type_name_to_rename,
+                                                _ => false,
+                                            },
                                         )
-                                        .and_then(|to_rename_module_state| to_rename_module_state.syntax.as_ref())
-                                        .is_some_and(
-                                            |to_rename_module_syntax| to_rename_module_syntax
-                                                .declarations
-                                                .iter()
-                                                .any(
-                                                    |documented_declaration| match &documented_declaration
-                                                        .declaration
-                                                        .value {
-                                                        ElmSyntaxDeclaration
-                                                        ::TypeAlias {
-                                                            type_: ElmSyntaxNode {
-                                                                value: ElmSyntaxType::Record(_),
-                                                                range: _,
-                                                            },
-                                                            alias_keyword_range: _,
-                                                            name: record_type_alias,
-                                                            parameters: _,
-                                                            equals_key_symbol_range: _,
-                                                        } => record_type_alias.value ==
-                                                            type_name_to_rename,
-                                                        _ => false,
-                                                    },
-                                                ),
-                                        );
-                                let elm_declared_symbol_to_rename = if to_rename_is_record_type_alias {
-                                    ElmDeclaredSymbol::RecordTypeAlias {
-                                        module_origin: to_rename_module_origin,
-                                        name: type_name_to_rename,
-                                    }
-                                } else {
-                                    ElmDeclaredSymbol::TypeNotRecordAlias {
-                                        module_origin: to_rename_module_origin,
-                                        name: type_name_to_rename,
-                                    }
-                                };
-                                state.parsed_modules.iter().filter_map(|(elm_module_file_path, elm_module_syntax)| {
+                                    });
+                            let elm_declared_symbol_to_rename = if to_rename_is_record_type_alias {
+                                ElmDeclaredSymbol::RecordTypeAlias {
+                                    module_origin: to_rename_module_origin,
+                                    name: type_name_to_rename,
+                                }
+                            } else {
+                                ElmDeclaredSymbol::TypeNotRecordAlias {
+                                    module_origin: to_rename_module_origin,
+                                    name: type_name_to_rename,
+                                }
+                            };
+                            state
+                                .parsed_modules
+                                .iter()
+                                .filter_map(|(elm_module_file_path, elm_module_syntax)| {
                                     let elm_module_syntax = elm_module_syntax.syntax.as_ref()?;
-                                    let mut all_uses_of_renamed_module_name: Vec<lsp_types::Range> = Vec::new();
+                                    let mut all_uses_of_renamed_module_name: Vec<lsp_types::Range> =
+                                        Vec::new();
                                     elm_syntax_module_uses_of_reference_into(
                                         &mut all_uses_of_renamed_module_name,
                                         state,
@@ -1235,34 +1244,37 @@ async fn main() {
                                     lsp_types::Url::from_file_path(elm_module_file_path)
                                         .ok()
                                         .map(|elm_module_uri| lsp_types::TextDocumentEdit {
-                                            text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
-                                                uri: elm_module_uri,
-                                                version: None,
-                                            },
+                                            text_document:
+                                                lsp_types::OptionalVersionedTextDocumentIdentifier {
+                                                    uri: elm_module_uri,
+                                                    version: None,
+                                                },
                                             edits: all_uses_of_renamed_module_name
                                                 .into_iter()
-                                                .map(
-                                                    |use_range_of_renamed_module| lsp_types::OneOf::Left(
-                                                        lsp_types::TextEdit {
-                                                            range: use_range_of_renamed_module,
-                                                            new_text: rename_arguments.new_name.clone(),
-                                                        },
-                                                    ),
-                                                )
+                                                .map(|use_range_of_renamed_module| {
+                                                    lsp_types::OneOf::Left(lsp_types::TextEdit {
+                                                        range: use_range_of_renamed_module,
+                                                        new_text: rename_arguments.new_name.clone(),
+                                                    })
+                                                })
                                                 .collect::<Vec<_>>(),
                                         })
-                                }).collect::<Vec<_>>()
-                            },
-                        })
-                    });
+                                })
+                                .collect::<Vec<_>>()
+                        }
+                    })
+                });
             async move {
-                Ok(maybe_rename_edits.map(|rename_edits| lsp_types::WorkspaceEdit {
-                    changes: None,
-                    document_changes: Some(lsp_types::DocumentChanges::Edits(rename_edits)),
-                    change_annotations: None,
-                }))
+                Ok(
+                    maybe_rename_edits.map(|rename_edits| lsp_types::WorkspaceEdit {
+                        changes: None,
+                        document_changes: Some(lsp_types::DocumentChanges::Edits(rename_edits)),
+                        change_annotations: None,
+                    }),
+                )
             }
-        }).request::<lsp_types::request::SemanticTokensFullRequest, _>(|state, semantic_tokens_arguments| {
+        });
+        router.request::<lsp_types::request::SemanticTokensFullRequest, _>(|state, semantic_tokens_arguments| {
             let semantic_tokens =
                 semantic_tokens_arguments
                     .text_document
@@ -1305,68 +1317,92 @@ async fn main() {
             async move {
                 Ok(semantic_tokens)
             }
-        }).request::<lsp_types::request::Shutdown, _>(|_state, ()| {
+        });
+        router.request::<lsp_types::request::Shutdown, _>(|_state, ()| {
             // ?
-            async {
-                Ok(())
-            }
-        }).notification::<lsp_types::notification::Initialized>(|_state, _| {
+            async { Ok(()) }
+        });
+        router.notification::<lsp_types::notification::Initialized>(|_state, _| {
             std::ops::ControlFlow::Continue(())
-        }).notification::<lsp_types::notification::DidOpenTextDocument>(|_state, _| {
+        });
+        router.notification::<lsp_types::notification::DidOpenTextDocument>(|_state, _| {
             std::ops::ControlFlow::Continue(())
-        }).notification::<lsp_types::notification::DidChangeTextDocument>(|state, did_change_text_document| {
-            let changed_file_paths = did_change_text_document.text_document.uri.to_file_path().ok();
-            if let Some(changed_file_path) = changed_file_paths {
-                match did_change_text_document.content_changes.into_iter().find_map(|change| {
-                    match (change.range, change.range_length) {
-                        // marks full new document content
-                        (None, None) => Some(change.text),
-                        (Some(_), _) | (_, Some(_)) => None,
+        });
+        router.notification::<lsp_types::notification::DidChangeTextDocument>(
+            |state, did_change_text_document| {
+                let changed_file_paths = did_change_text_document
+                    .text_document
+                    .uri
+                    .to_file_path()
+                    .ok();
+                if let Some(changed_file_path) = changed_file_paths {
+                    match did_change_text_document
+                        .content_changes
+                        .into_iter()
+                        .find_map(|change| {
+                            match (change.range, change.range_length) {
+                                // marks full new document content
+                                (None, None) => Some(change.text),
+                                (Some(_), _) | (_, Some(_)) => None,
+                            }
+                        }) {
+                        None => {
+                            // bug in client. full document should be sent
+                        }
+                        Some(file_content) => {
+                            let parse_allocator: bumpalo::Bump = bumpalo::Bump::new();
+                            state.parsed_modules.insert(
+                                changed_file_path,
+                                ModuleState {
+                                    syntax: elm::elm_parser_lenient_run(
+                                        elm::elm_parser_lenient_module_(&parse_allocator),
+                                        elm::StringString::One(&file_content),
+                                    )
+                                    .map(elm_syntax_module_to_persistent),
+                                    source: file_content,
+                                },
+                            );
+                        }
                     }
-                }) {
-                    None => {
-                        // bug in client. full document should be sent
-                    },
-                    Some(file_content) => {
-                        let parse_allocator: bumpalo::Bump = bumpalo::Bump::new();
-                        state.parsed_modules.insert(changed_file_path, ModuleState {
-                            syntax: elm::elm_parser_lenient_run(
-                                elm::elm_parser_lenient_module_(&parse_allocator),
-                                elm::StringString::One(&file_content),
-                            ).map(elm_syntax_module_to_persistent),
-                            source: file_content,
-                        });
-                    },
                 }
-            }
-            std::ops::ControlFlow::Continue(())
-        }).notification::<lsp_types::notification::DidChangeWatchedFiles>(|state, did_change_watched_files| {
-            let changed_file_paths =
-                did_change_watched_files
+                std::ops::ControlFlow::Continue(())
+            },
+        );
+        router.notification::<lsp_types::notification::DidChangeWatchedFiles>(
+            |state, did_change_watched_files| {
+                let changed_file_paths = did_change_watched_files
                     .changes
                     .into_iter()
                     .filter_map(|file_event| file_event.uri.to_file_path().ok());
-            for changed_file_path in changed_file_paths {
-                match std::fs::read_to_string(&changed_file_path) {
-                    Err(_) => { },
-                    Ok(file_content) => {
-                        let parse_allocator: bumpalo::Bump = bumpalo::Bump::new();
-                        state.parsed_modules.insert(changed_file_path, ModuleState {
-                            syntax: elm::elm_parser_lenient_run(
-                                elm::elm_parser_lenient_module_(&parse_allocator),
-                                elm::StringString::One(&file_content),
-                            ).map(elm_syntax_module_to_persistent),
-                            source: file_content,
-                        });
-                    },
+                for changed_file_path in changed_file_paths {
+                    match std::fs::read_to_string(&changed_file_path) {
+                        Err(_) => {}
+                        Ok(file_content) => {
+                            let parse_allocator: bumpalo::Bump = bumpalo::Bump::new();
+                            state.parsed_modules.insert(
+                                changed_file_path,
+                                ModuleState {
+                                    syntax: elm::elm_parser_lenient_run(
+                                        elm::elm_parser_lenient_module_(&parse_allocator),
+                                        elm::StringString::One(&file_content),
+                                    )
+                                    .map(elm_syntax_module_to_persistent),
+                                    source: file_content,
+                                },
+                            );
+                        }
+                    }
                 }
-            }
+                std::ops::ControlFlow::Continue(())
+            },
+        );
+        router.notification::<lsp_types::notification::DidSaveTextDocument>(|_state, _| {
             std::ops::ControlFlow::Continue(())
-        }).notification::<lsp_types::notification::DidSaveTextDocument>(|_state, _| {
+        });
+        router.notification::<lsp_types::notification::DidCloseTextDocument>(|_state, _| {
             std::ops::ControlFlow::Continue(())
-        }).notification::<lsp_types::notification::DidCloseTextDocument>(|_state, _| {
-            std::ops::ControlFlow::Continue(())
-        }).notification::<lsp_types::notification::Exit>(|_state, _| {
+        });
+        router.notification::<lsp_types::notification::Exit>(|_state, _| {
             // ?
             std::ops::ControlFlow::Continue(())
         });
