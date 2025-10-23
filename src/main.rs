@@ -1186,21 +1186,25 @@ async fn main() {
                                             |to_rename_module_syntax| to_rename_module_syntax
                                                 .declarations
                                                 .iter()
-                                                .any(|declaration| match &declaration.declaration.value {
-                                                    ElmSyntaxDeclaration
-                                                    ::TypeAlias {
-                                                        type_: ElmSyntaxNode {
-                                                            value: ElmSyntaxType::Record(_),
-                                                            range: _,
-                                                        },
-                                                        alias_keyword_range: _,
-                                                        name: record_type_alias,
-                                                        parameters: _,
-                                                        equals_key_symbol_range: _,
-                                                    } => record_type_alias.value ==
-                                                        type_name_to_rename,
-                                                    _ => false,
-                                                }),
+                                                .any(
+                                                    |documented_declaration| match &documented_declaration
+                                                        .declaration
+                                                        .value {
+                                                        ElmSyntaxDeclaration
+                                                        ::TypeAlias {
+                                                            type_: ElmSyntaxNode {
+                                                                value: ElmSyntaxType::Record(_),
+                                                                range: _,
+                                                            },
+                                                            alias_keyword_range: _,
+                                                            name: record_type_alias,
+                                                            parameters: _,
+                                                            equals_key_symbol_range: _,
+                                                        } => record_type_alias.value ==
+                                                            type_name_to_rename,
+                                                        _ => false,
+                                                    },
+                                                ),
                                         );
                                 let elm_declared_symbol_to_rename = if to_rename_is_record_type_alias {
                                     ElmDeclaredSymbol::RecordTypeAlias {
@@ -3550,9 +3554,9 @@ fn elm_syntax_module_create_origin_lookup<
                     .insert(allowed_qualification, &import_node.value.module_name.value);
             },
         }
-        match &import_node.value.exposing {
+        match import_node.value.exposing {
             None => { },
-            Some(import_exposing) => match import_exposing.value {
+            Some(ref import_exposing) => match import_exposing.value {
                 ElmSyntaxExposing::Explicit(ref exposes) => {
                     for expose_node in exposes {
                         match &expose_node.value {
@@ -3578,10 +3582,10 @@ fn elm_syntax_module_create_origin_lookup<
                                 match imported_module_maybe_syntax {
                                     None => { },
                                     Some(imported_module_syntax) => {
-                                        'until_origin_choice_type_declaration_found: for declaration in imported_module_syntax
+                                        'until_origin_choice_type_declaration_found: for documented_declaration in imported_module_syntax
                                             .declarations
                                             .iter() {
-                                            match &declaration.declaration.value {
+                                            match &documented_declaration.declaration.value {
                                                 ElmSyntaxDeclaration
                                                 ::ChoiceType {
                                                     name: imported_module_choice_type_name,
@@ -3644,8 +3648,8 @@ fn elm_syntax_module_exposed_symbols<'a>(elm_syntax_module: &'a ElmSyntaxModule)
     let mut exposed_symbols: Vec<&str> = Vec::new();
     match elm_syntax_module.header.value.exposing.value {
         ElmSyntaxExposing::All(_) => {
-            for declaration in elm_syntax_module.declarations.iter() {
-                match &declaration.declaration.value {
+            for documented_declaration in elm_syntax_module.declarations.iter() {
+                match &documented_declaration.declaration.value {
                     ElmSyntaxDeclaration
                     ::ChoiceType {
                         name: exposed_choice_type_name,
@@ -3954,7 +3958,7 @@ fn elm_syntax_exposing_from_module_find_reference_at_position<
     if !lsp_range_includes_position(elm_syntax_exposing_node.range, position) {
         None
     } else {
-        match &elm_syntax_exposing_node.value {
+        match elm_syntax_exposing_node.value {
             ElmSyntaxExposing::All(_) => None,
             ElmSyntaxExposing::Explicit(exposes) => exposes
                 .iter()
@@ -5751,7 +5755,7 @@ fn elm_syntax_pattern_uses_of_reference_into(
     elm_syntax_pattern_node: ElmSyntaxNode<&ElmSyntaxPattern>,
     symbol_to_collect_uses_of: ElmDeclaredSymbol,
 ) {
-    match &elm_syntax_pattern_node.value {
+    match elm_syntax_pattern_node.value {
         ElmSyntaxPattern::As { pattern: alias_pattern, as_keyword_range: _, variable } => {
             elm_syntax_pattern_uses_of_reference_into(
                 uses_so_far,
