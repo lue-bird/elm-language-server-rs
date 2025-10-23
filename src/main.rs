@@ -1107,44 +1107,39 @@ async fn main() {
                                     .collect::<Vec<_>>(),
                             }]
                         }
-                        ElmSyntaxSymbol::ModuleName(module_name_to_rename) => {
-                            state
-                                .parsed_modules
-                                .iter()
-                                .filter_map(|(elm_module_file_path, elm_module_state)| {
-                                    let elm_module_syntax = elm_module_state.syntax.as_ref()?;
-                                    let elm_module_uri =
-                                        lsp_types::Url::from_file_path(elm_module_file_path)
-                                            .ok()?;
-                                    let mut all_uses_of_renamed_module_name: Vec<lsp_types::Range> =
-                                        Vec::new();
-                                    elm_syntax_module_uses_of_reference_into(
-                                        &mut all_uses_of_renamed_module_name,
-                                        state,
-                                        elm_module_syntax,
-                                        ElmDeclaredSymbol::ModuleName(module_name_to_rename),
-                                    );
-
-                                    // should this also rename the actual module origin file?
-                                    Some(lsp_types::TextDocumentEdit {
-                                        text_document:
-                                            lsp_types::OptionalVersionedTextDocumentIdentifier {
-                                                uri: elm_module_uri,
-                                                version: None,
-                                            },
-                                        edits: all_uses_of_renamed_module_name
-                                            .into_iter()
-                                            .map(|use_range_of_renamed_module| {
-                                                lsp_types::OneOf::Left(lsp_types::TextEdit {
-                                                    range: use_range_of_renamed_module,
-                                                    new_text: rename_arguments.new_name.clone(),
-                                                })
+                        ElmSyntaxSymbol::ModuleName(module_name_to_rename) => state
+                            .parsed_modules
+                            .iter()
+                            .filter_map(|(elm_module_file_path, elm_module_state)| {
+                                let elm_module_syntax = elm_module_state.syntax.as_ref()?;
+                                let elm_module_uri =
+                                    lsp_types::Url::from_file_path(elm_module_file_path).ok()?;
+                                let mut all_uses_of_renamed_module_name: Vec<lsp_types::Range> =
+                                    Vec::new();
+                                elm_syntax_module_uses_of_reference_into(
+                                    &mut all_uses_of_renamed_module_name,
+                                    state,
+                                    elm_module_syntax,
+                                    ElmDeclaredSymbol::ModuleName(module_name_to_rename),
+                                );
+                                Some(lsp_types::TextDocumentEdit {
+                                    text_document:
+                                        lsp_types::OptionalVersionedTextDocumentIdentifier {
+                                            uri: elm_module_uri,
+                                            version: None,
+                                        },
+                                    edits: all_uses_of_renamed_module_name
+                                        .into_iter()
+                                        .map(|use_range_of_renamed_module| {
+                                            lsp_types::OneOf::Left(lsp_types::TextEdit {
+                                                range: use_range_of_renamed_module,
+                                                new_text: rename_arguments.new_name.clone(),
                                             })
-                                            .collect::<Vec<_>>(),
-                                    })
+                                        })
+                                        .collect::<Vec<_>>(),
                                 })
-                                .collect::<Vec<_>>()
-                        }
+                            })
+                            .collect::<Vec<_>>(),
                         ElmSyntaxSymbol::VariableOrVariantOrOperator {
                             module_origin: to_rename_module_origin,
                             name: to_rename_name,
