@@ -43,8 +43,3 @@ Rebuild the project with
 ```bash
 elm-to-rust && cargo build
 ```
-
-If you're working on the rust part and notice that
-`rustfmt` is not doing it's job in some function bodies,
-consider `cargo install`ing [genemichaels](https://github.com/andrewbaxter/genemichaels/blob/master/crates/genemichaels/readme.md)
-or other alternative formatters :)
