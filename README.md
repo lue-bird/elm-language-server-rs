@@ -20,7 +20,6 @@ A minimal LSP language server for [elm](https://elm-lang.org/), written in rust 
 - inline GLSL blocks
 
 ## TODO
-- hover and go to definition and rename for let declared variables and pattern-introduced bindings
 - autocomplete
 - incremental reparsing
 - partial parsing

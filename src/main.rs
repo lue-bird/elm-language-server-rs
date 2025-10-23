@@ -194,6 +194,33 @@ async fn main() {
                                     range: Some(hovered_reference.range),
                                 })
                             },
+                            ElmSyntaxSymbol::LocalBinding { scope_expression:_, name: hovered_local_binding_name, origin: hovered_local_binding_origin  } => {
+                                match hovered_local_binding_origin {
+                                    LocalBindingOrigin::PatternVariable(_) => None,
+                                    LocalBindingOrigin::PatternRecordField(_) => None,
+                                    LocalBindingOrigin::LetDeclaredVariable { signature: hovered_local_binding_maybe_signature, implementation_name_range: _ } => {
+                                        Some(lsp_types::Hover {
+                                            contents: lsp_types::HoverContents::Scalar(
+                                                lsp_types::MarkedString::String(
+                                                    match hovered_local_binding_maybe_signature {
+                                                        None => format!("```elm\nlet {}\n```\n", hovered_local_binding_name),
+                                                        Some(hovered_local_binding_signature) => {
+                                                            format!(
+                                                                "```elm\nlet {} : {}\n```\n",
+                                                                hovered_local_binding_name,
+                                                                &elm_syntax_type_to_single_line_string(
+                                                                    &elm_syntax_module_create_origin_lookup(state, module_syntax),
+                                                                    &hovered_local_binding_signature.type_1.value,
+                                                                )
+                                                            )
+                                                        }
+                                                    }
+                                            )),
+                                            range: Some(hovered_reference.range),
+                                        })
+                                    },
+                                }
+                            },
                             ElmSyntaxSymbol::VariableOrVariantOrOperator { module_origin: hovered_module_origin, name: hovered_name } => {
                                 let origin_module_file_path =
                                     state_file_path_for_module_name(state, &hovered_module_origin)?;
@@ -713,6 +740,34 @@ async fn main() {
                                 goto_definition_arguments.text_document_position_params.position,
                             )?;
                         match goto_reference.value {
+                            ElmSyntaxSymbol::LocalBinding { scope_expression:_, name: _, origin: goto_origin } => {
+                                match goto_origin {
+                                    LocalBindingOrigin::PatternVariable(range) =>
+                                        Some(lsp_types::Location {
+                                            uri: goto_definition_arguments
+                                                .text_document_position_params
+                                                .text_document
+                                                .uri,
+                                            range: range,
+                                        }),
+                                    LocalBindingOrigin::PatternRecordField(range) =>
+                                        Some(lsp_types::Location {
+                                            uri: goto_definition_arguments
+                                                .text_document_position_params
+                                                .text_document
+                                                .uri,
+                                            range: range,
+                                        }),
+                                    LocalBindingOrigin::LetDeclaredVariable { signature:_, implementation_name_range } =>
+                                        Some(lsp_types::Location {
+                                            uri: goto_definition_arguments
+                                                .text_document_position_params
+                                                .text_document
+                                                .uri,
+                                            range: implementation_name_range,
+                                        }),
+                                }
+                            },
                             ElmSyntaxSymbol::TypeVariable { scope_declaration, name: goto_type_variable_name } => {
                                 match scope_declaration {
                                     ElmSyntaxDeclaration
@@ -1006,38 +1061,80 @@ async fn main() {
                                 prepare_rename_module_syntax,
                                 prepare_rename_arguments.position,
                             )?;
-                        let placeholder = match prepare_rename_symbol.value {
+                        Some(match prepare_rename_symbol.value {
                             ElmSyntaxSymbol::ImportAlias {
                                 module_origin: _,
                                 alias_name: alias_name,
-                            } => alias_name,
-                            ElmSyntaxSymbol::ModuleName(module_name) => module_name,
+                            } => Ok(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
+                                range: prepare_rename_symbol.range,
+                                placeholder: alias_name.to_string(),
+                            }),
+                            ElmSyntaxSymbol::LocalBinding {
+                                scope_expression: _,
+                                origin: local_binding_origin,
+                                name: local_binding_name,
+                            } => match local_binding_origin {
+                                LocalBindingOrigin::PatternVariable(_)
+                                | LocalBindingOrigin::LetDeclaredVariable { .. } => {
+                                    Ok(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
+                                        range: prepare_rename_symbol.range,
+                                        placeholder: local_binding_name.to_string(),
+                                    })
+                                }
+                                LocalBindingOrigin::PatternRecordField(_) => {
+                                    Err(async_lsp::ResponseError::new(
+                                        async_lsp::ErrorCode::REQUEST_FAILED,
+                                        "cannot rename a variable that is bound to a field name",
+                                    ))
+                                }
+                            },
+                            ElmSyntaxSymbol::ModuleName(module_name) => {
+                                Ok(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
+                                    range: prepare_rename_symbol.range,
+                                    placeholder: module_name.to_string(),
+                                })
+                            }
                             ElmSyntaxSymbol::VariableOrVariantOrOperator {
                                 module_origin: _,
                                 name,
-                            } => name,
+                            } => Ok(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
+                                range: lsp_types::Range {
+                                    start: lsp_position_add_characters(
+                                        prepare_rename_symbol.range.end,
+                                        -(name.len() as i32),
+                                    ),
+                                    end: prepare_rename_symbol.range.end,
+                                },
+                                placeholder: name.to_string(),
+                            }),
                             ElmSyntaxSymbol::Type {
                                 module_origin: _,
                                 name,
-                            } => name,
+                            } => Ok(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
+                                range: lsp_types::Range {
+                                    start: lsp_position_add_characters(
+                                        prepare_rename_symbol.range.end,
+                                        -(name.len() as i32),
+                                    ),
+                                    end: prepare_rename_symbol.range.end,
+                                },
+                                placeholder: name.to_string(),
+                            }),
                             ElmSyntaxSymbol::TypeVariable {
                                 scope_declaration: _,
                                 name,
-                            } => name,
-                        };
-                        // if qualified, only the actual, unqualified name is relevant
-                        Some(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
-                            range: lsp_types::Range {
-                                start: lsp_position_add_characters(
-                                    prepare_rename_symbol.range.end,
-                                    -(placeholder.len() as i32),
-                                ),
-                                end: prepare_rename_symbol.range.end,
-                            },
-                            placeholder: placeholder.to_string(),
+                            } => Ok(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
+                                range: prepare_rename_symbol.range,
+                                placeholder: name.to_string(),
+                            }),
                         })
                     });
-                async move { Ok(prepared) }
+                async move {
+                    match prepared {
+                        None => Ok(None),
+                        Some(result) => result.map(Some),
+                    }
+                }
             },
         );
         router.request::<lsp_types::request::Rename, _>(|state, rename_arguments| {
@@ -1059,6 +1156,53 @@ async fn main() {
                             rename_arguments.text_document_position.position,
                         )?;
                     Some(match symbol_to_rename.value {
+                        ElmSyntaxSymbol::LocalBinding {
+                            scope_expression: local_binding_to_rename_scope_expression,
+                            origin: local_binding_to_rename_origin,
+                            name: local_binding_to_rename,
+                        } => {
+                            let mut all_uses_of_renamed_module_name: Vec<lsp_types::Range> =
+                                Vec::new();
+                            elm_syntax_expression_uses_of_reference_into(
+                                &mut all_uses_of_renamed_module_name,
+                                &elm_syntax_module_create_origin_lookup(
+                                    state,
+                                    to_rename_module_syntax,
+                                ),
+                                &[LocalBinding {
+                                    name: local_binding_to_rename,
+                                    origin: local_binding_to_rename_origin,
+                                }],
+                                local_binding_to_rename_scope_expression,
+                                ElmDeclaredSymbol::LocalBinding(local_binding_to_rename),
+                            );
+                            match local_binding_to_rename_origin {
+                                LocalBindingOrigin::PatternVariable(range) => {
+                                    all_uses_of_renamed_module_name.push(range);
+                                }
+                                LocalBindingOrigin::PatternRecordField(_) => {
+                                    // should never have been prepared for rename
+                                }
+                                LocalBindingOrigin::LetDeclaredVariable { .. } => {
+                                    // already included in scope expression
+                                }
+                            }
+                            vec![lsp_types::TextDocumentEdit {
+                                text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
+                                    uri: rename_arguments.text_document_position.text_document.uri,
+                                    version: None,
+                                },
+                                edits: all_uses_of_renamed_module_name
+                                    .into_iter()
+                                    .map(|use_range_of_renamed_module| {
+                                        lsp_types::OneOf::Left(lsp_types::TextEdit {
+                                            range: use_range_of_renamed_module,
+                                            new_text: rename_arguments.new_name.clone(),
+                                        })
+                                    })
+                                    .collect::<Vec<_>>(),
+                            }]
+                        }
                         ElmSyntaxSymbol::ImportAlias {
                             module_origin: import_alias_to_rename_module_origin,
                             alias_name: import_alias_to_rename,
@@ -4248,11 +4392,11 @@ enum ElmSyntaxSymbol<'a> {
         scope_declaration: &'a ElmSyntaxDeclaration,
         name: &'a str,
     },
-    // TODO add
-    // LocalBinding {
-    //     scope_expression: &'a ElmSyntaxExpression,
-    //     name: &'a str,
-    // }
+    LocalBinding {
+        scope_expression: ElmSyntaxNode<&'a ElmSyntaxExpression>,
+        name: &'a str,
+        origin: LocalBindingOrigin<'a>,
+    },
 }
 
 fn elm_syntax_module_find_reference_at_position<'a>(
@@ -4596,16 +4740,19 @@ fn elm_syntax_declaration_find_reference_at_position<'a>(
                             }
                         })
                         .or_else(|| {
-                            let mut parameter_introduced_bindings: Vec<&str> = Vec::new();
+                            let mut parameter_introduced_bindings: Vec<LocalBinding> = Vec::new();
                             for parameter_node in parameters {
                                 elm_syntax_pattern_bindings_into(
                                     &mut parameter_introduced_bindings,
-                                    &parameter_node.value,
+                                    elm_syntax_node_as_ref(parameter_node),
                                 );
                             }
                             elm_syntax_expression_find_reference_at_position(
                                 module_origin_lookup,
-                                &parameter_introduced_bindings,
+                                &[(
+                                    elm_syntax_node_as_ref(result),
+                                    &parameter_introduced_bindings,
+                                )],
                                 elm_syntax_declaration_node.value,
                                 elm_syntax_node_as_ref(result),
                                 position,
@@ -4893,9 +5040,26 @@ fn elm_syntax_type_find_reference_at_position<'a>(
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+enum LocalBindingOrigin<'a> {
+    PatternVariable(lsp_types::Range),
+    PatternRecordField(lsp_types::Range),
+    LetDeclaredVariable {
+        signature: Option<
+            &'a elm::GeneratedNameType0<ElmSyntaxNode<String>, ElmSyntaxNode<ElmSyntaxType>>,
+        >,
+        implementation_name_range: lsp_types::Range,
+    },
+}
+#[derive(Clone, Copy)]
+struct LocalBinding<'a> {
+    name: &'a str,
+    origin: LocalBindingOrigin<'a>,
+}
+
 fn elm_syntax_expression_find_reference_at_position<'a>(
     module_origin_lookup: &ModuleOriginLookup<'a>,
-    local_bindings: &[&str],
+    local_bindings: &[(ElmSyntaxNode<&'a ElmSyntaxExpression>, &[LocalBinding<'a>])],
     scope_declaration: &'a ElmSyntaxDeclaration,
     elm_syntax_expression_node: ElmSyntaxNode<&'a ElmSyntaxExpression>,
     position: lsp_types::Position,
@@ -4955,12 +5119,14 @@ fn elm_syntax_expression_find_reference_at_position<'a>(
                 )
             })
             .or_else(|| {
-                let mut local_bindings_including_from_case0_pattern: Vec<&str> =
-                    local_bindings.to_vec();
+                let mut introduced_bindings = Vec::new();
                 elm_syntax_pattern_bindings_into(
-                    &mut local_bindings_including_from_case0_pattern,
-                    &case0.pattern.value,
+                    &mut introduced_bindings,
+                    elm_syntax_node_as_ref(&case0.pattern),
                 );
+                let mut local_bindings_including_from_case0_pattern = local_bindings.to_vec();
+                local_bindings_including_from_case0_pattern
+                    .push((elm_syntax_node_unbox(&case0.result), &introduced_bindings));
                 elm_syntax_expression_find_reference_at_position(
                     module_origin_lookup,
                     &local_bindings_including_from_case0_pattern,
@@ -4977,12 +5143,15 @@ fn elm_syntax_expression_find_reference_at_position<'a>(
                         position,
                     )
                     .or_else(|| {
-                        let mut local_bindings_including_from_case_pattern: Vec<&str> =
-                            local_bindings.to_vec();
+                        let mut introduced_bindings = Vec::new();
                         elm_syntax_pattern_bindings_into(
-                            &mut local_bindings_including_from_case_pattern,
-                            &case.pattern.value,
+                            &mut introduced_bindings,
+                            elm_syntax_node_as_ref(&case.pattern),
                         );
+                        let mut local_bindings_including_from_case_pattern =
+                            local_bindings.to_vec();
+                        local_bindings_including_from_case_pattern
+                            .push((elm_syntax_node_as_ref(&case.result), &introduced_bindings));
                         elm_syntax_expression_find_reference_at_position(
                             module_origin_lookup,
                             &local_bindings_including_from_case_pattern,
@@ -5083,17 +5252,20 @@ fn elm_syntax_expression_find_reference_at_position<'a>(
                 })
             })
             .or_else(|| {
-                let mut local_bindings_including_from_lambda_parameters = local_bindings.to_vec();
+                let mut introduced_bindings = Vec::new();
                 elm_syntax_pattern_bindings_into(
-                    &mut local_bindings_including_from_lambda_parameters,
-                    &parameter0.value,
+                    &mut introduced_bindings,
+                    elm_syntax_node_as_ref(parameter0),
                 );
                 for parameter_node in parameter1_up {
                     elm_syntax_pattern_bindings_into(
-                        &mut local_bindings_including_from_lambda_parameters,
-                        &parameter_node.value,
+                        &mut introduced_bindings,
+                        elm_syntax_node_as_ref(parameter_node),
                     );
                 }
+                let mut local_bindings_including_from_lambda_parameters = local_bindings.to_vec();
+                local_bindings_including_from_lambda_parameters
+                    .push((elm_syntax_node_unbox(result), &introduced_bindings));
                 elm_syntax_expression_find_reference_at_position(
                     module_origin_lookup,
                     &local_bindings_including_from_lambda_parameters,
@@ -5108,22 +5280,26 @@ fn elm_syntax_expression_find_reference_at_position<'a>(
                 in_keyword_range: _,
                 result,
             } => {
-                let mut local_bindings_including_let_declaration_introduced: Vec<&str> =
-                    local_bindings.to_vec();
+                let mut introduced_bindings = Vec::new();
                 elm_syntax_let_declaration_introduced_bindings_into(
-                    &mut local_bindings_including_let_declaration_introduced,
+                    &mut introduced_bindings,
                     &declaration0.value,
                 );
                 for let_declaration_node in declaration1_up {
                     elm_syntax_let_declaration_introduced_bindings_into(
-                        &mut local_bindings_including_let_declaration_introduced,
+                        &mut introduced_bindings,
                         &let_declaration_node.value,
                     );
                 }
+                let mut local_bindings_including_let_declaration_introduced =
+                    local_bindings.to_vec();
+                local_bindings_including_let_declaration_introduced
+                    .push((elm_syntax_expression_node, &introduced_bindings));
                 elm_syntax_let_declaration_find_reference_at_position(
                     module_origin_lookup,
                     &local_bindings_including_let_declaration_introduced,
                     scope_declaration,
+                    elm_syntax_expression_node,
                     elm_syntax_node_unbox(declaration0),
                     position,
                 )
@@ -5133,13 +5309,13 @@ fn elm_syntax_expression_find_reference_at_position<'a>(
                             module_origin_lookup,
                             &local_bindings_including_let_declaration_introduced,
                             scope_declaration,
+                            elm_syntax_expression_node,
                             elm_syntax_node_as_ref(declaration),
                             position,
                         )
                     })
                 })
                 .or_else(|| {
-                    // TODO add let-declaration-introduced bindings
                     elm_syntax_expression_find_reference_at_position(
                         module_origin_lookup,
                         &local_bindings_including_let_declaration_introduced,
@@ -5209,12 +5385,27 @@ fn elm_syntax_expression_find_reference_at_position<'a>(
                 field1_up,
             } => {
                 if lsp_range_includes_position(record_variable_node.range, position) {
-                    if local_bindings
-                        .iter()
-                        .any(|local_binding| local_binding == &record_variable_node.value)
+                    if let Some((scope_expression, origin)) =
+                        local_bindings
+                            .iter()
+                            .find_map(|(scope_expression, local_bindings)| {
+                                local_bindings.iter().find_map(|local_binding| {
+                                    if local_binding.name == &record_variable_node.value {
+                                        Some((scope_expression, local_binding.origin))
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
                     {
-                        // TODO if symbol_to_collect_uses_of == LocalBinding, Some LocalBinding
-                        None
+                        Some(ElmSyntaxNode {
+                            value: ElmSyntaxSymbol::LocalBinding {
+                                scope_expression: *scope_expression,
+                                origin: origin,
+                                name: &record_variable_node.value,
+                            },
+                            range: record_variable_node.range,
+                        })
                     } else {
                         Some(ElmSyntaxNode {
                             value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
@@ -5225,7 +5416,7 @@ fn elm_syntax_expression_find_reference_at_position<'a>(
                                 ),
                                 name: &record_variable_node.value,
                             },
-                            range: elm_syntax_expression_node.range,
+                            range: record_variable_node.range,
                         })
                     }
                 } else {
@@ -5251,12 +5442,27 @@ fn elm_syntax_expression_find_reference_at_position<'a>(
             }
             ElmSyntaxExpression::Reference(reference) => {
                 if reference.qualification.is_empty()
-                    && local_bindings
-                        .iter()
-                        .any(|local_binding| local_binding == &reference.name)
+                    && let Some((scope_expression, origin)) =
+                        local_bindings
+                            .iter()
+                            .find_map(|(scope_expression, local_bindings)| {
+                                local_bindings.iter().find_map(|local_binding| {
+                                    if local_binding.name == &reference.name {
+                                        Some((scope_expression, local_binding.origin))
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
                 {
-                    // TODO if symbol_to_collect_uses_of == LocalBinding, Some LocalBinding
-                    None
+                    Some(ElmSyntaxNode {
+                        value: ElmSyntaxSymbol::LocalBinding {
+                            scope_expression: *scope_expression,
+                            origin: origin,
+                            name: &reference.name,
+                        },
+                        range: elm_syntax_expression_node.range,
+                    })
                 } else {
                     Some(ElmSyntaxNode {
                         value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
@@ -5326,8 +5532,9 @@ fn elm_syntax_expression_find_reference_at_position<'a>(
 
 fn elm_syntax_let_declaration_find_reference_at_position<'a>(
     module_origin_lookup: &ModuleOriginLookup<'a>,
-    local_bindings: &[&str],
+    local_bindings: &[(ElmSyntaxNode<&'a ElmSyntaxExpression>, &[LocalBinding<'a>])],
     scope_declaration: &'a ElmSyntaxDeclaration,
+    scope_expression: ElmSyntaxNode<&'a ElmSyntaxExpression>,
     elm_syntax_let_declaration_node: ElmSyntaxNode<&'a ElmSyntaxLetDeclaration>,
     position: lsp_types::Position,
 ) -> Option<ElmSyntaxNode<ElmSyntaxSymbol<'a>>> {
@@ -5363,8 +5570,12 @@ fn elm_syntax_let_declaration_find_reference_at_position<'a>(
             } => {
                 if lsp_range_includes_position(*implementation_name_range, position) {
                     Some(ElmSyntaxNode {
-                        value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
-                            module_origin: "",
+                        value: ElmSyntaxSymbol::LocalBinding {
+                            scope_expression: scope_expression,
+                            origin: LocalBindingOrigin::LetDeclaredVariable {
+                                signature: maybe_signature.as_ref(),
+                                implementation_name_range: *implementation_name_range,
+                            },
                             name: name,
                         },
                         range: *implementation_name_range,
@@ -5375,8 +5586,12 @@ fn elm_syntax_let_declaration_find_reference_at_position<'a>(
                         .and_then(|signature| {
                             if lsp_range_includes_position(signature.name.range, position) {
                                 Some(ElmSyntaxNode {
-                                    value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
-                                        module_origin: "",
+                                    value: ElmSyntaxSymbol::LocalBinding {
+                                        scope_expression: scope_expression,
+                                        origin: LocalBindingOrigin::LetDeclaredVariable {
+                                            signature: maybe_signature.as_ref(),
+                                            implementation_name_range: *implementation_name_range,
+                                        },
                                         name: name,
                                     },
                                     range: signature.name.range,
@@ -5391,15 +5606,17 @@ fn elm_syntax_let_declaration_find_reference_at_position<'a>(
                             }
                         })
                         .or_else(|| {
-                            let mut local_bindings_including_from_let_function_parameters: Vec<
-                                &str,
-                            > = local_bindings.to_vec();
+                            let mut introduced_bindings = Vec::new();
                             for parameter_node in parameters {
                                 elm_syntax_pattern_bindings_into(
-                                    &mut local_bindings_including_from_let_function_parameters,
-                                    &parameter_node.value,
+                                    &mut introduced_bindings,
+                                    elm_syntax_node_as_ref(parameter_node),
                                 );
                             }
+                            let mut local_bindings_including_from_let_function_parameters =
+                                local_bindings.to_vec();
+                            local_bindings_including_from_let_function_parameters
+                                .push((elm_syntax_node_as_ref(result), &introduced_bindings));
                             elm_syntax_expression_find_reference_at_position(
                                 module_origin_lookup,
                                 &local_bindings_including_from_let_function_parameters,
@@ -5446,7 +5663,7 @@ enum ElmDeclaredSymbol<'a> {
         module_origin: &'a str,
         name: &'a str,
     },
-    // TODO add LocalBinding(&'a str) (currently represented by VariableOrVariant {module_origin:""})
+    LocalBinding(&'a str),
 }
 
 fn elm_syntax_module_uses_of_reference_into(
@@ -5756,7 +5973,10 @@ fn elm_syntax_declaration_uses_of_reference_into(
             }
             let mut parameter_bindings = Vec::new();
             for parameter_node in parameters {
-                elm_syntax_pattern_bindings_into(&mut parameter_bindings, &parameter_node.value)
+                elm_syntax_pattern_bindings_into(
+                    &mut parameter_bindings,
+                    elm_syntax_node_as_ref(parameter_node),
+                )
             }
             elm_syntax_expression_uses_of_reference_into(
                 uses_so_far,
@@ -5948,7 +6168,7 @@ fn elm_syntax_type_uses_of_reference_into(
 fn elm_syntax_expression_uses_of_reference_into(
     uses_so_far: &mut Vec<lsp_types::Range>,
     module_origin_lookup: &ModuleOriginLookup,
-    local_bindings: &[&str],
+    local_bindings: &[LocalBinding],
     elm_syntax_expression_node: ElmSyntaxNode<&ElmSyntaxExpression>,
     symbol_to_collect_uses_of: ElmDeclaredSymbol,
 ) {
@@ -6002,11 +6222,11 @@ fn elm_syntax_expression_uses_of_reference_into(
                 symbol_to_collect_uses_of,
             );
             {
-                let mut local_bindings_including_from_case0_pattern: Vec<&str> =
+                let mut local_bindings_including_from_case0_pattern: Vec<LocalBinding> =
                     local_bindings.to_vec();
                 elm_syntax_pattern_bindings_into(
                     &mut local_bindings_including_from_case0_pattern,
-                    &case0.pattern.value,
+                    elm_syntax_node_as_ref(&case0.pattern),
                 );
                 elm_syntax_expression_uses_of_reference_into(
                     uses_so_far,
@@ -6023,11 +6243,11 @@ fn elm_syntax_expression_uses_of_reference_into(
                     elm_syntax_node_as_ref(&case.pattern),
                     symbol_to_collect_uses_of,
                 );
-                let mut local_bindings_including_from_case_pattern: Vec<&str> =
+                let mut local_bindings_including_from_case_pattern: Vec<LocalBinding> =
                     local_bindings.to_vec();
                 elm_syntax_pattern_bindings_into(
                     &mut local_bindings_including_from_case_pattern,
-                    &case.pattern.value,
+                    elm_syntax_node_as_ref(&case.pattern),
                 );
                 elm_syntax_expression_uses_of_reference_into(
                     uses_so_far,
@@ -6113,12 +6333,12 @@ fn elm_syntax_expression_uses_of_reference_into(
             let mut local_bindings_including_from_lambda_parameters = local_bindings.to_vec();
             elm_syntax_pattern_bindings_into(
                 &mut local_bindings_including_from_lambda_parameters,
-                &parameter0.value,
+                elm_syntax_node_as_ref(parameter0),
             );
             for parameter_node in parameter1_up {
                 elm_syntax_pattern_bindings_into(
                     &mut local_bindings_including_from_lambda_parameters,
-                    &parameter_node.value,
+                    elm_syntax_node_as_ref(parameter_node),
                 );
             }
             elm_syntax_expression_uses_of_reference_into(
@@ -6135,7 +6355,7 @@ fn elm_syntax_expression_uses_of_reference_into(
             in_keyword_range: _,
             result,
         } => {
-            let mut local_bindings_including_let_declaration_introduced: Vec<&str> =
+            let mut local_bindings_including_let_declaration_introduced: Vec<LocalBinding> =
                 local_bindings.to_vec();
             elm_syntax_let_declaration_introduced_bindings_into(
                 &mut local_bindings_including_let_declaration_introduced,
@@ -6228,11 +6448,15 @@ fn elm_syntax_expression_uses_of_reference_into(
             field0,
             field1_up,
         } => {
-            if local_bindings
-                .iter()
-                .any(|local_binding| local_binding == &record_variable_node.value)
+            if symbol_to_collect_uses_of
+                == ElmDeclaredSymbol::LocalBinding(&record_variable_node.value)
             {
-                // TODO if symbol_to_collect_uses_of == LocalBinding, push
+                if local_bindings
+                    .iter()
+                    .any(|local_binding| local_binding.name == &record_variable_node.value)
+                {
+                    uses_so_far.push(record_variable_node.range);
+                }
             } else if symbol_to_collect_uses_of
                 == (ElmDeclaredSymbol::VariableOrVariant {
                     module_origin: look_up_origin_module(
@@ -6263,12 +6487,14 @@ fn elm_syntax_expression_uses_of_reference_into(
             }
         }
         ElmSyntaxExpression::Reference(reference) => {
-            if reference.qualification.is_empty()
-                && local_bindings
-                    .iter()
-                    .any(|local_binding| local_binding == &reference.name)
-            {
-                // TODO if symbol_to_collect_uses_of == LocalBinding, push
+            if symbol_to_collect_uses_of == ElmDeclaredSymbol::LocalBinding(&reference.name) {
+                if reference.qualification.is_empty()
+                    && local_bindings
+                        .iter()
+                        .any(|local_binding| local_binding.name == &reference.name)
+                {
+                    uses_so_far.push(elm_syntax_expression_node.range);
+                }
             } else {
                 let module_origin = look_up_origin_module(
                     module_origin_lookup,
@@ -6366,7 +6592,7 @@ fn elm_syntax_expression_uses_of_reference_into(
 fn elm_syntax_let_declaration_uses_of_reference_into(
     uses_so_far: &mut Vec<lsp_types::Range>,
     module_origin_lookup: &ModuleOriginLookup,
-    local_bindings: &[&str],
+    local_bindings: &[LocalBinding],
     elm_syntax_let_declaration: &ElmSyntaxLetDeclaration,
     symbol_to_collect_uses_of: ElmDeclaredSymbol,
 ) {
@@ -6398,22 +6624,14 @@ fn elm_syntax_let_declaration_uses_of_reference_into(
             equals_key_symbol_range: _,
             result,
         } => {
-            if symbol_to_collect_uses_of
-                == (ElmDeclaredSymbol::VariableOrVariant {
-                    name: name,
-                    module_origin: "",
-                })
-            {
+            if symbol_to_collect_uses_of == ElmDeclaredSymbol::LocalBinding(name) {
                 uses_so_far.push(*implementation_name_range);
             }
             match maybe_signature {
                 None => {}
                 Some(signature) => {
                     if symbol_to_collect_uses_of
-                        == (ElmDeclaredSymbol::VariableOrVariant {
-                            name: &signature.name.value,
-                            module_origin: "",
-                        })
+                        == ElmDeclaredSymbol::LocalBinding(&signature.name.value)
                     {
                         uses_so_far.push(signature.name.range);
                     }
@@ -6433,12 +6651,12 @@ fn elm_syntax_let_declaration_uses_of_reference_into(
                     symbol_to_collect_uses_of,
                 );
             }
-            let mut local_bindings_including_from_let_function_parameters: Vec<&str> =
+            let mut local_bindings_including_from_let_function_parameters: Vec<LocalBinding> =
                 local_bindings.to_vec();
             for parameter_node in parameters {
                 elm_syntax_pattern_bindings_into(
                     &mut local_bindings_including_from_let_function_parameters,
-                    &parameter_node.value,
+                    elm_syntax_node_as_ref(parameter_node),
                 );
             }
             elm_syntax_expression_uses_of_reference_into(
@@ -6470,12 +6688,7 @@ fn elm_syntax_pattern_uses_of_reference_into(
                 elm_syntax_node_unbox(alias_pattern),
                 symbol_to_collect_uses_of,
             );
-            if symbol_to_collect_uses_of
-                == (ElmDeclaredSymbol::VariableOrVariant {
-                    name: &variable.value,
-                    module_origin: "",
-                })
-            {
+            if symbol_to_collect_uses_of == ElmDeclaredSymbol::LocalBinding(&variable.value) {
                 uses_so_far.push(variable.range);
             }
         }
@@ -6519,14 +6732,12 @@ fn elm_syntax_pattern_uses_of_reference_into(
             );
         }
         ElmSyntaxPattern::Record(field_names) => {
-            for field_name_node in field_names {
+            'find_in_field_names: for field_name_node in field_names {
                 if symbol_to_collect_uses_of
-                    == (ElmDeclaredSymbol::VariableOrVariant {
-                        name: &field_name_node.value,
-                        module_origin: "",
-                    })
+                    == ElmDeclaredSymbol::LocalBinding(&field_name_node.value)
                 {
                     uses_so_far.push(field_name_node.range);
+                    break 'find_in_field_names;
                 }
             }
         }
@@ -6571,12 +6782,7 @@ fn elm_syntax_pattern_uses_of_reference_into(
         }
         ElmSyntaxPattern::Unit => {}
         ElmSyntaxPattern::Variable(variable) => {
-            if symbol_to_collect_uses_of
-                == (ElmDeclaredSymbol::VariableOrVariant {
-                    name: variable,
-                    module_origin: "",
-                })
-            {
+            if symbol_to_collect_uses_of == ElmDeclaredSymbol::LocalBinding(variable) {
                 uses_so_far.push(elm_syntax_pattern_node.range);
             }
         }
@@ -6637,7 +6843,7 @@ fn elm_syntax_pattern_uses_of_reference_into(
 }
 
 fn elm_syntax_let_declaration_introduced_bindings_into<'a>(
-    bindings_so_far: &mut Vec<&'a str>,
+    bindings_so_far: &mut Vec<LocalBinding<'a>>,
     elm_syntax_let_declaration: &'a ElmSyntaxLetDeclaration,
 ) {
     match elm_syntax_let_declaration {
@@ -6646,33 +6852,45 @@ fn elm_syntax_let_declaration_introduced_bindings_into<'a>(
             equals_key_symbol_range: _,
             expression: _,
         } => {
-            elm_syntax_pattern_bindings_into(bindings_so_far, &pattern.value);
+            elm_syntax_pattern_bindings_into(bindings_so_far, elm_syntax_node_as_ref(pattern));
         }
         ElmSyntaxLetDeclaration::ValueOrFunctionDeclaration {
             name,
-            signature: _,
-            implementation_name_range: _,
+            signature,
+            implementation_name_range,
             parameters: _,
             equals_key_symbol_range: _,
             result: _,
         } => {
-            bindings_so_far.push(name);
+            bindings_so_far.push(LocalBinding {
+                name: name,
+                origin: LocalBindingOrigin::LetDeclaredVariable {
+                    signature: signature.as_ref(),
+                    implementation_name_range: *implementation_name_range,
+                },
+            });
         }
     }
 }
 
 fn elm_syntax_pattern_bindings_into<'a>(
-    bindings_so_far: &mut Vec<&'a str>,
-    elm_syntax_pattern: &'a ElmSyntaxPattern,
+    bindings_so_far: &mut Vec<LocalBinding<'a>>,
+    elm_syntax_pattern_node: ElmSyntaxNode<&'a ElmSyntaxPattern>,
 ) {
-    match elm_syntax_pattern {
+    match elm_syntax_pattern_node.value {
         ElmSyntaxPattern::As {
             pattern: aliased_pattern_node,
             as_keyword_range: _,
             variable,
         } => {
-            elm_syntax_pattern_bindings_into(bindings_so_far, &aliased_pattern_node.value);
-            bindings_so_far.push(&variable.value);
+            elm_syntax_pattern_bindings_into(
+                bindings_so_far,
+                elm_syntax_node_unbox(aliased_pattern_node),
+            );
+            bindings_so_far.push(LocalBinding {
+                origin: LocalBindingOrigin::PatternVariable(variable.range),
+                name: &variable.value,
+            });
         }
         ElmSyntaxPattern::Char(_) => {}
         ElmSyntaxPattern::Ignored => {}
@@ -6682,23 +6900,25 @@ fn elm_syntax_pattern_bindings_into<'a>(
             cons_key_symbol: _,
             tail,
         } => {
-            elm_syntax_pattern_bindings_into(bindings_so_far, &head.value);
-            elm_syntax_pattern_bindings_into(bindings_so_far, &tail.value);
+            elm_syntax_pattern_bindings_into(bindings_so_far, elm_syntax_node_unbox(head));
+            elm_syntax_pattern_bindings_into(bindings_so_far, elm_syntax_node_unbox(tail));
         }
         ElmSyntaxPattern::ListExact(elements) => {
             for element_node in elements {
-                elm_syntax_pattern_bindings_into(bindings_so_far, &element_node.value);
+                elm_syntax_pattern_bindings_into(
+                    bindings_so_far,
+                    elm_syntax_node_as_ref(element_node),
+                );
             }
         }
         ElmSyntaxPattern::Parenthesized(in_parens) => {
-            elm_syntax_pattern_bindings_into(bindings_so_far, &in_parens.value);
+            elm_syntax_pattern_bindings_into(bindings_so_far, elm_syntax_node_unbox(in_parens));
         }
         ElmSyntaxPattern::Record(field_names) => {
-            bindings_so_far.extend(
-                field_names
-                    .iter()
-                    .map(|field_name_node| field_name_node.value.as_str()),
-            );
+            bindings_so_far.extend(field_names.iter().map(|field_name_node| LocalBinding {
+                origin: LocalBindingOrigin::PatternRecordField(field_name_node.range),
+                name: &field_name_node.value,
+            }));
         }
         ElmSyntaxPattern::String { .. } => todo!(),
         ElmSyntaxPattern::Triple {
@@ -6706,25 +6926,31 @@ fn elm_syntax_pattern_bindings_into<'a>(
             part1,
             part2,
         } => {
-            elm_syntax_pattern_bindings_into(bindings_so_far, &part0.value);
-            elm_syntax_pattern_bindings_into(bindings_so_far, &part1.value);
-            elm_syntax_pattern_bindings_into(bindings_so_far, &part2.value);
+            elm_syntax_pattern_bindings_into(bindings_so_far, elm_syntax_node_unbox(part0));
+            elm_syntax_pattern_bindings_into(bindings_so_far, elm_syntax_node_unbox(part1));
+            elm_syntax_pattern_bindings_into(bindings_so_far, elm_syntax_node_unbox(part2));
         }
 
         ElmSyntaxPattern::Tuple { part0, part1 } => {
-            elm_syntax_pattern_bindings_into(bindings_so_far, &part0.value);
-            elm_syntax_pattern_bindings_into(bindings_so_far, &part1.value);
+            elm_syntax_pattern_bindings_into(bindings_so_far, elm_syntax_node_unbox(part0));
+            elm_syntax_pattern_bindings_into(bindings_so_far, elm_syntax_node_unbox(part1));
         }
         ElmSyntaxPattern::Unit => todo!(),
         ElmSyntaxPattern::Variable(variable) => {
-            bindings_so_far.push(variable);
+            bindings_so_far.push(LocalBinding {
+                origin: LocalBindingOrigin::PatternVariable(elm_syntax_pattern_node.range),
+                name: variable,
+            });
         }
         ElmSyntaxPattern::Variant {
             reference: _,
             values,
         } => {
             for value_node in values {
-                elm_syntax_pattern_bindings_into(bindings_so_far, &value_node.value);
+                elm_syntax_pattern_bindings_into(
+                    bindings_so_far,
+                    elm_syntax_node_as_ref(value_node),
+                );
             }
         }
     }
