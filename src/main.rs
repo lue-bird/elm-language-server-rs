@@ -154,10 +154,10 @@ async fn main() {
                                 module_syntax,
                                 hover_arguments.text_document_position_params.position,
                             )?;
-                        match &hovered_reference.value {
+                        match hovered_reference.value {
                             // referencing a module
-                            ElmSymbolOwned::ModuleName(hovered_module_name) |
-                            ElmSymbolOwned::ImportAlias { module_origin: hovered_module_name, alias_name: _ } => {
+                            ElmSyntaxSymbol::ModuleName(hovered_module_name) |
+                            ElmSyntaxSymbol::ImportAlias { module_origin: hovered_module_name, alias_name: _ } => {
                                 let origin_module_file_path =
                                     state_file_path_for_module_name(state, hovered_module_name)?;
                                 let origin_module_syntax =
@@ -188,7 +188,7 @@ async fn main() {
                                 })
                             },
                             // referencing a module-declared member
-                            ElmSymbolOwned::VariableOrVariantOrOperator { module_origin: hovered_module_origin, name: hovered_name } => {
+                            ElmSyntaxSymbol::VariableOrVariantOrOperator { module_origin: hovered_module_origin, name: hovered_name } => {
                                 let origin_module_file_path =
                                     state_file_path_for_module_name(state, &hovered_module_origin)?;
                                 let origin_module_syntax =
@@ -524,7 +524,7 @@ async fn main() {
                                         },
                                     )
                             },
-                            ElmSymbolOwned::Type { module_origin: hovered_module_origin, name: hovered_name } => {
+                            ElmSyntaxSymbol::Type { module_origin: hovered_module_origin, name: hovered_name } => {
                                 if (hovered_module_origin == "List") && (hovered_name == "List") {
                                     // module List has no type List.List exposed in an oversight so we make one up.
                                     // See https://github.com/elm/core/issues/1037
@@ -709,8 +709,8 @@ async fn main() {
                                 goto_definition_arguments.text_document_position_params.position,
                             )?;
                         match &goto_reference.value {
-                            ElmSymbolOwned::ModuleName(goto_module_name) |
-                            ElmSymbolOwned::ImportAlias { module_origin: goto_module_name, alias_name: _ } => {
+                            ElmSyntaxSymbol::ModuleName(goto_module_name) |
+                            ElmSyntaxSymbol::ImportAlias { module_origin: goto_module_name, alias_name: _ } => {
                                 let origin_module_file_path =
                                     state_file_path_for_module_name(state, goto_module_name)?;
                                 let origin_module_syntax =
@@ -725,7 +725,7 @@ async fn main() {
                                         range: origin_module_syntax.header.value.module_name.range,
                                     })
                             },
-                            ElmSymbolOwned
+                            ElmSyntaxSymbol
                             ::VariableOrVariantOrOperator {
                                 module_origin: goto_module_origin,
                                 name: goto_name,
@@ -865,7 +865,7 @@ async fn main() {
                                         },
                                     )
                             },
-                            ElmSymbolOwned::Type { module_origin: goto_module_origin, name: goto_name } => {
+                            ElmSyntaxSymbol::Type { module_origin: goto_module_origin, name: goto_name } => {
                                 let origin_module_file_path =
                                     state_file_path_for_module_name(state, &goto_module_origin)?;
                                 let origin_module_syntax =
@@ -933,24 +933,24 @@ async fn main() {
                 prepare_rename_arguments.text_document.uri.to_file_path().ok().and_then(|prepare_rename_file_path| {
                     let prepare_rename_module_syntax =
                         state.parsed_modules.get(&prepare_rename_file_path).and_then(|m| m.syntax.as_ref())?;
-                    let prepare_rename_symbol: ElmSyntaxNode<ElmSymbolOwned> =
+                    let prepare_rename_symbol: ElmSyntaxNode<ElmSyntaxSymbol> =
                         elm_syntax_module_find_reference_at_position(
                             state,
                             prepare_rename_module_syntax,
                             prepare_rename_arguments.position,
                         )?;
-                    let placeholder = match &prepare_rename_symbol.value {
-                        ElmSymbolOwned::ImportAlias { module_origin: _, alias_name: alias_name } => {
-                            alias_name.clone()
+                    let placeholder = match prepare_rename_symbol.value {
+                        ElmSyntaxSymbol::ImportAlias { module_origin: _, alias_name: alias_name } => {
+                            alias_name
                         },
-                        ElmSymbolOwned::ModuleName(module_name) => {
-                            module_name.clone()
+                        ElmSyntaxSymbol::ModuleName(module_name) => {
+                            module_name
                         },
-                        ElmSymbolOwned::VariableOrVariantOrOperator { module_origin: _, name } => {
-                            name.clone()
+                        ElmSyntaxSymbol::VariableOrVariantOrOperator { module_origin: _, name } => {
+                            name
                         },
-                        ElmSymbolOwned::Type { module_origin: _, name } => {
-                            name.clone()
+                        ElmSyntaxSymbol::Type { module_origin: _, name } => {
+                            name
                         },
                     };
                     Some(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
@@ -960,7 +960,7 @@ async fn main() {
                             lsp_position_add_characters(prepare_rename_symbol.range.end, -(placeholder.len() as i32)),
                             end: prepare_rename_symbol.range.end,
                         },
-                        placeholder: placeholder,
+                        placeholder: placeholder.to_string(),
                     })
                 });
             async move {
@@ -982,14 +982,14 @@ async fn main() {
                     .and_then(|to_rename_file_path| {
                         let to_rename_module_syntax =
                             state.parsed_modules.get(&to_rename_file_path).and_then(|m| m.syntax.as_ref())?;
-                        let symbol_to_rename: ElmSyntaxNode<ElmSymbolOwned> =
+                        let symbol_to_rename: ElmSyntaxNode<ElmSyntaxSymbol> =
                             elm_syntax_module_find_reference_at_position(
                                 state,
                                 to_rename_module_syntax,
                                 rename_arguments.text_document_position.position,
                             )?;
                         Some(match &symbol_to_rename.value {
-                            ElmSymbolOwned
+                            ElmSyntaxSymbol
                             ::ImportAlias {
                                 module_origin: import_alias_to_rename_module_origin,
                                 alias_name: import_alias_to_rename,
@@ -1020,7 +1020,7 @@ async fn main() {
                                         .collect::<Vec<_>>(),
                                 })
                             },
-                            ElmSymbolOwned::ModuleName(module_name_to_rename) => {
+                            ElmSyntaxSymbol::ModuleName(module_name_to_rename) => {
                                 state.parsed_modules.iter().filter_map(|(elm_module_file_path, elm_module_state)| {
                                     let elm_module_syntax = elm_module_state.syntax.as_ref()?;
                                     let elm_module_uri = lsp_types::Url::from_file_path(elm_module_file_path).ok()?;
@@ -1052,7 +1052,7 @@ async fn main() {
                                     })
                                 }).collect::<Vec<_>>()
                             },
-                            ElmSymbolOwned
+                            ElmSyntaxSymbol
                             ::VariableOrVariantOrOperator {
                                 module_origin: to_rename_module_origin,
                                 name: to_rename_name,
@@ -1090,7 +1090,7 @@ async fn main() {
                                         })
                                 }).collect::<Vec<_>>()
                             },
-                            ElmSymbolOwned::Type { module_origin: to_rename_module_origin, name: to_rename_name } => {
+                            ElmSyntaxSymbol::Type { module_origin: to_rename_module_origin, name: to_rename_name } => {
                                 state.parsed_modules.iter().filter_map(|(elm_module_file_path, elm_module_syntax)| {
                                     let elm_module_syntax = elm_module_syntax.syntax.as_ref()?;
                                     let to_rename_is_record_type_alias =
@@ -3200,31 +3200,27 @@ fn elm_syntax_node_to_persistent<
 
 /// Create through module_origin_lookup_for_implicit_imports or
 /// elm_syntax_module_create_origin_lookup
-struct ModuleOriginLookup {
-    unqualified: std::collections::HashMap<String, String>,
-    uniquely_qualified: std::collections::HashMap<String, String>,
+struct ModuleOriginLookup<'a> {
+    unqualified: std::collections::HashMap<&'a str, &'a str>,
+    uniquely_qualified: std::collections::HashMap<&'a str, &'a str>,
     // in theory, uniquely_qualified and ambiguously_qualified can be combined into a
     // unified map from qualified to origin module.
     //
-    // Issue is that a ModuleOriginLookup should be cheap to construct (allocating
-    // multiple new strings for every member of every imported module and always
-    // looking up by qualification+name pair can get somewhat expensive) and so,
-    // because qualifications are rarely ambiguous in practice, we split these into
-    // the common, cheap and rare, expensive parts
-    ambiguously_qualified: std::collections::HashMap<ElmQualified<'static>, String>,
+    // Issue is that a ModuleOriginLookup should be cheap to construct (creating an
+    // entry for every member of every imported module and always looking up by
+    // qualification+name pair can get somewhat expensive) and so, because
+    // qualifications are rarely ambiguous in practice, we split these into the
+    // common, cheap and rare, expensive parts
+    ambiguously_qualified: std::collections::HashMap<ElmQualified<'a>, &'a str>,
 }
 
-/// Both strings being cows is cursed but allows
-// the type to be easily used as a map key both for storage and lookup depending
-// on lifetime, see
-// https://users.rust-lang.org/t/is-it-possible-to-use-string-tuples-for-keys-str-tuples-for-lookups-in-maps/11245/3
-#[derive(Hash, PartialEq, Eq, Clone)]
+#[derive(Hash, PartialEq, Eq, Clone, Copy)]
 struct ElmQualified<'a> {
-    qualification: std::borrow::Cow<'a, str>,
-    name: std::borrow::Cow<'a, str>,
+    qualification: &'a str,
+    name: &'a str,
 }
 
-fn module_origin_lookup_for_implicit_imports() -> ModuleOriginLookup {
+fn module_origin_lookup_for_implicit_imports() -> ModuleOriginLookup<'static> {
     // https://github.com/elm/core?tab=readme-ov-file#default-imports
     ModuleOriginLookup {
         unqualified: std::collections::HashMap::from(
@@ -3307,7 +3303,7 @@ fn module_origin_lookup_for_implicit_imports() -> ModuleOriginLookup {
                 ("Program", "Platform"),
                 ("Cmd", "Platform.Cmd"),
                 ("Sub", "Platform.Sub"),
-            ].map(|(from, to)| (from.to_string(), to.to_string())),
+            ],
         ),
         uniquely_qualified: std::collections::HashMap::from(
             [
@@ -3322,7 +3318,7 @@ fn module_origin_lookup_for_implicit_imports() -> ModuleOriginLookup {
                 ("Platform", "Platform"),
                 ("Cmd", "Platform.Cmd"),
                 ("Sub", "Platform.Sub"),
-            ].map(|(from, to)| (from.to_string(), to.to_string())),
+            ],
         ),
         ambiguously_qualified: std::collections::HashMap::new(),
     }
@@ -3330,23 +3326,25 @@ fn module_origin_lookup_for_implicit_imports() -> ModuleOriginLookup {
 
 fn look_up_origin_module<
     'a,
->(module_origin_lookup: &'a ModuleOriginLookup, qualification: &'a str, name: &'a str) -> &'a str {
+>(module_origin_lookup: &ModuleOriginLookup<'a>, qualification: &'a str, name: &'a str) -> &'a str {
     match match qualification {
         "" => module_origin_lookup.unqualified.get(name),
         qualification_module_or_alias => module_origin_lookup.uniquely_qualified.get(qualification_module_or_alias),
     } {
-        Some(module_origin) => module_origin.as_str(),
+        Some(module_origin) => *module_origin,
         None => match module_origin_lookup.ambiguously_qualified.get(&ElmQualified {
-            qualification: std::borrow::Cow::Borrowed(qualification),
-            name: std::borrow::Cow::Borrowed(name),
+            qualification: qualification,
+            name: name,
         }) {
-            Some(module_origin) => module_origin.as_str(),
+            Some(module_origin) => *module_origin,
             None => qualification,
         },
     }
 }
 
-fn elm_syntax_module_create_origin_lookup(state: &State, elm_syntax_module: &ElmSyntaxModule) -> ModuleOriginLookup {
+fn elm_syntax_module_create_origin_lookup<
+    'a,
+>(state: &'a State, elm_syntax_module: &'a ElmSyntaxModule) -> ModuleOriginLookup<'a> {
     let mut module_origin_lookup: ModuleOriginLookup = module_origin_lookup_for_implicit_imports();
     for documented_declaration in elm_syntax_module.declarations.iter() {
         match &documented_declaration.declaration.value {
@@ -3360,25 +3358,25 @@ fn elm_syntax_module_create_origin_lookup(state: &State, elm_syntax_module: &Elm
             } => {
                 module_origin_lookup
                     .unqualified
-                    .insert(name.value.clone(), elm_syntax_module.header.value.module_name.value.clone());
+                    .insert(&name.value, &elm_syntax_module.header.value.module_name.value);
                 module_origin_lookup
                     .unqualified
-                    .insert(variant0.name.value.clone(), elm_syntax_module.header.value.module_name.value.clone());
+                    .insert(&variant0.name.value, &elm_syntax_module.header.value.module_name.value);
                 for variant in variant1_up.iter() {
                     module_origin_lookup
                         .unqualified
-                        .insert(variant.name.value.clone(), elm_syntax_module.header.value.module_name.value.clone());
+                        .insert(&variant.name.value, &elm_syntax_module.header.value.module_name.value);
                 }
             },
             ElmSyntaxDeclaration::Operator { direction: _, operator, function: _, precedence: _ } => {
                 module_origin_lookup
                     .unqualified
-                    .insert(operator.value.clone(), elm_syntax_module.header.value.module_name.value.clone());
+                    .insert(&operator.value, &elm_syntax_module.header.value.module_name.value);
             },
             ElmSyntaxDeclaration::Port { name, type_: _ } => {
                 module_origin_lookup
                     .unqualified
-                    .insert(name.value.clone(), elm_syntax_module.header.value.module_name.value.clone());
+                    .insert(&name.value, &elm_syntax_module.header.value.module_name.value);
             },
             ElmSyntaxDeclaration
             ::TypeAlias {
@@ -3390,7 +3388,7 @@ fn elm_syntax_module_create_origin_lookup(state: &State, elm_syntax_module: &Elm
             } => {
                 module_origin_lookup
                     .unqualified
-                    .insert(name.value.clone(), elm_syntax_module.header.value.module_name.value.clone());
+                    .insert(&name.value, &elm_syntax_module.header.value.module_name.value);
             },
             ElmSyntaxDeclaration
             ::ValueOrFunction {
@@ -3401,14 +3399,12 @@ fn elm_syntax_module_create_origin_lookup(state: &State, elm_syntax_module: &Elm
                 equals_key_symbol_range: _,
                 result: _,
             } => {
-                module_origin_lookup
-                    .unqualified
-                    .insert(name.clone(), elm_syntax_module.header.value.module_name.value.clone());
+                module_origin_lookup.unqualified.insert(name, &elm_syntax_module.header.value.module_name.value);
             },
         }
     }
     for import_node in &elm_syntax_module.imports {
-        let allowed_qualification: &String = match import_node.value.alias {
+        let allowed_qualification: &str = match import_node.value.alias {
             None => &import_node.value.module_name.value,
             Some(ref import_alias) => &import_alias.name.value,
         };
@@ -3427,9 +3423,9 @@ fn elm_syntax_module_create_origin_lookup(state: &State, elm_syntax_module: &Elm
                     .into_iter()
                     .flatten() {
                     module_origin_lookup.ambiguously_qualified.insert(ElmQualified {
-                        qualification: std::borrow::Cow::Owned(allowed_qualification.clone()),
-                        name: std::borrow::Cow::Owned(imported_module_expose),
-                    }, module_origin_for_existing_qualification.clone());
+                        qualification: allowed_qualification,
+                        name: imported_module_expose,
+                    }, module_origin_for_existing_qualification);
                 }
                 let imported_module_maybe_syntax: Option<&ElmSyntaxModule> =
                     match state_file_path_for_module_name(state, &import_node.value.module_name.value) {
@@ -3444,15 +3440,15 @@ fn elm_syntax_module_create_origin_lookup(state: &State, elm_syntax_module: &Elm
                     .into_iter()
                     .flatten() {
                     module_origin_lookup.ambiguously_qualified.insert(ElmQualified {
-                        qualification: std::borrow::Cow::Owned(allowed_qualification.clone()),
-                        name: std::borrow::Cow::Owned(imported_module_expose),
-                    }, import_node.value.module_name.value.clone());
+                        qualification: allowed_qualification,
+                        name: imported_module_expose,
+                    }, &import_node.value.module_name.value);
                 }
             },
             None => {
                 module_origin_lookup
                     .uniquely_qualified
-                    .insert(allowed_qualification.clone(), import_node.value.module_name.value.clone());
+                    .insert(allowed_qualification, &import_node.value.module_name.value);
             },
         }
         match &import_node.value.exposing {
@@ -3468,10 +3464,7 @@ fn elm_syntax_module_create_origin_lookup(state: &State, elm_syntax_module: &Elm
                             } => {
                                 module_origin_lookup
                                     .unqualified
-                                    .insert(
-                                        choice_type_expose_name.value.clone(),
-                                        import_node.value.module_name.value.clone(),
-                                    );
+                                    .insert(&choice_type_expose_name.value, &import_node.value.module_name.value);
                                 let imported_module_maybe_syntax: Option<&ElmSyntaxModule> =
                                     match state_file_path_for_module_name(
                                         state,
@@ -3502,15 +3495,15 @@ fn elm_syntax_module_create_origin_lookup(state: &State, elm_syntax_module: &Elm
                                                     module_origin_lookup
                                                         .unqualified
                                                         .insert(
-                                                            imported_module_choice_type_variant0.name.value.clone(),
-                                                            import_node.value.module_name.value.clone(),
+                                                            &imported_module_choice_type_variant0.name.value,
+                                                            &import_node.value.module_name.value,
                                                         );
                                                     for imported_module_choice_type_variant in imported_module_choice_type_variant1_up {
                                                         module_origin_lookup
                                                             .unqualified
                                                             .insert(
-                                                                imported_module_choice_type_variant.name.value.clone(),
-                                                                import_node.value.module_name.value.clone(),
+                                                                &imported_module_choice_type_variant.name.value,
+                                                                &import_node.value.module_name.value,
                                                             );
                                                     }
                                                     break 'until_origin_choice_type_declaration_found
@@ -3524,17 +3517,13 @@ fn elm_syntax_module_create_origin_lookup(state: &State, elm_syntax_module: &Elm
                             ElmSyntaxExpose::Operator(symbol) => {
                                 module_origin_lookup
                                     .unqualified
-                                    .insert(symbol.clone(), import_node.value.module_name.value.clone());
+                                    .insert(symbol, &import_node.value.module_name.value);
                             },
                             ElmSyntaxExpose::Type(name) => {
-                                module_origin_lookup
-                                    .unqualified
-                                    .insert(name.clone(), import_node.value.module_name.value.clone());
+                                module_origin_lookup.unqualified.insert(name, &import_node.value.module_name.value);
                             },
                             ElmSyntaxExpose::Variable(name) => {
-                                module_origin_lookup
-                                    .unqualified
-                                    .insert(name.clone(), import_node.value.module_name.value.clone());
+                                module_origin_lookup.unqualified.insert(name, &import_node.value.module_name.value);
                             },
                         }
                     }
@@ -3543,7 +3532,7 @@ fn elm_syntax_module_create_origin_lookup(state: &State, elm_syntax_module: &Elm
                     for import_exposed_symbol in elm_syntax_module_exposed_symbols(elm_syntax_module) {
                         module_origin_lookup
                             .unqualified
-                            .insert(import_exposed_symbol, import_node.value.module_name.value.clone());
+                            .insert(import_exposed_symbol, &import_node.value.module_name.value);
                     }
                 },
             },
@@ -3552,8 +3541,8 @@ fn elm_syntax_module_create_origin_lookup(state: &State, elm_syntax_module: &Elm
     module_origin_lookup
 }
 
-fn elm_syntax_module_exposed_symbols(elm_syntax_module: &ElmSyntaxModule) -> Vec<String> {
-    let mut exposed_symbols = Vec::new();
+fn elm_syntax_module_exposed_symbols<'a>(elm_syntax_module: &'a ElmSyntaxModule) -> Vec<&'a str> {
+    let mut exposed_symbols: Vec<&str> = Vec::new();
     match elm_syntax_module.header.value.exposing.value {
         ElmSyntaxExposing::All(_) => {
             for declaration in elm_syntax_module.declarations.iter() {
@@ -3566,14 +3555,14 @@ fn elm_syntax_module_exposed_symbols(elm_syntax_module: &ElmSyntaxModule) -> Vec
                         variant0: exposed_choice_type_variant0,
                         variant1_up: exposed_choice_type_variant1_up,
                     } => {
-                        exposed_symbols.push(exposed_choice_type_name.value.clone());
-                        exposed_symbols.push(exposed_choice_type_variant0.name.value.clone());
+                        exposed_symbols.push(&exposed_choice_type_name.value);
+                        exposed_symbols.push(&exposed_choice_type_variant0.name.value);
                         for exposed_choice_type_variant in exposed_choice_type_variant1_up {
-                            exposed_symbols.push(exposed_choice_type_variant.name.value.clone());
+                            exposed_symbols.push(&exposed_choice_type_variant.name.value);
                         }
                     },
                     ElmSyntaxDeclaration::Port { name: exposed_port_name, type_: _ } => {
-                        exposed_symbols.push(exposed_port_name.value.clone());
+                        exposed_symbols.push(&exposed_port_name.value);
                     },
                     ElmSyntaxDeclaration
                     ::TypeAlias {
@@ -3583,7 +3572,7 @@ fn elm_syntax_module_exposed_symbols(elm_syntax_module: &ElmSyntaxModule) -> Vec
                         equals_key_symbol_range: _,
                         type_: _,
                     } => {
-                        exposed_symbols.push(exposed_type_alias_name.value.clone());
+                        exposed_symbols.push(&exposed_type_alias_name.value);
                     },
                     ElmSyntaxDeclaration
                     ::Operator {
@@ -3592,7 +3581,7 @@ fn elm_syntax_module_exposed_symbols(elm_syntax_module: &ElmSyntaxModule) -> Vec
                         function: _,
                         precedence: _,
                     } => {
-                        exposed_symbols.push(exposed_operator.value.clone());
+                        exposed_symbols.push(&exposed_operator.value);
                     },
                     ElmSyntaxDeclaration
                     ::ValueOrFunction {
@@ -3603,7 +3592,7 @@ fn elm_syntax_module_exposed_symbols(elm_syntax_module: &ElmSyntaxModule) -> Vec
                         equals_key_symbol_range: _,
                         result: _,
                     } => {
-                        exposed_symbols.push(exposed_variable_name.clone());
+                        exposed_symbols.push(exposed_variable_name);
                     },
                 }
             }
@@ -3612,7 +3601,7 @@ fn elm_syntax_module_exposed_symbols(elm_syntax_module: &ElmSyntaxModule) -> Vec
             for expose in exposes {
                 match &expose.value {
                     ElmSyntaxExpose::ChoiceTypeIncludingVariants { name: choice_type_expose_name, open_range: _ } => {
-                        exposed_symbols.push(choice_type_expose_name.value.clone());
+                        exposed_symbols.push(&choice_type_expose_name.value);
                         'until_origin_choice_type_declaration_found: for declaration in elm_syntax_module
                             .declarations
                             .iter() {
@@ -3624,27 +3613,26 @@ fn elm_syntax_module_exposed_symbols(elm_syntax_module: &ElmSyntaxModule) -> Vec
                                     equals_key_symbol_range: _,
                                     variant0: exposed_choice_type_variant0,
                                     variant1_up: exposed_choice_type_variant1_up,
-                                } => {
-                                    if &choice_type_expose_name.value == &exposed_choice_type_name.value {
-                                        exposed_symbols.push(exposed_choice_type_variant0.name.value.clone());
-                                        for exposed_choice_type_variant in exposed_choice_type_variant1_up {
-                                            exposed_symbols.push(exposed_choice_type_variant.name.value.clone());
-                                        }
-                                        break 'until_origin_choice_type_declaration_found
+                                } => if &choice_type_expose_name.value ==
+                                    &exposed_choice_type_name.value {
+                                    exposed_symbols.push(&exposed_choice_type_variant0.name.value);
+                                    for exposed_choice_type_variant in exposed_choice_type_variant1_up {
+                                        exposed_symbols.push(&exposed_choice_type_variant.name.value);
                                     }
+                                    break 'until_origin_choice_type_declaration_found
                                 },
                                 _ => { },
                             }
                         }
                     },
                     ElmSyntaxExpose::Operator(symbol) => {
-                        exposed_symbols.push(symbol.clone());
+                        exposed_symbols.push(symbol);
                     },
                     ElmSyntaxExpose::Type(name) => {
-                        exposed_symbols.push(name.clone());
+                        exposed_symbols.push(name);
                     },
                     ElmSyntaxExpose::Variable(name) => {
-                        exposed_symbols.push(name.clone());
+                        exposed_symbols.push(name);
                     },
                 }
             }
@@ -3751,33 +3739,35 @@ fn elm_syntax_type_to_single_line_string_into(
 }
 
 // //
-#[derive(Clone, Debug)]
-enum ElmSymbolOwned {
-    ModuleName(String),
+#[derive(Clone, Copy, Debug)]
+enum ElmSyntaxSymbol<'a> {
+    ModuleName(&'a str),
     ImportAlias {
-        module_origin: String,
-        alias_name: String,
+        module_origin: &'a str,
+        alias_name: &'a str,
     },
     VariableOrVariantOrOperator {
-        module_origin: String,
-        name: String,
+        module_origin: &'a str,
+        name: &'a str,
     },
     Type {
-        module_origin: String,
-        name: String,
+        module_origin: &'a str,
+        name: &'a str,
     },
-    // TODO add TypeVariable { scope_declaration : &ElmSyntaxDeclaration, name :
-    // String }, TODO add , TODO add local references,
+    // TODO add TypeVariable { scope_declaration: &'a ElmSyntaxDeclaration, name: &'a
+    // str, }, TODO add local references,
 }
 
-fn elm_syntax_module_find_reference_at_position(
-    state: &State,
-    elm_syntax_module: &ElmSyntaxModule,
+fn elm_syntax_module_find_reference_at_position<
+    'a,
+>(
+    state: &'a State,
+    elm_syntax_module: &'a ElmSyntaxModule,
     position: lsp_types::Position,
-) -> Option<ElmSyntaxNode<ElmSymbolOwned>> {
+) -> Option<ElmSyntaxNode<ElmSyntaxSymbol<'a>>> {
     if lsp_range_includes_position(elm_syntax_module.header.value.module_name.range, position) {
         Some(ElmSyntaxNode {
-            value: ElmSymbolOwned::ModuleName(elm_syntax_module.header.value.module_name.value.clone()),
+            value: ElmSyntaxSymbol::ModuleName(&elm_syntax_module.header.value.module_name.value),
             range: elm_syntax_module.header.value.module_name.range,
         })
     } else {
@@ -3804,7 +3794,7 @@ fn elm_syntax_module_find_reference_at_position(
                     .declarations
                     .iter()
                     .find_map(
-                        |documented_declaration| elm_syntax_declaration_find_reference_at_position(
+                        move |documented_declaration| elm_syntax_declaration_find_reference_at_position(
                             &elm_syntax_module.header.value.module_name.value,
                             &module_origin_lookup,
                             elm_syntax_node_as_ref(&documented_declaration.declaration),
@@ -3815,23 +3805,25 @@ fn elm_syntax_module_find_reference_at_position(
     }
 }
 
-fn elm_syntax_import_find_reference_at_position(
-    elm_syntax_import_node: ElmSyntaxNode<&ElmSyntaxImport>,
+fn elm_syntax_import_find_reference_at_position<
+    'a,
+>(
+    elm_syntax_import_node: ElmSyntaxNode<&'a ElmSyntaxImport>,
     position: lsp_types::Position,
-) -> Option<ElmSyntaxNode<ElmSymbolOwned>> {
+) -> Option<ElmSyntaxNode<ElmSyntaxSymbol<'a>>> {
     if !lsp_range_includes_position(elm_syntax_import_node.range, position) {
         None
     } else if lsp_range_includes_position(elm_syntax_import_node.value.module_name.range, position) {
         Some(ElmSyntaxNode {
-            value: ElmSymbolOwned::ModuleName(elm_syntax_import_node.value.module_name.value.clone()),
+            value: ElmSyntaxSymbol::ModuleName(&elm_syntax_import_node.value.module_name.value),
             range: elm_syntax_import_node.value.module_name.range,
         })
     } else if let Some(ref import_alias) = elm_syntax_import_node.value.alias &&
         lsp_range_includes_position(import_alias.name.range, position) {
         Some(ElmSyntaxNode {
-            value: ElmSymbolOwned::ImportAlias {
-                module_origin: elm_syntax_import_node.value.module_name.value.clone(),
-                alias_name: import_alias.name.value.clone(),
+            value: ElmSyntaxSymbol::ImportAlias {
+                module_origin: &elm_syntax_import_node.value.module_name.value,
+                alias_name: &import_alias.name.value,
             },
             range: elm_syntax_import_node.value.module_name.range,
         })
@@ -3850,11 +3842,13 @@ fn elm_syntax_import_find_reference_at_position(
     }
 }
 
-fn elm_syntax_exposing_from_module_find_reference_at_position(
-    elm_syntax_exposing_node: ElmSyntaxNode<&ElmSyntaxExposing>,
-    module_name: &str,
+fn elm_syntax_exposing_from_module_find_reference_at_position<
+    'a,
+>(
+    elm_syntax_exposing_node: ElmSyntaxNode<&'a ElmSyntaxExposing>,
+    module_name: &'a str,
     position: lsp_types::Position,
-) -> Option<ElmSyntaxNode<ElmSymbolOwned>> {
+) -> Option<ElmSyntaxNode<ElmSyntaxSymbol<'a>>> {
     if !lsp_range_includes_position(elm_syntax_exposing_node.range, position) {
         None
     } else {
@@ -3865,16 +3859,16 @@ fn elm_syntax_exposing_from_module_find_reference_at_position(
                 .find_map(|expose_node| if lsp_range_includes_position(expose_node.range, position) {
                     Some(match &expose_node.value {
                         ElmSyntaxExpose::ChoiceTypeIncludingVariants { name, open_range: _ } => ElmSyntaxNode {
-                            value: ElmSymbolOwned::Type {
-                                module_origin: module_name.to_string(),
-                                name: name.value.clone(),
+                            value: ElmSyntaxSymbol::Type {
+                                module_origin: module_name,
+                                name: &name.value,
                             },
                             range: expose_node.range,
                         },
                         ElmSyntaxExpose::Operator(symbol) => ElmSyntaxNode {
-                            value: ElmSymbolOwned::VariableOrVariantOrOperator {
-                                module_origin: module_name.to_string(),
-                                name: symbol.clone(),
+                            value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
+                                module_origin: module_name,
+                                name: symbol,
                             },
                             range: lsp_types::Range {
                                 start: lsp_position_add_characters(expose_node.range.start, 1),
@@ -3882,16 +3876,16 @@ fn elm_syntax_exposing_from_module_find_reference_at_position(
                             },
                         },
                         ElmSyntaxExpose::Type(name) => ElmSyntaxNode {
-                            value: ElmSymbolOwned::Type {
-                                module_origin: module_name.to_string(),
-                                name: name.clone(),
+                            value: ElmSyntaxSymbol::Type {
+                                module_origin: module_name,
+                                name: name,
                             },
                             range: expose_node.range,
                         },
                         ElmSyntaxExpose::Variable(name) => ElmSyntaxNode {
-                            value: ElmSymbolOwned::VariableOrVariantOrOperator {
-                                module_origin: module_name.to_string(),
-                                name: name.clone(),
+                            value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
+                                module_origin: module_name,
+                                name: name,
                             },
                             range: expose_node.range,
                         },
@@ -3903,12 +3897,14 @@ fn elm_syntax_exposing_from_module_find_reference_at_position(
     }
 }
 
-fn elm_syntax_declaration_find_reference_at_position(
-    origin_module: &str,
-    module_origin_lookup: &ModuleOriginLookup,
-    elm_syntax_declaration_node: ElmSyntaxNode<&ElmSyntaxDeclaration>,
+fn elm_syntax_declaration_find_reference_at_position<
+    'a,
+>(
+    origin_module: &'a str,
+    module_origin_lookup: &ModuleOriginLookup<'a>,
+    elm_syntax_declaration_node: ElmSyntaxNode<&'a ElmSyntaxDeclaration>,
     position: lsp_types::Position,
-) -> Option<ElmSyntaxNode<ElmSymbolOwned>> {
+) -> Option<ElmSyntaxNode<ElmSyntaxSymbol<'a>>> {
     if !lsp_range_includes_position(elm_syntax_declaration_node.range, position) {
         None
     } else {
@@ -3925,17 +3921,17 @@ fn elm_syntax_declaration_find_reference_at_position(
                 position,
             ) {
                 Some(ElmSyntaxNode {
-                    value: ElmSymbolOwned::Type {
-                        module_origin: origin_module.to_string(),
-                        name: name.value.clone(),
+                    value: ElmSyntaxSymbol::Type {
+                        module_origin: origin_module,
+                        name: &name.value,
                     },
                     range: name.range,
                 })
             } else if lsp_range_includes_position(variant0.name.range, position) {
                 Some(ElmSyntaxNode {
-                    value: ElmSymbolOwned::VariableOrVariantOrOperator {
-                        module_origin: origin_module.to_string(),
-                        name: variant0.name.value.clone(),
+                    value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
+                        module_origin: origin_module,
+                        name: &variant0.name.value,
                     },
                     range: variant0.name.range,
                 })
@@ -3955,9 +3951,9 @@ fn elm_syntax_declaration_find_reference_at_position(
                             .iter()
                             .find_map(|variant| if lsp_range_includes_position(variant.name.range, position) {
                                 Some(ElmSyntaxNode {
-                                    value: ElmSymbolOwned::VariableOrVariantOrOperator {
-                                        module_origin: origin_module.to_string(),
-                                        name: variant.name.value.clone(),
+                                    value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
+                                        module_origin: origin_module,
+                                        name: &variant.name.value,
                                     },
                                     range: variant.name.range,
                                 })
@@ -3986,17 +3982,17 @@ fn elm_syntax_declaration_find_reference_at_position(
                 position,
             ) {
                 Some(ElmSyntaxNode {
-                    value: ElmSymbolOwned::VariableOrVariantOrOperator {
-                        module_origin: origin_module.to_string(),
-                        name: operator.value.clone(),
+                    value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
+                        module_origin: origin_module,
+                        name: &operator.value,
                     },
                     range: operator.range,
                 })
             } else if lsp_range_includes_position(function.range, position) {
                 Some(ElmSyntaxNode {
-                    value: ElmSymbolOwned::VariableOrVariantOrOperator {
-                        module_origin: origin_module.to_string(),
-                        name: function.value.clone(),
+                    value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
+                        module_origin: origin_module,
+                        name: &function.value,
                     },
                     range: function.range,
                 })
@@ -4005,9 +4001,9 @@ fn elm_syntax_declaration_find_reference_at_position(
             },
             ElmSyntaxDeclaration::Port { name: name, type_ } => if lsp_range_includes_position(name.range, position) {
                 Some(ElmSyntaxNode {
-                    value: ElmSymbolOwned::VariableOrVariantOrOperator {
-                        module_origin: origin_module.to_string(),
-                        name: name.value.clone(),
+                    value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
+                        module_origin: origin_module,
+                        name: &name.value,
                     },
                     range: name.range,
                 })
@@ -4030,9 +4026,9 @@ fn elm_syntax_declaration_find_reference_at_position(
                 position,
             ) {
                 Some(ElmSyntaxNode {
-                    value: ElmSymbolOwned::Type {
-                        module_origin: origin_module.to_string(),
-                        name: name.value.clone(),
+                    value: ElmSyntaxSymbol::Type {
+                        module_origin: origin_module,
+                        name: &name.value,
                     },
                     range: name.range,
                 })
@@ -4056,9 +4052,9 @@ fn elm_syntax_declaration_find_reference_at_position(
                 position,
             ) {
                 Some(ElmSyntaxNode {
-                    value: ElmSymbolOwned::VariableOrVariantOrOperator {
-                        module_origin: origin_module.to_string(),
-                        name: name.clone(),
+                    value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
+                        module_origin: origin_module,
+                        name: name,
                     },
                     range: *implementation_name_range,
                 })
@@ -4067,9 +4063,9 @@ fn elm_syntax_declaration_find_reference_at_position(
                     .as_ref()
                     .and_then(|signature| if lsp_range_includes_position(signature.name.range, position) {
                         Some(ElmSyntaxNode {
-                            value: ElmSymbolOwned::VariableOrVariantOrOperator {
-                                module_origin: origin_module.to_string(),
-                                name: name.clone(),
+                            value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
+                                module_origin: origin_module,
+                                name: name,
                             },
                             range: signature.name.range,
                         })
@@ -4103,11 +4099,13 @@ fn elm_syntax_declaration_find_reference_at_position(
     }
 }
 
-fn elm_syntax_pattern_find_reference_at_position(
-    module_origin_lookup: &ModuleOriginLookup,
-    elm_syntax_pattern_node: ElmSyntaxNode<&ElmSyntaxPattern>,
+fn elm_syntax_pattern_find_reference_at_position<
+    'a,
+>(
+    module_origin_lookup: &ModuleOriginLookup<'a>,
+    elm_syntax_pattern_node: ElmSyntaxNode<&'a ElmSyntaxPattern>,
     position: lsp_types::Position,
-) -> Option<ElmSyntaxNode<ElmSymbolOwned>> {
+) -> Option<ElmSyntaxNode<ElmSyntaxSymbol<'a>>> {
     match elm_syntax_pattern_node.value {
         ElmSyntaxPattern
         ::As {
@@ -4183,13 +4181,13 @@ fn elm_syntax_pattern_find_reference_at_position(
         ElmSyntaxPattern::Variable(_) => None,
         ElmSyntaxPattern::Variant { reference, values } => if lsp_range_includes_position(reference.range, position) {
             Some(ElmSyntaxNode {
-                value: ElmSymbolOwned::VariableOrVariantOrOperator {
+                value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
                     module_origin: look_up_origin_module(
                         module_origin_lookup,
                         &reference.value.qualification,
                         &reference.value.name,
-                    ).to_string(),
-                    name: reference.value.name.clone(),
+                    ),
+                    name: &reference.value.name,
                 },
                 range: reference.range,
             })
@@ -4207,11 +4205,13 @@ fn elm_syntax_pattern_find_reference_at_position(
     }
 }
 
-fn elm_syntax_type_find_reference_at_position(
-    module_origin_lookup: &ModuleOriginLookup,
-    elm_syntax_type_node: ElmSyntaxNode<&ElmSyntaxType>,
+fn elm_syntax_type_find_reference_at_position<
+    'a,
+>(
+    module_origin_lookup: &ModuleOriginLookup<'a>,
+    elm_syntax_type_node: ElmSyntaxNode<&'a ElmSyntaxType>,
     position: lsp_types::Position,
-) -> Option<ElmSyntaxNode<ElmSymbolOwned>> {
+) -> Option<ElmSyntaxNode<ElmSyntaxSymbol<'a>>> {
     if !lsp_range_includes_position(elm_syntax_type_node.range, position) {
         None
     } else {
@@ -4221,13 +4221,13 @@ fn elm_syntax_type_find_reference_at_position(
                 position,
             ) {
                 Some(ElmSyntaxNode {
-                    value: ElmSymbolOwned::Type {
+                    value: ElmSyntaxSymbol::Type {
                         module_origin: look_up_origin_module(
                             module_origin_lookup,
                             &reference.value.qualification,
                             &reference.value.name,
-                        ).to_string(),
-                        name: reference.value.name.clone(),
+                        ),
+                        name: &reference.value.name,
                     },
                     range: reference.range,
                 })
@@ -4329,11 +4329,13 @@ fn elm_syntax_type_find_reference_at_position(
     }
 }
 
-fn elm_syntax_expression_find_reference_at_position(
-    module_origin_lookup: &ModuleOriginLookup,
-    elm_syntax_expression_node: ElmSyntaxNode<&ElmSyntaxExpression>,
+fn elm_syntax_expression_find_reference_at_position<
+    'a,
+>(
+    module_origin_lookup: &ModuleOriginLookup<'a>,
+    elm_syntax_expression_node: ElmSyntaxNode<&'a ElmSyntaxExpression>,
     position: lsp_types::Position,
-) -> Option<ElmSyntaxNode<ElmSymbolOwned>> {
+) -> Option<ElmSyntaxNode<ElmSyntaxSymbol<'a>>> {
     if !lsp_range_includes_position(elm_syntax_expression_node.range, position) {
         None
     } else {
@@ -4441,9 +4443,9 @@ fn elm_syntax_expression_find_reference_at_position(
                 position,
             ) {
                 Some(ElmSyntaxNode {
-                    value: ElmSymbolOwned::VariableOrVariantOrOperator {
-                        module_origin: look_up_origin_module(module_origin_lookup, "", &operator.value).to_string(),
-                        name: operator.value.clone(),
+                    value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
+                        module_origin: look_up_origin_module(module_origin_lookup, "", &operator.value),
+                        name: &operator.value,
                     },
                     range: operator.range,
                 })
@@ -4528,9 +4530,9 @@ fn elm_syntax_expression_find_reference_at_position(
                 position,
             ),
             ElmSyntaxExpression::OperatorFunction(operator) => Some(ElmSyntaxNode {
-                value: ElmSymbolOwned::VariableOrVariantOrOperator {
-                    module_origin: look_up_origin_module(module_origin_lookup, "", operator).to_string(),
-                    name: operator.clone(),
+                value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
+                    module_origin: look_up_origin_module(module_origin_lookup, "", operator),
+                    name: operator,
                 },
                 range: elm_syntax_expression_node.range,
             }),
@@ -4565,13 +4567,9 @@ fn elm_syntax_expression_find_reference_at_position(
                 position,
             ) {
                 Some(ElmSyntaxNode {
-                    value: ElmSymbolOwned::VariableOrVariantOrOperator {
-                        module_origin: look_up_origin_module(
-                            module_origin_lookup,
-                            "",
-                            &record_variable.value,
-                        ).to_string(),
-                        name: record_variable.value.clone(),
+                    value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
+                        module_origin: look_up_origin_module(module_origin_lookup, "", &record_variable.value),
+                        name: &record_variable.value,
                     },
                     range: elm_syntax_expression_node.range,
                 })
@@ -4593,13 +4591,13 @@ fn elm_syntax_expression_find_reference_at_position(
                 )
             },
             ElmSyntaxExpression::Reference(reference) => Some(ElmSyntaxNode {
-                value: ElmSymbolOwned::VariableOrVariantOrOperator {
+                value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
                     module_origin: look_up_origin_module(
                         module_origin_lookup,
                         &reference.qualification,
                         &reference.name,
-                    ).to_string(),
-                    name: reference.name.clone(),
+                    ),
+                    name: &reference.name,
                 },
                 range: elm_syntax_expression_node.range,
             }),
@@ -4639,11 +4637,13 @@ fn elm_syntax_expression_find_reference_at_position(
     }
 }
 
-fn elm_syntax_let_declaration_find_reference_at_position(
-    module_origin_lookup: &ModuleOriginLookup,
-    elm_syntax_let_declaration_node: ElmSyntaxNode<&ElmSyntaxLetDeclaration>,
+fn elm_syntax_let_declaration_find_reference_at_position<
+    'a,
+>(
+    module_origin_lookup: &ModuleOriginLookup<'a>,
+    elm_syntax_let_declaration_node: ElmSyntaxNode<&'a ElmSyntaxLetDeclaration>,
     position: lsp_types::Position,
-) -> Option<ElmSyntaxNode<ElmSymbolOwned>> {
+) -> Option<ElmSyntaxNode<ElmSyntaxSymbol<'a>>> {
     if !lsp_range_includes_position(elm_syntax_let_declaration_node.range, position) {
         None
     } else {
@@ -4677,9 +4677,9 @@ fn elm_syntax_let_declaration_find_reference_at_position(
                 position,
             ) {
                 Some(ElmSyntaxNode {
-                    value: ElmSymbolOwned::VariableOrVariantOrOperator {
-                        module_origin: "".to_string(),
-                        name: name.clone(),
+                    value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
+                        module_origin: "",
+                        name: name,
                     },
                     range: *implementation_name_range,
                 })
@@ -4688,9 +4688,9 @@ fn elm_syntax_let_declaration_find_reference_at_position(
                     .as_ref()
                     .and_then(|signature| if lsp_range_includes_position(signature.name.range, position) {
                         Some(ElmSyntaxNode {
-                            value: ElmSymbolOwned::VariableOrVariantOrOperator {
-                                module_origin: "".to_string(),
-                                name: name.clone(),
+                            value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
+                                module_origin: "",
+                                name: name,
                             },
                             range: signature.name.range,
                         })
