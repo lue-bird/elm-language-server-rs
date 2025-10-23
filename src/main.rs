@@ -177,10 +177,10 @@ async fn main() {
                                         .comments
                                         .iter()
                                         .find(|comment_node| comment_node.value.starts_with("{-|"));
+                                // also show list of exports maybe?
                                 Some(lsp_types::Hover {
                                     contents: lsp_types::HoverContents::Scalar(
                                         lsp_types::MarkedString::String(
-                                            // also show list of exports maybe?
                                             match maybe_module_documentation_comment {
                                                 None =>
                                                     "_module has no documentation comment_".to_string(),
@@ -207,7 +207,7 @@ async fn main() {
                                 origin_module_syntax
                                     .declarations
                                     .iter()
-                                    .find_map(|origin_module_declaration| -> Option<lsp_types::Hover> {
+                                    .find_map(|origin_module_declaration| {
                                         match &origin_module_declaration.declaration.value {
                                             ElmSyntaxDeclaration
                                             ::ChoiceType {
@@ -216,70 +216,74 @@ async fn main() {
                                                 equals_key_symbol_range: _,
                                                 variant0: origin_module_declaration_variant0,
                                                 variant1_up: origin_module_declaration_variant1_up,
-                                            } => if (&origin_module_declaration_variant0.name.value == hovered_name) ||
-                                                (origin_module_declaration_variant1_up
-                                                    .iter()
-                                                    .any(|variant| &variant.name.value == hovered_name)) {
-                                                let description =
-                                                    format!(
-                                                        "variant in\n```elm\ntype {}.{}{}\n    = {}{}{}\n```\n",
-                                                        &hovered_module_origin,
-                                                        &origin_module_declaration_name.value,
-                                                        &origin_module_declaration_parameters
+                                            } => {
+                                                let any_declared_name_matches_hovered = 
+                                                    (&origin_module_declaration_variant0.name.value == hovered_name) ||
+                                                        (origin_module_declaration_variant1_up
                                                             .iter()
-                                                            .fold(
-                                                                String::new(),
-                                                                |so_far, parameter_node| so_far + " " +
-                                                                    &parameter_node.value,
-                                                            ),
-                                                        &origin_module_declaration_variant0.name.value,
-                                                        &origin_module_declaration_variant0
-                                                            .values
-                                                            .iter()
-                                                            .fold(
-                                                                String::new(),
-                                                                |so_far, value_node| so_far + " " +
-                                                                    &elm_syntax_type_to_single_line_string(
-                                                                        &module_origin_lookup,
-                                                                        &value_node.value,
-                                                                    ),
-                                                            ),
-                                                        &origin_module_declaration_variant1_up
-                                                            .iter()
-                                                            .fold(
-                                                                String::new(),
-                                                                |so_far, variant| so_far + "\n    | " +
-                                                                    &variant.name.value +
-                                                                    &variant
-                                                                        .values
-                                                                        .iter()
-                                                                        .fold(
-                                                                            String::new(),
-                                                                            |so_far, value_node| so_far + " " +
-                                                                                &elm_syntax_type_to_single_line_string(
-                                                                                    &module_origin_lookup,
-                                                                                    &value_node.value,
-                                                                                ),
+                                                            .any(|variant| &variant.name.value == hovered_name));
+                                                if any_declared_name_matches_hovered {
+                                                    let description =
+                                                        format!(
+                                                            "variant in\n```elm\ntype {}.{}{}\n    = {}{}{}\n```\n",
+                                                            &hovered_module_origin,
+                                                            &origin_module_declaration_name.value,
+                                                            &origin_module_declaration_parameters
+                                                                .iter()
+                                                                .fold(
+                                                                    String::new(),
+                                                                    |so_far, parameter_node| so_far + " " +
+                                                                        &parameter_node.value,
+                                                                ),
+                                                            &origin_module_declaration_variant0.name.value,
+                                                            &origin_module_declaration_variant0
+                                                                .values
+                                                                .iter()
+                                                                .fold(
+                                                                    String::new(),
+                                                                    |so_far, value_node| so_far + " " +
+                                                                        &elm_syntax_type_to_single_line_string(
+                                                                            &module_origin_lookup,
+                                                                            &value_node.value,
                                                                         ),
-                                                            ),
-                                                    );
-                                                Some(lsp_types::Hover {
-                                                    contents: lsp_types::HoverContents::Markup(
-                                                        lsp_types::MarkupContent {
-                                                            kind: lsp_types::MarkupKind::Markdown,
-                                                            value: match origin_module_declaration.documentation {
-                                                                None => description,
-                                                                Some(ref documentation) => description + "-----\n" +
-                                                                    &documentation_comment_to_markdown(
-                                                                        &documentation.value,
-                                                                    ),
+                                                                ),
+                                                            &origin_module_declaration_variant1_up
+                                                                .iter()
+                                                                .fold(
+                                                                    String::new(),
+                                                                    |so_far, variant| so_far + "\n    | " +
+                                                                        &variant.name.value +
+                                                                        &variant
+                                                                            .values
+                                                                            .iter()
+                                                                            .fold(
+                                                                                String::new(),
+                                                                                |so_far, value_node| so_far + " " +
+                                                                                    &elm_syntax_type_to_single_line_string(
+                                                                                        &module_origin_lookup,
+                                                                                        &value_node.value,
+                                                                                    ),
+                                                                            ),
+                                                                ),
+                                                        );
+                                                    Some(lsp_types::Hover {
+                                                        contents: lsp_types::HoverContents::Markup(
+                                                            lsp_types::MarkupContent {
+                                                                kind: lsp_types::MarkupKind::Markdown,
+                                                                value: match origin_module_declaration.documentation {
+                                                                    None => description,
+                                                                    Some(ref documentation) => description + "-----\n" +
+                                                                        &documentation_comment_to_markdown(
+                                                                            &documentation.value,
+                                                                        ),
+                                                                },
                                                             },
-                                                        },
-                                                    ),
-                                                    range: Some(hovered_reference.range),
-                                                })
-                                            } else {
-                                                None
+                                                        ),
+                                                        range: Some(hovered_reference.range),
+                                                    })
+                                                } else {
+                                                    None
+                                                }
                                             },
                                             ElmSyntaxDeclaration
                                             ::Operator {
@@ -710,7 +714,6 @@ async fn main() {
                             )?;
                         match goto_reference.value {
                             ElmSyntaxSymbol::TypeVariable { scope_declaration, name: goto_type_variable_name } => {
-                                // TODO if
                                 match scope_declaration {
                                     ElmSyntaxDeclaration
                                     ::ChoiceType {
@@ -985,46 +988,58 @@ async fn main() {
                 Ok(maybe_declaration_range.map(|location| lsp_types::GotoDefinitionResponse::Scalar(location)))
             }
         });
-        router.request::<lsp_types::request::PrepareRenameRequest, _>(|state, prepare_rename_arguments| {
-            let prepared =
-                prepare_rename_arguments.text_document.uri.to_file_path().ok().and_then(|prepare_rename_file_path| {
-                    let prepare_rename_module_syntax =
-                        state.parsed_modules.get(&prepare_rename_file_path).and_then(|m| m.syntax.as_ref())?;
-                    let prepare_rename_symbol: ElmSyntaxNode<ElmSyntaxSymbol> =
-                        elm_syntax_module_find_reference_at_position(
-                            state,
-                            prepare_rename_module_syntax,
-                            prepare_rename_arguments.position,
-                        )?;
-                    let placeholder = match prepare_rename_symbol.value {
-                        ElmSyntaxSymbol::ImportAlias { module_origin: _, alias_name: alias_name } => {
-                            alias_name
-                        },
-                        ElmSyntaxSymbol::ModuleName(module_name) => {
-                            module_name
-                        },
-                        ElmSyntaxSymbol::VariableOrVariantOrOperator { module_origin: _, name } => {
-                            name
-                        },
-                        ElmSyntaxSymbol::Type { module_origin: _, name } => {
-                            name
-                        },
-                        ElmSyntaxSymbol::TypeVariable { scope_declaration: _, name } => name,
-                    };
-                    Some(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
-                        range: lsp_types::Range {
-                            start:
-                                // if qualified, only the actual, unqualified name is relevant
-                                lsp_position_add_characters(prepare_rename_symbol.range.end, -(placeholder.len() as i32)),
-                            end: prepare_rename_symbol.range.end,
-                        },
-                        placeholder: placeholder.to_string(),
-                    })
-                });
-            async move {
-                Ok(prepared)
-            }
-        });
+        router.request::<lsp_types::request::PrepareRenameRequest, _>(
+            |state, prepare_rename_arguments| {
+                let prepared = prepare_rename_arguments
+                    .text_document
+                    .uri
+                    .to_file_path()
+                    .ok()
+                    .and_then(|prepare_rename_file_path| {
+                        let prepare_rename_module_syntax = state
+                            .parsed_modules
+                            .get(&prepare_rename_file_path)
+                            .and_then(|m| m.syntax.as_ref())?;
+                        let prepare_rename_symbol: ElmSyntaxNode<ElmSyntaxSymbol> =
+                            elm_syntax_module_find_reference_at_position(
+                                state,
+                                prepare_rename_module_syntax,
+                                prepare_rename_arguments.position,
+                            )?;
+                        let placeholder = match prepare_rename_symbol.value {
+                            ElmSyntaxSymbol::ImportAlias {
+                                module_origin: _,
+                                alias_name: alias_name,
+                            } => alias_name,
+                            ElmSyntaxSymbol::ModuleName(module_name) => module_name,
+                            ElmSyntaxSymbol::VariableOrVariantOrOperator {
+                                module_origin: _,
+                                name,
+                            } => name,
+                            ElmSyntaxSymbol::Type {
+                                module_origin: _,
+                                name,
+                            } => name,
+                            ElmSyntaxSymbol::TypeVariable {
+                                scope_declaration: _,
+                                name,
+                            } => name,
+                        };
+                        // if qualified, only the actual, unqualified name is relevant
+                        Some(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
+                            range: lsp_types::Range {
+                                start: lsp_position_add_characters(
+                                    prepare_rename_symbol.range.end,
+                                    -(placeholder.len() as i32),
+                                ),
+                                end: prepare_rename_symbol.range.end,
+                            },
+                            placeholder: placeholder.to_string(),
+                        })
+                    });
+                async move { Ok(prepared) }
+            },
+        );
         router.request::<lsp_types::request::Rename, _>(|state, rename_arguments| {
             let maybe_rename_edits = rename_arguments
                 .text_document_position
@@ -1335,8 +1350,8 @@ async fn main() {
                         .content_changes
                         .into_iter()
                         .find_map(|change| {
+                            // range: None, range_length: None marks full new document content
                             match (change.range, change.range_length) {
-                                // marks full new document content
                                 (None, None) => Some(change.text),
                                 (Some(_), _) | (_, Some(_)) => None,
                             }
@@ -1569,12 +1584,16 @@ fn state_file_path_for_module_name(state: &State, module_name: &str) -> Option<s
 }
 
 fn lsp_range_includes_position(range: lsp_types::Range, position: lsp_types::Position) -> bool {
-    // position >= range.start
-    ((position.line > range.start.line) ||
-        ((position.line == range.start.line) && (position.character >= range.start.character))) &&
+    (
+        // position >= range.start
+        (position.line > range.start.line)
+            || ((position.line == range.start.line)
+                && (position.character >= range.start.character))
+    ) && (
         // position <= range.end
-        ((position.line < range.end.line) ||
-            ((position.line == range.end.line) && (position.character <= range.end.character)))
+        (position.line < range.end.line)
+            || ((position.line == range.end.line) && (position.character <= range.end.character))
+    )
 }
 
 fn lsp_position_add_characters(
@@ -1671,8 +1690,7 @@ fn list_elm_files_in_source_directory_at_path_into(
     Ok(())
 }
 
-// // // below persistent rust types and conversions to and from temporary elm
-// types
+// // // below persistent rust types and conversions to and from temporary elm types
 #[derive(Clone, Debug, PartialEq)]
 enum ElmSyntaxType {
     Construct {
@@ -5014,31 +5032,31 @@ fn elm_syntax_expression_find_reference_at_position<'a>(
                 parameter0,
                 parameter1_up,
                 result,
-            } => elm_syntax_pattern_find_reference_at_position(
-                module_origin_lookup,
-                elm_syntax_node_as_ref(parameter0),
-                position,
-            )
-            .or_else(|| {
-                parameter1_up.iter().find_map(|parameter| {
-                    elm_syntax_pattern_find_reference_at_position(
-                        module_origin_lookup,
-                        elm_syntax_node_as_ref(parameter),
-                        position,
-                    )
+            } => {
+                elm_syntax_pattern_find_reference_at_position(
+                    module_origin_lookup,
+                    elm_syntax_node_as_ref(parameter0),
+                    position,
+                )
+                .or_else(|| {
+                    parameter1_up.iter().find_map(|parameter| {
+                        elm_syntax_pattern_find_reference_at_position(
+                            module_origin_lookup,
+                            elm_syntax_node_as_ref(parameter),
+                            position,
+                        )
+                    })
                 })
-            })
-            .or_else(
-                // TODO add let-declaration-introduced bindings
-                || {
+                .or_else(|| {
+                    // TODO add pattern-introduced bindings
                     elm_syntax_expression_find_reference_at_position(
                         module_origin_lookup,
                         scope_declaration,
                         elm_syntax_node_unbox(result),
                         position,
                     )
-                },
-            ),
+                })
+            }
             ElmSyntaxExpression::LetIn {
                 declaration0,
                 declaration1_up,
@@ -5060,17 +5078,15 @@ fn elm_syntax_expression_find_reference_at_position<'a>(
                     )
                 })
             })
-            .or_else(
+            .or_else(|| {
                 // TODO add let-declaration-introduced bindings
-                || {
-                    elm_syntax_expression_find_reference_at_position(
-                        module_origin_lookup,
-                        scope_declaration,
-                        elm_syntax_node_unbox(result),
-                        position,
-                    )
-                },
-            ),
+                elm_syntax_expression_find_reference_at_position(
+                    module_origin_lookup,
+                    scope_declaration,
+                    elm_syntax_node_unbox(result),
+                    position,
+                )
+            }),
             ElmSyntaxExpression::List(elements) => elements.iter().find_map(|element| {
                 elm_syntax_expression_find_reference_at_position(
                     module_origin_lookup,
