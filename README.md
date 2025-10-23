@@ -1,4 +1,4 @@
-> Status: **do not use 💩**
+> Status: **not ready for use but trying it on small projects probably works**
 
 A minimal LSP language server for [elm](https://elm-lang.org/), written in rust and elm (which itself gets transpiled into rust when building).
 
@@ -20,8 +20,7 @@ A minimal LSP language server for [elm](https://elm-lang.org/), written in rust 
 - inline GLSL blocks
 
 ## TODO
-- hover and go to definition for let declared variables (and pattern introduced bindings?)
-- rename type variable, let declared variable and patten-introduced binding
+- hover and go to definition and rename for let declared variables and pattern-introduced bindings
 - autocomplete
 - incremental reparsing
 - partial parsing
