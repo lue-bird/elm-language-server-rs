@@ -417,73 +417,6 @@ effectWhereClause =
         nameUppercaseNode
 
 
-whereBlock : Parser (WithComments { command : Maybe (ElmSyntax.Node String), subscription : Maybe (ElmSyntax.Node String) })
-whereBlock =
-    ParserFast.symbolFollowedBy "{"
-        (ParserFast.map4
-            (\commentsBeforeHead head commentsAfterHead tail ->
-                let
-                    pairs : List ( String, ElmSyntax.Node String )
-                    pairs =
-                        head.syntax :: tail.syntax
-                in
-                { comments =
-                    commentsBeforeHead
-                        |> ropePrependTo head.comments
-                        |> ropePrependTo commentsAfterHead
-                        |> ropePrependTo tail.comments
-                , syntax =
-                    { command =
-                        pairs
-                            |> listFirstWhere
-                                (\( fnName, _ ) ->
-                                    case fnName of
-                                        "command" ->
-                                            True
-
-                                        _ ->
-                                            False
-                                )
-                            |> Maybe.map Tuple.second
-                    , subscription =
-                        pairs
-                            |> listFirstWhere
-                                (\( fnName, _ ) ->
-                                    case fnName of
-                                        "subscription" ->
-                                            True
-
-                                        _ ->
-                                            False
-                                )
-                            |> Maybe.map Tuple.second
-                    }
-                }
-            )
-            whitespaceAndComments
-            effectWhereClause
-            whitespaceAndComments
-            (manyWithComments
-                (ParserFast.symbolFollowedBy ","
-                    (ParserFast.map3
-                        (\commentsBefore v commentsAfter ->
-                            { comments =
-                                commentsBefore
-                                    |> ropePrependTo v.comments
-                                    |> ropePrependTo commentsAfter
-                            , syntax = v.syntax
-                            }
-                        )
-                        whitespaceAndComments
-                        effectWhereClause
-                        whitespaceAndComments
-                    )
-                )
-            )
-        )
-        |> ParserFast.followedBySymbol "}"
-
-
 listFirstWhere : (a -> Bool) -> List a -> Maybe a
 listFirstWhere predicate list =
     case list of
@@ -498,16 +431,95 @@ listFirstWhere predicate list =
                 listFirstWhere predicate xs
 
 
-effectWhereClauses : Parser (WithComments { command : Maybe (ElmSyntax.Node String), subscription : Maybe (ElmSyntax.Node String) })
-effectWhereClauses =
-    ParserFast.map2
-        (\commentsBefore whereResult ->
-            { comments = commentsBefore |> ropePrependTo whereResult.comments
-            , syntax = whereResult.syntax
+effectWhereClauses :
+    Parser
+        (WithComments
+            { whereKeywordRange : TextGrid.Range
+            , command : Maybe (ElmSyntax.Node String)
+            , subscription : Maybe (ElmSyntax.Node String)
             }
         )
-        (ParserFast.keywordFollowedBy "where" whitespaceAndComments)
-        whereBlock
+effectWhereClauses =
+    ParserFast.keywordFollowedBy "where"
+        (ParserFast.map3WithStartLocation
+            (\whereKeywordEndLocation commentsBeforeCurly commentsBeforeEntries entriesResult ->
+                { comments =
+                    commentsBeforeCurly
+                        |> ropePrependTo commentsBeforeEntries
+                        |> ropePrependTo entriesResult.comments
+                , syntax =
+                    { command = entriesResult.syntax.command
+                    , subscription = entriesResult.syntax.subscription
+                    , whereKeywordRange =
+                        { start = whereKeywordEndLocation |> locationAddColumn -5
+                        , end = whereKeywordEndLocation
+                        }
+                    }
+                }
+            )
+            whitespaceAndComments
+            (ParserFast.symbolFollowedBy "{" whitespaceAndComments)
+            (ParserFast.map3
+                (\entry0 commentsAfterHead entry1Up ->
+                    let
+                        entries : List ( String, ElmSyntax.Node String )
+                        entries =
+                            entry0.syntax :: entry1Up.syntax
+                    in
+                    { comments =
+                        entry0.comments
+                            |> ropePrependTo commentsAfterHead
+                            |> ropePrependTo entry1Up.comments
+                    , syntax =
+                        { command =
+                            entries
+                                |> listFirstWhere
+                                    (\( fnName, _ ) ->
+                                        case fnName of
+                                            "command" ->
+                                                True
+
+                                            _ ->
+                                                False
+                                    )
+                                |> Maybe.map Tuple.second
+                        , subscription =
+                            entries
+                                |> listFirstWhere
+                                    (\( fnName, _ ) ->
+                                        case fnName of
+                                            "subscription" ->
+                                                True
+
+                                            _ ->
+                                                False
+                                    )
+                                |> Maybe.map Tuple.second
+                        }
+                    }
+                )
+                effectWhereClause
+                whitespaceAndComments
+                (manyWithComments
+                    (ParserFast.symbolFollowedBy ","
+                        (ParserFast.map3
+                            (\commentsBefore v commentsAfter ->
+                                { comments =
+                                    commentsBefore
+                                        |> ropePrependTo v.comments
+                                        |> ropePrependTo commentsAfter
+                                , syntax = v.syntax
+                                }
+                            )
+                            whitespaceAndComments
+                            effectWhereClause
+                            whitespaceAndComments
+                        )
+                    )
+                )
+            )
+            |> ParserFast.followedBySymbol "}"
+        )
 
 
 effectModuleHeader : Parser (WithComments (ElmSyntax.Node ElmSyntax.ModuleHeader))
@@ -533,6 +545,7 @@ effectModuleHeader =
                         Just
                             (ElmSyntax.ModuleHeaderSpecificEffect
                                 { moduleKeywordRange = moduleKeywordRange
+                                , whereKeywordRange = whereClauses.syntax.whereKeywordRange
                                 , command = whereClauses.syntax.command
                                 , subscription = whereClauses.syntax.subscription
                                 }

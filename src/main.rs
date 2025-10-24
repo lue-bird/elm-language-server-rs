@@ -1970,6 +1970,7 @@ enum ElmSyntaxPattern {
 enum ElmSyntaxModuleHeaderSpecific {
     Effect {
         module_keyword_range: lsp_types::Range,
+        where_keyword_range: lsp_types::Range,
         command: Option<ElmSyntaxNode<String>>,
         subscription: Option<ElmSyntaxNode<String>>,
     },
@@ -2316,6 +2317,7 @@ fn elm_syntax_module_header_specific_to_persistent(
             module_keyword_range: text_grid_range_to_lsp_range(
                 effect_module_header_specific.module_keyword_range,
             ),
+            where_keyword_range: text_grid_range_to_lsp_range(effect_module_header_specific.where_keyword_range),
             command: effect_module_header_specific
                 .command
                 .map(elm_syntax_node_string_to_persistent),
@@ -6204,6 +6206,7 @@ fn elm_syntax_highlight_module_header_into(
         Some(ref module_header_specific) => match module_header_specific {
             ElmSyntaxModuleHeaderSpecific::Effect {
                 module_keyword_range,
+                where_keyword_range,
                 command: maybe_command,
                 subscription: maybe_subscription,
             } => {
@@ -6224,6 +6227,10 @@ fn elm_syntax_highlight_module_header_into(
                 highlighted_so_far.push(ElmSyntaxNode {
                     range: elm_syntax_module_header_node.value.module_name.range,
                     value: ElmSyntaxHighlightKind::ModuleNameOrAlias,
+                });
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: *where_keyword_range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
                 });
                 match maybe_command {
                     None => {}

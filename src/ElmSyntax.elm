@@ -37,6 +37,7 @@ type ModuleHeaderSpecific
     = ModuleHeaderSpecificPort { moduleKeywordRange : TextGrid.Range }
     | ModuleHeaderSpecificEffect
         { moduleKeywordRange : TextGrid.Range
+        , whereKeywordRange : TextGrid.Range
         , command : Maybe (Node String)
         , subscription : Maybe (Node String)
         }
