@@ -99,7 +99,6 @@ async fn main() {
                                     elm::elm_parser_lenient_module_(&parse_allocator),
                                     elm::StringString::One(&file_content),
                                 ).map(elm_syntax_module_to_persistent),
-                               
                             });
                         }
                         state
@@ -2225,49 +2224,9 @@ fn elm_syntax_module_to_persistent(elm_syntax_module: elm::ElmSyntaxModule) -> E
         imports: elm_syntax_module
             .imports
             .into_iter()
-            .map(
-                |import_node: elm::GeneratedRangeValue<
-                    elm::GeneratedEndStart<
-                        elm::GeneratedColumnLine<i64, i64>,
-                        elm::GeneratedColumnLine<i64, i64>,
-                    >,
-                    elm::GeneratedAliasExposing0ModuleName<
-                        Option<
-                            elm::GeneratedAsKeywordRangeName<
-                                elm::GeneratedEndStart<
-                                    elm::GeneratedColumnLine<i64, i64>,
-                                    elm::GeneratedColumnLine<i64, i64>,
-                                >,
-                                elm::GeneratedRangeValue<
-                                    elm::GeneratedEndStart<
-                                        elm::GeneratedColumnLine<i64, i64>,
-                                        elm::GeneratedColumnLine<i64, i64>,
-                                    >,
-                                    elm::StringString<'_>,
-                                >,
-                            >,
-                        >,
-                        Option<
-                            elm::GeneratedRangeValue<
-                                elm::GeneratedEndStart<
-                                    elm::GeneratedColumnLine<i64, i64>,
-                                    elm::GeneratedColumnLine<i64, i64>,
-                                >,
-                                elm::ElmSyntaxExposing<'_>,
-                            >,
-                        >,
-                        elm::GeneratedRangeValue<
-                            elm::GeneratedEndStart<
-                                elm::GeneratedColumnLine<i64, i64>,
-                                elm::GeneratedColumnLine<i64, i64>,
-                            >,
-                            elm::StringString<'_>,
-                        >,
-                    >,
-                >| {
-                    elm_syntax_node_to_persistent(import_node, elm_syntax_import_to_persistent)
-                },
-            )
+            .map(|import_node| {
+                elm_syntax_node_to_persistent(import_node, elm_syntax_import_to_persistent)
+            })
             .collect::<Vec<_>>(),
         comments: elm_syntax_module
             .comments
@@ -2317,7 +2276,9 @@ fn elm_syntax_module_header_specific_to_persistent(
             module_keyword_range: text_grid_range_to_lsp_range(
                 effect_module_header_specific.module_keyword_range,
             ),
-            where_keyword_range: text_grid_range_to_lsp_range(effect_module_header_specific.where_keyword_range),
+            where_keyword_range: text_grid_range_to_lsp_range(
+                effect_module_header_specific.where_keyword_range,
+            ),
             command: effect_module_header_specific
                 .command
                 .map(elm_syntax_node_string_to_persistent),
