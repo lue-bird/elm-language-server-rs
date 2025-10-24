@@ -1,11 +1,10 @@
-module Exports exposing (elmJsonToProjectAndDependencySourceDirectories, locationDelta, packageSourceDirectoryPath)
+module Exports exposing (elmJsonToProjectAndDependencySourceDirectories, packageSourceDirectoryPath)
 
 import Elm.Constraint
 import Elm.Package
 import Elm.Project
 import Elm.Version
 import Json.Decode
-import TextGrid
 
 
 elmJsonToProjectAndDependencySourceDirectories :
@@ -78,17 +77,3 @@ packageSourceDirectoryPath info =
         ++ "/"
         ++ info.packageVersion
         ++ "/src"
-
-
-{-| The resulting column is the 0-based char offset after the resulting number of lines
--}
-locationDelta :
-    TextGrid.Location
-    -> TextGrid.Location
-    -> { line : Int, column : Int }
-locationDelta earlier later =
-    if earlier.line == later.line then
-        { line = 0, column = later.column - earlier.column }
-
-    else
-        { line = later.line - earlier.line, column = later.column - 1 }
