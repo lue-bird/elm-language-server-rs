@@ -4189,7 +4189,7 @@ composablePattern : Parser (WithComments (ElmSyntax.Node ElmSyntax.Pattern))
 composablePattern =
     ParserFast.oneOf9
         varPattern
-        qualifiedPatternWithConsumeValues
+        variantPatternWithConsumeValues
         allPattern
         patternUnitOrParenthesizedOrTupleOrTriple
         recordPattern
@@ -4239,8 +4239,8 @@ stringPattern =
         )
 
 
-qualifiedPatternWithConsumeValues : Parser (WithComments (ElmSyntax.Node ElmSyntax.Pattern))
-qualifiedPatternWithConsumeValues =
+variantPatternWithConsumeValues : Parser (WithComments (ElmSyntax.Node ElmSyntax.Pattern))
+variantPatternWithConsumeValues =
     ParserFast.map3
         (\referenceNode afterStartName valuesReverse ->
             let
@@ -4259,7 +4259,7 @@ qualifiedPatternWithConsumeValues =
                 , value =
                     ElmSyntax.PatternVariant
                         { reference = referenceNode
-                        , values = valuesReverse.syntax
+                        , values = valuesReverse.syntax |> List.reverse
                         }
                 }
             }
