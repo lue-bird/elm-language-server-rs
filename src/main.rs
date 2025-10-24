@@ -10,7 +10,6 @@ struct State {
 }
 
 struct ModuleState {
-    source: String,
     syntax: Option<ElmSyntaxModule>,
 }
 
@@ -100,7 +99,7 @@ async fn main() {
                                     elm::elm_parser_lenient_module_(&parse_allocator),
                                     elm::StringString::One(&file_content),
                                 ).map(elm_syntax_module_to_persistent),
-                                source: file_content,
+                               
                             });
                         }
                         state
@@ -1525,7 +1524,6 @@ async fn main() {
                                         elm::StringString::One(&file_content),
                                     )
                                     .map(elm_syntax_module_to_persistent),
-                                    source: file_content,
                                 },
                             );
                         }
@@ -1553,7 +1551,6 @@ async fn main() {
                                         elm::StringString::One(&file_content),
                                     )
                                     .map(elm_syntax_module_to_persistent),
-                                    source: file_content,
                                 },
                             );
                         }
