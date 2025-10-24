@@ -1437,33 +1437,45 @@ async fn main() {
                     .ok()
                     .and_then(|file_path| state.parsed_modules.get(&file_path).and_then(|m| m.syntax.as_ref()))
                     .and_then(|module_syntax| {
-                        let highlight_allocator = bumpalo::Bump::new();
+                        let mut highlighting = Vec::new();
+                        elm_syntax_highlight_module_into(
+                            &mut highlighting,
+                            module_syntax,
+                        );
                         Some(lsp_types::SemanticTokensResult::Tokens(lsp_types::SemanticTokens {
                             result_id: None,
-                            data: elm::elm_syntax_highlight_for(
-                                &highlight_allocator,
-                                elm_syntax_module_from_persistent(&highlight_allocator, &module_syntax),
-                            )
+                            data: highlighting
                                 .into_iter()
-                                .scan(elm::TextGridLocation {
-                                    line: 1,
-                                    column: 1,
+                                .scan(lsp_types::Position {
+                                    line: 0,
+                                    character: 0,
                                 }, |previous_start_location, segment| {
-                                    let delta =
-                                        elm::exports_location_delta(*previous_start_location, segment.range.start);
-                                    let token = lsp_types::SemanticToken {
-                                        delta_line: delta.line as u32,
-                                        delta_start: delta.column as u32,
-                                        length: (segment.range.end.column - segment.range.start.column) as u32,
-                                        token_type: semantic_token_type_to_id(
-                                            elm_syntax_highlight_syntax_kind_to_lsp_semantic_token_type(
-                                                segment.syntax_kind,
-                                            ),
-                                        ),
-                                        token_modifiers_bitset: 0_u32,
-                                    };
-                                    segment.range.start.clone_into(previous_start_location);
-                                    Some(token)
+                                    if (segment.range.end.line != segment.range.start.line) ||
+                                        (segment.range.end.character < segment.range.start.character) {
+                                        eprintln!("bad highlight token range: must be single-line and positive {:?}", segment.range);
+                                        return None
+                                    }
+                                    match lsp_position_positive_delta(*previous_start_location, segment.range.start) {
+                                        Err(error) => {
+                                            eprintln!("bad highlight token order {error}");
+                                            None
+                                        }
+                                        Ok(delta) => {
+                                            let token = lsp_types::SemanticToken {
+                                                delta_line: delta.line as u32,
+                                                delta_start: delta.character as u32,
+                                                length: (segment.range.end.character - segment.range.start.character) as u32,
+                                                token_type: semantic_token_type_to_id(
+                                                    elm_syntax_highlight_kind_to_lsp_semantic_token_type(
+                                                        segment.value,
+                                                    ),
+                                                ),
+                                                token_modifiers_bitset: 0_u32,
+                                            };
+                                            segment.range.start.clone_into(previous_start_location);
+                                            Some(token)
+                                        }
+                                    }
                                 })
                                 .collect::<Vec<lsp_types::SemanticToken>>(),
                         }))
@@ -1740,6 +1752,57 @@ fn lsp_range_includes_position(range: lsp_types::Range, position: lsp_types::Pos
     )
 }
 
+fn lsp_position_compare(a: lsp_types::Position, b: lsp_types::Position) -> std::cmp::Ordering {
+    if a.line < b.line {
+        std::cmp::Ordering::Less
+    } else if a.line > b.line {
+        std::cmp::Ordering::Greater
+    } else
+    // (a.line == b.line)
+    {
+        std::cmp::Ord::cmp(&a, &b)
+    }
+}
+struct PositionDelta {
+    line: u32,
+    character: u32,
+}
+fn lsp_position_positive_delta(
+    before: lsp_types::Position,
+    after: lsp_types::Position,
+) -> Result<PositionDelta, String> {
+    if before.line > after.line {
+        Err(format!(
+            "before line > after line (before: {}, after {})",
+            lsp_position_to_string(before),
+            lsp_position_to_string(after)
+        ))
+    } else if before.line == after.line {
+        if before.character > after.character {
+            Err(format!(
+                "before character > after character (before: {}, after {})",
+                lsp_position_to_string(before),
+                lsp_position_to_string(after)
+            ))
+        } else {
+            Ok(PositionDelta {
+                line: 0,
+                character: after.character - before.character,
+            })
+        }
+    } else
+    // before.line < after.line
+    {
+        Ok(PositionDelta {
+            line: after.line - before.line,
+            character: after.character,
+        })
+    }
+}
+fn lsp_position_to_string(lsp_position: lsp_types::Position) -> String {
+    format!("{}:{}", lsp_position.line, lsp_position.character)
+}
+
 fn lsp_position_add_characters(
     position: lsp_types::Position,
     additional_character_count: i32,
@@ -1750,28 +1813,21 @@ fn lsp_position_add_characters(
     }
 }
 
-fn elm_syntax_highlight_syntax_kind_to_lsp_semantic_token_type(
-    elm_syntax_highlight_syntax_kind: elm::ElmSyntaxHighlightSyntaxKind,
+fn elm_syntax_highlight_kind_to_lsp_semantic_token_type(
+    elm_syntax_highlight_kind: ElmSyntaxHighlightKind,
 ) -> lsp_types::SemanticTokenType {
-    match elm_syntax_highlight_syntax_kind {
-        elm::ElmSyntaxHighlightSyntaxKind::Flow => lsp_types::SemanticTokenType::KEYWORD,
-        elm::ElmSyntaxHighlightSyntaxKind::KeySymbol => lsp_types::SemanticTokenType::KEYWORD,
-        elm::ElmSyntaxHighlightSyntaxKind::Field => lsp_types::SemanticTokenType::PROPERTY,
-        elm::ElmSyntaxHighlightSyntaxKind::ModuleNameOrAlias => {
-            lsp_types::SemanticTokenType::NAMESPACE
-        }
-        elm::ElmSyntaxHighlightSyntaxKind::Type => lsp_types::SemanticTokenType::TYPE,
-        elm::ElmSyntaxHighlightSyntaxKind::Variable => lsp_types::SemanticTokenType::VARIABLE,
-        elm::ElmSyntaxHighlightSyntaxKind::Variant => lsp_types::SemanticTokenType::ENUM_MEMBER,
-        elm::ElmSyntaxHighlightSyntaxKind::VariableDeclaration => {
-            lsp_types::SemanticTokenType::FUNCTION
-        }
-        elm::ElmSyntaxHighlightSyntaxKind::Comment => lsp_types::SemanticTokenType::COMMENT,
-        elm::ElmSyntaxHighlightSyntaxKind::Number => lsp_types::SemanticTokenType::NUMBER,
-        elm::ElmSyntaxHighlightSyntaxKind::String => lsp_types::SemanticTokenType::STRING,
-        elm::ElmSyntaxHighlightSyntaxKind::TypeVariable => {
-            lsp_types::SemanticTokenType::TYPE_PARAMETER
-        }
+    match elm_syntax_highlight_kind {
+        ElmSyntaxHighlightKind::KeySymbol => lsp_types::SemanticTokenType::KEYWORD,
+        ElmSyntaxHighlightKind::Field => lsp_types::SemanticTokenType::PROPERTY,
+        ElmSyntaxHighlightKind::ModuleNameOrAlias => lsp_types::SemanticTokenType::NAMESPACE,
+        ElmSyntaxHighlightKind::Type => lsp_types::SemanticTokenType::TYPE,
+        ElmSyntaxHighlightKind::Variable => lsp_types::SemanticTokenType::VARIABLE,
+        ElmSyntaxHighlightKind::Variant => lsp_types::SemanticTokenType::ENUM_MEMBER,
+        ElmSyntaxHighlightKind::VariableDeclaration => lsp_types::SemanticTokenType::FUNCTION,
+        ElmSyntaxHighlightKind::Comment => lsp_types::SemanticTokenType::COMMENT,
+        ElmSyntaxHighlightKind::Number => lsp_types::SemanticTokenType::NUMBER,
+        ElmSyntaxHighlightKind::String => lsp_types::SemanticTokenType::STRING,
+        ElmSyntaxHighlightKind::TypeVariable => lsp_types::SemanticTokenType::TYPE_PARAMETER,
     }
 }
 
@@ -6952,6 +7008,1223 @@ fn elm_syntax_pattern_bindings_into<'a>(
                     elm_syntax_node_as_ref(value_node),
                 );
             }
+        }
+    }
+}
+
+enum ElmSyntaxHighlightKind {
+    Type,
+    TypeVariable,
+    Variant,
+    Field,
+    ModuleNameOrAlias,
+    Variable,
+    Comment,
+    String,
+    Number,
+    VariableDeclaration,
+    KeySymbol,
+}
+
+fn elm_syntax_highlight_module_into(
+    highlighted_so_far: &mut Vec<ElmSyntaxNode<ElmSyntaxHighlightKind>>,
+    elm_syntax_module: &ElmSyntaxModule,
+) {
+    elm_syntax_highlight_module_header_into(
+        highlighted_so_far,
+        elm_syntax_node_as_ref(&elm_syntax_module.header),
+    );
+    for import_node in elm_syntax_module.imports.iter() {
+        elm_syntax_highlight_import_into(highlighted_so_far, elm_syntax_node_as_ref(import_node));
+    }
+    for documented_declaration in elm_syntax_module.declarations.iter() {
+        match documented_declaration.documentation {
+            None => {}
+            Some(ref documentation_node) => {
+                elm_syntax_highlight_comment_into(
+                    highlighted_so_far,
+                    elm_syntax_node_as_ref(documentation_node),
+                );
+            }
+        }
+        elm_syntax_highlight_declaration_into(
+            highlighted_so_far,
+            elm_syntax_node_as_ref(&documented_declaration.declaration),
+        );
+    }
+    // Inserting many comments in the middle can get expensive (having so many comments to make it matter will be rare).
+    // A possible solution (when comment count exceeds other syntax by some factor) is just pushing all comments an sorting the whole thing at once.
+    // Feels like overkill, though so I'll hold on on this until issues are opened :)
+    for comment_node in elm_syntax_module.comments.iter() {
+        elm_syntax_highlight_comment_into(highlighted_so_far, elm_syntax_node_as_ref(comment_node));
+    }
+}
+
+fn elm_syntax_highlight_module_header_into(
+    highlighted_so_far: &mut Vec<ElmSyntaxNode<ElmSyntaxHighlightKind>>,
+    elm_syntax_module_header_node: ElmSyntaxNode<&ElmSyntaxModuleHeader>,
+) {
+    match elm_syntax_module_header_node.value.specific {
+        None => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: lsp_types::Range {
+                    start: elm_syntax_module_header_node.range.start,
+                    end: lsp_position_add_characters(elm_syntax_module_header_node.range.start, 6),
+                },
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: elm_syntax_module_header_node.value.module_name.range,
+                value: ElmSyntaxHighlightKind::ModuleNameOrAlias,
+            });
+            elm_syntax_highlight_exposing_into(
+                highlighted_so_far,
+                elm_syntax_node_as_ref(&elm_syntax_module_header_node.value.exposing),
+            );
+        }
+        Some(ref module_header_specific) => match module_header_specific {
+            ElmSyntaxModuleHeaderSpecific::Effect {
+                module_keyword_range,
+                command: maybe_command,
+                subscription: maybe_subscription,
+            } => {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: lsp_types::Range {
+                        start: elm_syntax_module_header_node.range.start,
+                        end: lsp_position_add_characters(
+                            elm_syntax_module_header_node.range.start,
+                            6,
+                        ),
+                    },
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: *module_keyword_range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: elm_syntax_module_header_node.value.module_name.range,
+                    value: ElmSyntaxHighlightKind::ModuleNameOrAlias,
+                });
+                match maybe_command {
+                    None => {}
+                    Some(command_node) => {
+                        highlighted_so_far.push(ElmSyntaxNode {
+                            range: command_node.range,
+                            value: ElmSyntaxHighlightKind::VariableDeclaration,
+                        });
+                    }
+                }
+                match maybe_subscription {
+                    None => {}
+                    Some(subscription_node) => {
+                        highlighted_so_far.push(ElmSyntaxNode {
+                            range: subscription_node.range,
+                            value: ElmSyntaxHighlightKind::VariableDeclaration,
+                        });
+                    }
+                }
+                elm_syntax_highlight_exposing_into(
+                    highlighted_so_far,
+                    elm_syntax_node_as_ref(&elm_syntax_module_header_node.value.exposing),
+                );
+            }
+            ElmSyntaxModuleHeaderSpecific::Port {
+                module_keyword_range,
+            } => {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: lsp_types::Range {
+                        start: elm_syntax_module_header_node.range.start,
+                        end: lsp_position_add_characters(
+                            elm_syntax_module_header_node.range.start,
+                            4,
+                        ),
+                    },
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: *module_keyword_range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: elm_syntax_module_header_node.value.module_name.range,
+                    value: ElmSyntaxHighlightKind::ModuleNameOrAlias,
+                });
+                elm_syntax_highlight_exposing_into(
+                    highlighted_so_far,
+                    elm_syntax_node_as_ref(&elm_syntax_module_header_node.value.exposing),
+                );
+            }
+        },
+    }
+}
+
+fn elm_syntax_highlight_comment_into(
+    highlighted_so_far: &mut Vec<ElmSyntaxNode<ElmSyntaxHighlightKind>>,
+    elm_syntax_comment_node: ElmSyntaxNode<&String>,
+) {
+    let insert_index = highlighted_so_far
+        .binary_search_by(|token| {
+            lsp_position_compare(token.range.start, elm_syntax_comment_node.range.start)
+        })
+        .unwrap_or_else(|i| i);
+    let tokens_to_insert =
+        elm_syntax_comment_node
+            .value
+            .lines()
+            .enumerate()
+            .map(|(inner_line, inner_line_str)| {
+                let line = elm_syntax_comment_node.range.start.line + (inner_line as u32);
+                ElmSyntaxNode {
+                    range: if inner_line == 0 {
+                        lsp_types::Range {
+                            start: elm_syntax_comment_node.range.start,
+                            end: lsp_position_add_characters(
+                                elm_syntax_comment_node.range.start,
+                                inner_line_str.len() as i32,
+                            ),
+                        }
+                    } else {
+                        lsp_types::Range {
+                            start: lsp_types::Position {
+                                line: line,
+                                character: 0,
+                            },
+                            end: if line == elm_syntax_comment_node.range.end.line {
+                                elm_syntax_comment_node.range.end
+                            } else {
+                                lsp_types::Position {
+                                    line: line,
+                                    character: inner_line_str.len() as u32,
+                                }
+                            },
+                        }
+                    },
+                    value: ElmSyntaxHighlightKind::Comment,
+                }
+            });
+    highlighted_so_far.splice(insert_index..insert_index, tokens_to_insert);
+}
+
+fn elm_syntax_highlight_import_into(
+    highlighted_so_far: &mut Vec<ElmSyntaxNode<ElmSyntaxHighlightKind>>,
+    elm_syntax_import_node: ElmSyntaxNode<&ElmSyntaxImport>,
+) {
+    highlighted_so_far.push(ElmSyntaxNode {
+        range: lsp_types::Range {
+            start: elm_syntax_import_node.range.start,
+            end: lsp_position_add_characters(elm_syntax_import_node.range.start, 6),
+        },
+        value: ElmSyntaxHighlightKind::KeySymbol,
+    });
+    highlighted_so_far.push(ElmSyntaxNode {
+        range: elm_syntax_import_node.value.module_name.range,
+        value: ElmSyntaxHighlightKind::ModuleNameOrAlias,
+    });
+    match elm_syntax_import_node.value.alias {
+        None => {}
+        Some(ref alias_node) => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: alias_node.as_keyword_range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: alias_node.name.range,
+                value: ElmSyntaxHighlightKind::ModuleNameOrAlias,
+            });
+        }
+    }
+    match elm_syntax_import_node.value.exposing {
+        None => {}
+        Some(ref exposing_node) => {
+            elm_syntax_highlight_exposing_into(
+                highlighted_so_far,
+                elm_syntax_node_as_ref(exposing_node),
+            );
+        }
+    }
+}
+
+fn elm_syntax_highlight_exposing_into(
+    highlighted_so_far: &mut Vec<ElmSyntaxNode<ElmSyntaxHighlightKind>>,
+    elm_syntax_exposing_node: ElmSyntaxNode<&ElmSyntaxExposing>,
+) {
+    highlighted_so_far.push(ElmSyntaxNode {
+        range: lsp_types::Range {
+            start: elm_syntax_exposing_node.range.start,
+            end: lsp_position_add_characters(elm_syntax_exposing_node.range.start, 8),
+        },
+        value: ElmSyntaxHighlightKind::KeySymbol,
+    });
+    match elm_syntax_exposing_node.value {
+        ElmSyntaxExposing::All(ellipsis_range) => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: *ellipsis_range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+        }
+        ElmSyntaxExposing::Explicit(exposes) => {
+            for expose_node in exposes {
+                match &expose_node.value {
+                    ElmSyntaxExpose::ChoiceTypeIncludingVariants {
+                        name: type_name_node,
+                        open_range,
+                    } => {
+                        highlighted_so_far.push(ElmSyntaxNode {
+                            range: type_name_node.range,
+                            value: ElmSyntaxHighlightKind::Type,
+                        });
+                        highlighted_so_far.push(ElmSyntaxNode {
+                            range: *open_range,
+                            value: ElmSyntaxHighlightKind::Variant,
+                        });
+                    }
+                    ElmSyntaxExpose::Operator(_) => {
+                        highlighted_so_far.push(ElmSyntaxNode {
+                            range: lsp_types::Range {
+                                start: lsp_position_add_characters(expose_node.range.start, 1),
+                                end: lsp_position_add_characters(expose_node.range.end, -1),
+                            },
+                            value: ElmSyntaxHighlightKind::KeySymbol,
+                        });
+                    }
+                    ElmSyntaxExpose::Type(_) => {
+                        highlighted_so_far.push(ElmSyntaxNode {
+                            range: expose_node.range,
+                            value: ElmSyntaxHighlightKind::Type,
+                        });
+                    }
+                    ElmSyntaxExpose::Variable(_) => {
+                        highlighted_so_far.push(ElmSyntaxNode {
+                            range: expose_node.range,
+                            value: ElmSyntaxHighlightKind::VariableDeclaration,
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn elm_syntax_highlight_declaration_into(
+    highlighted_so_far: &mut Vec<ElmSyntaxNode<ElmSyntaxHighlightKind>>,
+    elm_syntax_declaration_node: ElmSyntaxNode<&ElmSyntaxDeclaration>,
+) {
+    match elm_syntax_declaration_node.value {
+        ElmSyntaxDeclaration::ValueOrFunction {
+            name: _,
+            signature: maybe_signature,
+            implementation_name_range,
+            parameters,
+            equals_key_symbol_range,
+            result,
+        } => {
+            match maybe_signature {
+                None => {}
+                Some(signature) => {
+                    highlighted_so_far.push(ElmSyntaxNode {
+                        range: signature.name.range,
+                        value: ElmSyntaxHighlightKind::VariableDeclaration,
+                    });
+                    elm_syntax_highlight_type_into(
+                        highlighted_so_far,
+                        elm_syntax_node_as_ref(&signature.type_1),
+                    );
+                }
+            }
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: *implementation_name_range,
+                value: ElmSyntaxHighlightKind::VariableDeclaration,
+            });
+            for parameter_node in parameters {
+                elm_syntax_highlight_pattern_into(
+                    highlighted_so_far,
+                    elm_syntax_node_as_ref(parameter_node),
+                );
+            }
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: *equals_key_symbol_range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            elm_syntax_highlight_expression_into(
+                highlighted_so_far,
+                elm_syntax_node_as_ref(result),
+            );
+        }
+        ElmSyntaxDeclaration::ChoiceType {
+            name,
+            parameters,
+            equals_key_symbol_range,
+            variant0,
+            variant1_up,
+        } => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: lsp_types::Range {
+                    start: elm_syntax_declaration_node.range.start,
+                    end: lsp_position_add_characters(elm_syntax_declaration_node.range.start, 4),
+                },
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: name.range,
+                value: ElmSyntaxHighlightKind::Type,
+            });
+            for parameter_name_node in parameters {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: parameter_name_node.range,
+                    value: ElmSyntaxHighlightKind::TypeVariable,
+                });
+            }
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: *equals_key_symbol_range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: variant0.name.range,
+                value: ElmSyntaxHighlightKind::Variant,
+            });
+            for variant0_value_node in variant0.values.iter() {
+                elm_syntax_highlight_type_into(
+                    highlighted_so_far,
+                    elm_syntax_node_as_ref(variant0_value_node),
+                );
+            }
+            for variant in variant1_up {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: variant.or_key_symbol_range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: variant.name.range,
+                    value: ElmSyntaxHighlightKind::Variant,
+                });
+                for variant_value_node in variant.values.iter() {
+                    elm_syntax_highlight_type_into(
+                        highlighted_so_far,
+                        elm_syntax_node_as_ref(variant_value_node),
+                    );
+                }
+            }
+        }
+        ElmSyntaxDeclaration::Operator {
+            direction,
+            operator: operator_node,
+            function: function_name_node,
+            precedence: precedence_node,
+        } => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: lsp_types::Range {
+                    start: elm_syntax_declaration_node.range.start,
+                    end: lsp_position_add_characters(elm_syntax_declaration_node.range.start, 5),
+                },
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: direction.range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: precedence_node.range,
+                value: ElmSyntaxHighlightKind::Number,
+            });
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: lsp_types::Range {
+                    start: lsp_position_add_characters(operator_node.range.start, 1),
+                    end: lsp_position_add_characters(operator_node.range.end, -1),
+                },
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: function_name_node.range,
+                value: ElmSyntaxHighlightKind::VariableDeclaration,
+            });
+        }
+        ElmSyntaxDeclaration::Port {
+            name: name_node,
+            type_,
+        } => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: lsp_types::Range {
+                    start: elm_syntax_declaration_node.range.start,
+                    end: lsp_position_add_characters(elm_syntax_declaration_node.range.start, 4),
+                },
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: name_node.range,
+                value: ElmSyntaxHighlightKind::VariableDeclaration,
+            });
+            elm_syntax_highlight_type_into(highlighted_so_far, elm_syntax_node_as_ref(type_));
+        }
+        ElmSyntaxDeclaration::TypeAlias {
+            alias_keyword_range,
+            name,
+            parameters,
+            equals_key_symbol_range,
+            type_,
+        } => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: lsp_types::Range {
+                    start: elm_syntax_declaration_node.range.start,
+                    end: lsp_position_add_characters(elm_syntax_declaration_node.range.start, 4),
+                },
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: *alias_keyword_range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: name.range,
+                value: ElmSyntaxHighlightKind::Type,
+            });
+            for parameter_name_node in parameters {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: parameter_name_node.range,
+                    value: ElmSyntaxHighlightKind::TypeVariable,
+                });
+            }
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: *equals_key_symbol_range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            elm_syntax_highlight_type_into(highlighted_so_far, elm_syntax_node_as_ref(type_));
+        }
+    }
+}
+
+fn elm_syntax_highlight_qualified_into(
+    highlighted_so_far: &mut Vec<ElmSyntaxNode<ElmSyntaxHighlightKind>>,
+    qualified_node: ElmSyntaxNode<&elm::GeneratedNameQualification<String, String>>,
+    kind: ElmSyntaxHighlightKind,
+) {
+    if qualified_node.value.qualification.is_empty() {
+        highlighted_so_far.push(ElmSyntaxNode {
+            range: qualified_node.range,
+            value: kind,
+        })
+    } else {
+        let name_start_position = lsp_position_add_characters(
+            qualified_node.range.end,
+            -(qualified_node.value.name.len() as i32),
+        );
+        highlighted_so_far.push(ElmSyntaxNode {
+            range: lsp_types::Range {
+                start: qualified_node.range.start,
+                end: name_start_position,
+            },
+            value: ElmSyntaxHighlightKind::ModuleNameOrAlias,
+        });
+        highlighted_so_far.push(ElmSyntaxNode {
+            range: lsp_types::Range {
+                start: name_start_position,
+                end: qualified_node.range.end,
+            },
+            value: kind,
+        });
+    }
+}
+fn elm_syntax_highlight_pattern_into(
+    highlighted_so_far: &mut Vec<ElmSyntaxNode<ElmSyntaxHighlightKind>>,
+    elm_syntax_pattern_node: ElmSyntaxNode<&ElmSyntaxPattern>,
+) {
+    match elm_syntax_pattern_node.value {
+        ElmSyntaxPattern::As {
+            pattern: alias_pattern_node,
+            as_keyword_range,
+            variable: variable_node,
+        } => {
+            elm_syntax_highlight_pattern_into(
+                highlighted_so_far,
+                elm_syntax_node_unbox(alias_pattern_node),
+            );
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: *as_keyword_range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: variable_node.range,
+                value: ElmSyntaxHighlightKind::Variable,
+            });
+        }
+        ElmSyntaxPattern::Char(_) => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: lsp_types::Range {
+                    start: lsp_position_add_characters(elm_syntax_pattern_node.range.start, 1),
+                    end: lsp_position_add_characters(elm_syntax_pattern_node.range.end, -1),
+                },
+                value: ElmSyntaxHighlightKind::String,
+            });
+        }
+        ElmSyntaxPattern::Ignored => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: elm_syntax_pattern_node.range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+        }
+        ElmSyntaxPattern::Int { .. } => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: elm_syntax_pattern_node.range,
+                value: ElmSyntaxHighlightKind::Number,
+            });
+        }
+        ElmSyntaxPattern::ListCons {
+            head,
+            cons_key_symbol,
+            tail,
+        } => {
+            elm_syntax_highlight_pattern_into(highlighted_so_far, elm_syntax_node_unbox(head));
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: *cons_key_symbol,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            elm_syntax_highlight_pattern_into(highlighted_so_far, elm_syntax_node_unbox(tail));
+        }
+        ElmSyntaxPattern::ListExact(elements) => {
+            for element_node in elements {
+                elm_syntax_highlight_pattern_into(
+                    highlighted_so_far,
+                    elm_syntax_node_as_ref(element_node),
+                );
+            }
+        }
+        ElmSyntaxPattern::Parenthesized(in_parens) => {
+            elm_syntax_highlight_pattern_into(highlighted_so_far, elm_syntax_node_unbox(in_parens));
+        }
+        ElmSyntaxPattern::Record(field_names) => {
+            for field_name_node in field_names {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: field_name_node.range,
+                    value: ElmSyntaxHighlightKind::Variable,
+                });
+            }
+        }
+        ElmSyntaxPattern::String {
+            content: _,
+            quoting_style,
+        } => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: match quoting_style {
+                    elm::ElmSyntaxStringQuotingStyle::StringSingleQuoted => lsp_types::Range {
+                        start: lsp_position_add_characters(elm_syntax_pattern_node.range.start, 1),
+                        end: lsp_position_add_characters(elm_syntax_pattern_node.range.end, -1),
+                    },
+                    elm::ElmSyntaxStringQuotingStyle::StringTripleQuoted => lsp_types::Range {
+                        start: lsp_position_add_characters(elm_syntax_pattern_node.range.start, 3),
+                        end: lsp_position_add_characters(elm_syntax_pattern_node.range.end, -3),
+                    },
+                },
+                value: ElmSyntaxHighlightKind::String,
+            });
+        }
+        ElmSyntaxPattern::Triple {
+            part0,
+            part1,
+            part2,
+        } => {
+            elm_syntax_highlight_pattern_into(highlighted_so_far, elm_syntax_node_unbox(part0));
+            elm_syntax_highlight_pattern_into(highlighted_so_far, elm_syntax_node_unbox(part1));
+            elm_syntax_highlight_pattern_into(highlighted_so_far, elm_syntax_node_unbox(part2));
+        }
+        ElmSyntaxPattern::Tuple { part0, part1 } => {
+            elm_syntax_highlight_pattern_into(highlighted_so_far, elm_syntax_node_unbox(part0));
+            elm_syntax_highlight_pattern_into(highlighted_so_far, elm_syntax_node_unbox(part1));
+        }
+        ElmSyntaxPattern::Unit => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: elm_syntax_pattern_node.range,
+                value: ElmSyntaxHighlightKind::Variant,
+            });
+        }
+        ElmSyntaxPattern::Variable(_) => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: elm_syntax_pattern_node.range,
+                value: ElmSyntaxHighlightKind::Variable,
+            });
+        }
+        ElmSyntaxPattern::Variant { reference, values } => {
+            elm_syntax_highlight_qualified_into(
+                highlighted_so_far,
+                elm_syntax_node_as_ref(reference),
+                ElmSyntaxHighlightKind::Variant,
+            );
+            for value_node in values {
+                elm_syntax_highlight_pattern_into(
+                    highlighted_so_far,
+                    elm_syntax_node_as_ref(value_node),
+                );
+            }
+        }
+    }
+}
+fn elm_syntax_highlight_type_into(
+    highlighted_so_far: &mut Vec<ElmSyntaxNode<ElmSyntaxHighlightKind>>,
+    elm_syntax_type_node: ElmSyntaxNode<&ElmSyntaxType>,
+) {
+    match elm_syntax_type_node.value {
+        ElmSyntaxType::Construct {
+            reference,
+            arguments,
+        } => {
+            elm_syntax_highlight_qualified_into(
+                highlighted_so_far,
+                elm_syntax_node_as_ref(reference),
+                ElmSyntaxHighlightKind::Type,
+            );
+            for argument_node in arguments {
+                elm_syntax_highlight_type_into(
+                    highlighted_so_far,
+                    elm_syntax_node_as_ref(argument_node),
+                );
+            }
+        }
+        ElmSyntaxType::Function {
+            input,
+            arrow_key_symbol_range,
+            output,
+        } => {
+            elm_syntax_highlight_type_into(highlighted_so_far, elm_syntax_node_unbox(input));
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: *arrow_key_symbol_range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            elm_syntax_highlight_type_into(highlighted_so_far, elm_syntax_node_unbox(output));
+        }
+        ElmSyntaxType::Parenthesized(in_parens) => {
+            elm_syntax_highlight_type_into(highlighted_so_far, elm_syntax_node_unbox(in_parens));
+        }
+        ElmSyntaxType::Record(fields) => {
+            for field in fields {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: field.name.range,
+                    value: ElmSyntaxHighlightKind::Field,
+                });
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: field.colon_key_symbol_range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+                elm_syntax_highlight_type_into(
+                    highlighted_so_far,
+                    elm_syntax_node_as_ref(&field.value),
+                );
+            }
+        }
+        ElmSyntaxType::RecordExtension {
+            record_variable,
+            bar_key_symbol_range,
+            field0,
+            field1_up,
+        } => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: record_variable.range,
+                value: ElmSyntaxHighlightKind::TypeVariable,
+            });
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: *bar_key_symbol_range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: field0.name.range,
+                value: ElmSyntaxHighlightKind::Field,
+            });
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: field0.colon_key_symbol_range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            elm_syntax_highlight_type_into(
+                highlighted_so_far,
+                elm_syntax_node_unbox(&field0.value),
+            );
+            for field in field1_up {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: field.name.range,
+                    value: ElmSyntaxHighlightKind::Field,
+                });
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: field.colon_key_symbol_range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+                elm_syntax_highlight_type_into(
+                    highlighted_so_far,
+                    elm_syntax_node_as_ref(&field.value),
+                );
+            }
+        }
+        ElmSyntaxType::Triple {
+            part0,
+            part1,
+            part2,
+        } => {
+            elm_syntax_highlight_type_into(highlighted_so_far, elm_syntax_node_unbox(part0));
+            elm_syntax_highlight_type_into(highlighted_so_far, elm_syntax_node_unbox(part1));
+            elm_syntax_highlight_type_into(highlighted_so_far, elm_syntax_node_unbox(part2));
+        }
+        ElmSyntaxType::Tuple { part0, part1 } => {
+            elm_syntax_highlight_type_into(highlighted_so_far, elm_syntax_node_unbox(part0));
+            elm_syntax_highlight_type_into(highlighted_so_far, elm_syntax_node_unbox(part1));
+        }
+        ElmSyntaxType::Unit => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: elm_syntax_type_node.range,
+                value: ElmSyntaxHighlightKind::Type,
+            });
+        }
+        ElmSyntaxType::Variable(_) => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: elm_syntax_type_node.range,
+                value: ElmSyntaxHighlightKind::TypeVariable,
+            });
+        }
+    }
+}
+
+fn elm_syntax_highlight_expression_into(
+    highlighted_so_far: &mut Vec<ElmSyntaxNode<ElmSyntaxHighlightKind>>,
+    elm_syntax_expression_node: ElmSyntaxNode<&ElmSyntaxExpression>,
+) {
+    match elm_syntax_expression_node.value {
+        ElmSyntaxExpression::Call {
+            called,
+            argument0,
+            argument1_up,
+        } => {
+            elm_syntax_highlight_expression_into(highlighted_so_far, elm_syntax_node_unbox(called));
+            elm_syntax_highlight_expression_into(
+                highlighted_so_far,
+                elm_syntax_node_unbox(argument0),
+            );
+            for argument_node in argument1_up {
+                elm_syntax_highlight_expression_into(
+                    highlighted_so_far,
+                    elm_syntax_node_as_ref(argument_node),
+                );
+            }
+        }
+        ElmSyntaxExpression::CaseOf {
+            matched,
+            of_keyword_range,
+            case0,
+            case1_up,
+        } => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: lsp_types::Range {
+                    start: elm_syntax_expression_node.range.start,
+                    end: lsp_position_add_characters(elm_syntax_expression_node.range.start, 4),
+                },
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            elm_syntax_highlight_expression_into(
+                highlighted_so_far,
+                elm_syntax_node_unbox(matched),
+            );
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: *of_keyword_range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            elm_syntax_highlight_pattern_into(
+                highlighted_so_far,
+                elm_syntax_node_as_ref(&case0.pattern),
+            );
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: case0.arrow_key_symbol_range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            elm_syntax_highlight_expression_into(
+                highlighted_so_far,
+                elm_syntax_node_unbox(&case0.result),
+            );
+            for case in case1_up {
+                elm_syntax_highlight_pattern_into(
+                    highlighted_so_far,
+                    elm_syntax_node_as_ref(&case.pattern),
+                );
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: case.arrow_key_symbol_range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+                elm_syntax_highlight_expression_into(
+                    highlighted_so_far,
+                    elm_syntax_node_as_ref(&case.result),
+                );
+            }
+        }
+        ElmSyntaxExpression::Char(_) => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: lsp_types::Range {
+                    start: lsp_position_add_characters(elm_syntax_expression_node.range.start, 1),
+                    end: lsp_position_add_characters(elm_syntax_expression_node.range.end, -1),
+                },
+                value: ElmSyntaxHighlightKind::String,
+            });
+        }
+        ElmSyntaxExpression::Float(_) => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: elm_syntax_expression_node.range,
+                value: ElmSyntaxHighlightKind::Number,
+            });
+        }
+        ElmSyntaxExpression::IfThenElse {
+            condition,
+            then_keyword_range,
+            on_true,
+            else_keyword_range,
+            on_false,
+        } => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: lsp_types::Range {
+                    start: elm_syntax_expression_node.range.start,
+                    end: lsp_position_add_characters(elm_syntax_expression_node.range.start, 2),
+                },
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            elm_syntax_highlight_expression_into(
+                highlighted_so_far,
+                elm_syntax_node_unbox(condition),
+            );
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: *then_keyword_range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            elm_syntax_highlight_expression_into(
+                highlighted_so_far,
+                elm_syntax_node_unbox(on_true),
+            );
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: *else_keyword_range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            elm_syntax_highlight_expression_into(
+                highlighted_so_far,
+                elm_syntax_node_unbox(on_false),
+            );
+        }
+        ElmSyntaxExpression::InfixOperation {
+            left,
+            operator: operator_node,
+            right,
+        } => {
+            elm_syntax_highlight_expression_into(highlighted_so_far, elm_syntax_node_unbox(left));
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: operator_node.range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            elm_syntax_highlight_expression_into(highlighted_so_far, elm_syntax_node_unbox(right));
+        }
+        ElmSyntaxExpression::Integer { .. } => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: elm_syntax_expression_node.range,
+                value: ElmSyntaxHighlightKind::Number,
+            });
+        }
+        ElmSyntaxExpression::Lambda {
+            parameter0,
+            parameter1_up,
+            arrow_key_symbol_range,
+            result,
+        } => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: lsp_types::Range {
+                    start: elm_syntax_expression_node.range.start,
+                    end: lsp_position_add_characters(elm_syntax_expression_node.range.start, 1),
+                },
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            elm_syntax_highlight_pattern_into(
+                highlighted_so_far,
+                elm_syntax_node_as_ref(parameter0),
+            );
+            for parameter_node in parameter1_up {
+                elm_syntax_highlight_pattern_into(
+                    highlighted_so_far,
+                    elm_syntax_node_as_ref(parameter_node),
+                );
+            }
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: *arrow_key_symbol_range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            elm_syntax_highlight_expression_into(highlighted_so_far, elm_syntax_node_unbox(result));
+        }
+        ElmSyntaxExpression::LetIn {
+            declaration0,
+            declaration1_up,
+            in_keyword_range,
+            result,
+        } => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: lsp_types::Range {
+                    start: elm_syntax_expression_node.range.start,
+                    end: lsp_position_add_characters(elm_syntax_expression_node.range.start, 3),
+                },
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            elm_syntax_highlight_let_declaration_into(
+                highlighted_so_far,
+                elm_syntax_node_unbox(declaration0),
+            );
+            for let_declaration_node in declaration1_up {
+                elm_syntax_highlight_let_declaration_into(
+                    highlighted_so_far,
+                    elm_syntax_node_as_ref(let_declaration_node),
+                );
+            }
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: *in_keyword_range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            elm_syntax_highlight_expression_into(highlighted_so_far, elm_syntax_node_unbox(result));
+        }
+        ElmSyntaxExpression::List(elements) => {
+            for element_node in elements {
+                elm_syntax_highlight_expression_into(
+                    highlighted_so_far,
+                    elm_syntax_node_as_ref(element_node),
+                );
+            }
+        }
+        ElmSyntaxExpression::Negation(in_negation) => {
+            elm_syntax_highlight_expression_into(
+                highlighted_so_far,
+                elm_syntax_node_unbox(in_negation),
+            );
+        }
+        ElmSyntaxExpression::OperatorFunction(_) => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: lsp_types::Range {
+                    start: lsp_position_add_characters(elm_syntax_expression_node.range.start, 1),
+                    end: lsp_position_add_characters(elm_syntax_expression_node.range.end, -1),
+                },
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+        }
+        ElmSyntaxExpression::Parenthesized(in_parens) => {
+            elm_syntax_highlight_expression_into(
+                highlighted_so_far,
+                elm_syntax_node_unbox(in_parens),
+            );
+        }
+        ElmSyntaxExpression::Record(fields) => {
+            for field in fields {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: field.name.range,
+                    value: ElmSyntaxHighlightKind::Field,
+                });
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: field.equals_key_symbol_range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+                elm_syntax_highlight_expression_into(
+                    highlighted_so_far,
+                    elm_syntax_node_as_ref(&field.value),
+                );
+            }
+        }
+        ElmSyntaxExpression::RecordAccess {
+            record: record_node,
+            field: field_name_node,
+        } => {
+            elm_syntax_highlight_expression_into(
+                highlighted_so_far,
+                elm_syntax_node_unbox(record_node),
+            );
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: lsp_types::Range {
+                    start: record_node.range.end,
+                    end: field_name_node.range.start,
+                },
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: field_name_node.range,
+                value: ElmSyntaxHighlightKind::Field,
+            });
+        }
+        ElmSyntaxExpression::RecordAccessFunction(_) => {
+            let field_name_start_position =
+                lsp_position_add_characters(elm_syntax_expression_node.range.start, 1);
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: lsp_types::Range {
+                    start: elm_syntax_expression_node.range.start,
+                    end: field_name_start_position,
+                },
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: lsp_types::Range {
+                    start: field_name_start_position,
+                    end: elm_syntax_expression_node.range.end,
+                },
+                value: ElmSyntaxHighlightKind::Field,
+            });
+        }
+        ElmSyntaxExpression::RecordUpdate {
+            record_variable,
+            bar_key_symbol_range,
+            field0,
+            field1_up,
+        } => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: record_variable.range,
+                value: ElmSyntaxHighlightKind::Variable,
+            });
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: *bar_key_symbol_range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: field0.name.range,
+                value: ElmSyntaxHighlightKind::Field,
+            });
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: field0.equals_key_symbol_range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            elm_syntax_highlight_expression_into(
+                highlighted_so_far,
+                elm_syntax_node_unbox(&field0.value),
+            );
+            for field in field1_up {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: field.name.range,
+                    value: ElmSyntaxHighlightKind::Field,
+                });
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: field.equals_key_symbol_range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+                elm_syntax_highlight_expression_into(
+                    highlighted_so_far,
+                    elm_syntax_node_as_ref(&field.value),
+                );
+            }
+        }
+        ElmSyntaxExpression::Reference(reference) => {
+            elm_syntax_highlight_qualified_into(
+                highlighted_so_far,
+                ElmSyntaxNode {
+                    range: elm_syntax_expression_node.range,
+                    value: reference,
+                },
+                if reference
+                    .name
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_uppercase())
+                {
+                    ElmSyntaxHighlightKind::Variant
+                } else {
+                    ElmSyntaxHighlightKind::Variable
+                },
+            );
+        }
+        ElmSyntaxExpression::String {
+            content: _,
+            quoting_style,
+        } => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: match quoting_style {
+                    elm::ElmSyntaxStringQuotingStyle::StringSingleQuoted => lsp_types::Range {
+                        start: lsp_position_add_characters(
+                            elm_syntax_expression_node.range.start,
+                            1,
+                        ),
+                        end: lsp_position_add_characters(elm_syntax_expression_node.range.end, -1),
+                    },
+                    elm::ElmSyntaxStringQuotingStyle::StringTripleQuoted => lsp_types::Range {
+                        start: lsp_position_add_characters(
+                            elm_syntax_expression_node.range.start,
+                            3,
+                        ),
+                        end: lsp_position_add_characters(elm_syntax_expression_node.range.end, -3),
+                    },
+                },
+                value: ElmSyntaxHighlightKind::String,
+            });
+        }
+        ElmSyntaxExpression::Triple {
+            part0,
+            part1,
+            part2,
+        } => {
+            elm_syntax_highlight_expression_into(highlighted_so_far, elm_syntax_node_unbox(part0));
+            elm_syntax_highlight_expression_into(highlighted_so_far, elm_syntax_node_unbox(part1));
+            elm_syntax_highlight_expression_into(highlighted_so_far, elm_syntax_node_unbox(part2));
+        }
+        ElmSyntaxExpression::Tuple { part0, part1 } => {
+            elm_syntax_highlight_expression_into(highlighted_so_far, elm_syntax_node_unbox(part0));
+            elm_syntax_highlight_expression_into(highlighted_so_far, elm_syntax_node_unbox(part1));
+        }
+        ElmSyntaxExpression::Unit => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: elm_syntax_expression_node.range,
+                value: ElmSyntaxHighlightKind::Variant,
+            });
+        }
+    }
+}
+
+fn elm_syntax_highlight_let_declaration_into(
+    highlighted_so_far: &mut Vec<ElmSyntaxNode<ElmSyntaxHighlightKind>>,
+    elm_syntax_let_declaration_node: ElmSyntaxNode<&ElmSyntaxLetDeclaration>,
+) {
+    match elm_syntax_let_declaration_node.value {
+        ElmSyntaxLetDeclaration::Destructuring {
+            pattern: destructuring_pattern_node,
+            equals_key_symbol_range,
+            expression: destructured_expression_node,
+        } => {
+            elm_syntax_highlight_pattern_into(
+                highlighted_so_far,
+                elm_syntax_node_as_ref(destructuring_pattern_node),
+            );
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: *equals_key_symbol_range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            elm_syntax_highlight_expression_into(
+                highlighted_so_far,
+                elm_syntax_node_as_ref(destructured_expression_node),
+            );
+        }
+        ElmSyntaxLetDeclaration::ValueOrFunctionDeclaration {
+            name: _,
+            signature: maybe_signature,
+            implementation_name_range,
+            parameters,
+            equals_key_symbol_range,
+            result,
+        } => {
+            match maybe_signature {
+                None => {}
+                Some(signature) => {
+                    highlighted_so_far.push(ElmSyntaxNode {
+                        range: signature.name.range,
+                        value: ElmSyntaxHighlightKind::VariableDeclaration,
+                    });
+                    elm_syntax_highlight_type_into(
+                        highlighted_so_far,
+                        elm_syntax_node_as_ref(&signature.type_1),
+                    );
+                }
+            }
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: *implementation_name_range,
+                value: ElmSyntaxHighlightKind::VariableDeclaration,
+            });
+            for parameter_node in parameters {
+                elm_syntax_highlight_pattern_into(
+                    highlighted_so_far,
+                    elm_syntax_node_as_ref(parameter_node),
+                );
+            }
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: *equals_key_symbol_range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            elm_syntax_highlight_expression_into(
+                highlighted_so_far,
+                elm_syntax_node_as_ref(result),
+            );
         }
     }
 }
