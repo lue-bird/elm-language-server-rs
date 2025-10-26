@@ -20,10 +20,15 @@ A minimal LSP language server for [elm](https://elm-lang.org/), written in rust 
 - inline GLSL blocks
 
 ## TODO
+- fix weird bug where having a type construct with an argument which is a _qualified_ type name (not parenthesized etc) is not recognized as reference.
+  (current assumption: incorrect range when parsing)
 - autocomplete
 - incremental reparsing
 - partial parsing
 - show errors inline
+- support elm projects with non-root `elm.json`
+- support `tests/`
+- support non projects without `elm.json`
 
 ## installation (warning: not trivial)
 You'll need to [install `elm-to-rust`](https://github.com/lue-bird/elm-syntax-to-rust/tree/main/node-elm-to-rust) and rust itself.
