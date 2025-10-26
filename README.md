@@ -20,8 +20,6 @@ A minimal LSP language server for [elm](https://elm-lang.org/), written in rust 
 - inline GLSL blocks
 
 ## TODO
-- fix weird bug where having a type construct with an argument which is a _qualified_ type name (not parenthesized etc) is not recognized as reference.
-  (current assumption: incorrect range when parsing)
 - autocomplete
 - incremental reparsing
 - partial parsing

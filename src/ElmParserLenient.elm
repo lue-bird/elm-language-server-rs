@@ -1871,7 +1871,12 @@ typeConstructWithoutArguments =
                             { qualification = "", name = startName }
 
                         Just ( qualificationAfterStartName, unqualified ) ->
-                            { qualification = startName ++ "." ++ qualificationAfterStartName
+                            { qualification =
+                                if qualificationAfterStartName |> String.isEmpty then
+                                    startName
+
+                                else
+                                    startName ++ "." ++ qualificationAfterStartName
                             , name = unqualified
                             }
             in
@@ -4202,7 +4207,7 @@ composablePattern : Parser (WithComments (ElmSyntax.Node ElmSyntax.Pattern))
 composablePattern =
     ParserFast.oneOf9
         varPattern
-        variantPatternWithConsumeValues
+        variantPatternWithValues
         allPattern
         patternUnitOrParenthesizedOrTupleOrTriple
         recordPattern
@@ -4216,7 +4221,7 @@ patternNotSpaceSeparated : Parser (WithComments (ElmSyntax.Node ElmSyntax.Patter
 patternNotSpaceSeparated =
     ParserFast.oneOf9
         varPattern
-        qualifiedPatternWithoutConsumeArguments
+        qualifiedPatternWithoutValues
         allPattern
         patternUnitOrParenthesizedOrTupleOrTriple
         recordPattern
@@ -4252,8 +4257,8 @@ stringPattern =
         )
 
 
-variantPatternWithConsumeValues : Parser (WithComments (ElmSyntax.Node ElmSyntax.Pattern))
-variantPatternWithConsumeValues =
+variantPatternWithValues : Parser (WithComments (ElmSyntax.Node ElmSyntax.Pattern))
+variantPatternWithValues =
     ParserFast.map3
         (\referenceNode afterStartName valuesReverse ->
             let
@@ -4315,8 +4320,8 @@ variantPatternWithConsumeValues =
         )
 
 
-qualifiedPatternWithoutConsumeArguments : Parser (WithComments (ElmSyntax.Node ElmSyntax.Pattern))
-qualifiedPatternWithoutConsumeArguments =
+qualifiedPatternWithoutValues : Parser (WithComments (ElmSyntax.Node ElmSyntax.Pattern))
+qualifiedPatternWithoutValues =
     ParserFast.map2WithRange
         (\range startName after ->
             { comments = ropeEmpty
