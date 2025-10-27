@@ -305,11 +305,26 @@ fn initialize_state_for_project_into(
                 elm::elm_project_decoder(&allocator),
                 elm::StringString::One(allocator.alloc(elm_json_source)),
             )
+            .map_err(|json_decode_error| {
+                let mut error_description = String::new();
+                elm::json_decode_error_to_string_help(
+                    &json_decode_error,
+                    String::new(),
+                    &mut error_description,
+                    0,
+                );
+                eprintln!("I don't understand this elm.json: {}", error_description)
+            })
             .ok()
         });
+    if maybe_elm_json.is_none() {
+        eprintln!(
+            "no valid elm.json found. Now looking for elm module files across the workspace and elm/core 1.0.5"
+        );
+    }
     let elm_json_source_directories = match maybe_elm_json {
         None => {
-            vec![std::path::Path::join(&project_path, "src")]
+            vec![project_path.clone()]
         }
         Some(elm::ElmProjectProject::Application(application_elm_json)) => application_elm_json
             .dirs
