@@ -19,8 +19,11 @@ A minimal LSP language server for [elm](https://elm-lang.org/), written in rust 
 - `elm.json` help
 - inline GLSL blocks
 
+## not sure
+- adding necessary imports when autocompleting
+- your idea 👀
+
 ## TODO
-- autocomplete
 - incremental reparsing
 - partial parsing
 - show errors inline
