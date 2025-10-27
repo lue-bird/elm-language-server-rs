@@ -295,144 +295,137 @@ fn initialize_state_for_project_into(
     elm_home_path: &std::path::PathBuf,
     project_path: std::path::PathBuf,
 ) {
+    let allocator: bumpalo::Bump = bumpalo::Bump::new();
     let elm_json_path = std::path::Path::join(&project_path, "elm.json");
-    match std::fs::read_to_string(&elm_json_path) {
-        Err(_) => {}
-        Ok(elm_json_source) => {
-            let allocator: bumpalo::Bump = bumpalo::Bump::new();
-            match elm::json_decode_decode_string(
+    let maybe_elm_json = std::fs::read_to_string(&elm_json_path)
+        .ok()
+        .and_then(|elm_json_source| {
+            elm::json_decode_decode_string(
                 &allocator,
                 elm::elm_project_decoder(&allocator),
-                elm::StringString::One(&elm_json_source),
-            ) {
-                Err(_) => {
-                    // improvement possibility: treat as elm.json with
-                    // source-directories: [ "src" ]
-                    // direct-dependencies: { "elm/core": "1.0.5" }
-                }
-                Ok(elm_json) => {
-                    let elm_json_source_directories = match elm_json {
-                        elm::ElmProjectProject::Application(application_elm_json) => {
-                            application_elm_json
-                                .dirs
-                                .into_iter()
-                                .map(|elm_string| {
-                                    std::path::Path::join(&project_path, elm_string.to_string())
-                                })
-                                .collect::<Vec<_>>()
-                        }
-                        elm::ElmProjectProject::Package(_) => {
-                            vec![std::path::Path::join(&project_path, "src")]
-                        }
-                    };
-                    let direct_dependency_paths: Vec<std::path::PathBuf> = match elm_json {
-                        elm::ElmProjectProject::Application(application_elm_json) => {
-                            application_elm_json
-                                .deps_direct
-                                .into_iter()
-                                .map(|(elm::ElmPackageName::Name(package_author, package_name), elm::ElmVersionVersion::Version(package_major_version, package_minor_version, package_patch_version))| {
-                                    std::path::Path::join(
-                                        &elm_home_path,
-                                        format!("0.19.1/packages/{package_author}/{package_name}/{package_major_version}.{package_minor_version}.{package_patch_version}"),
-                                    )
-                                })
-                                .collect::<Vec<_>>()
-                        }
-                        elm::ElmProjectProject::Package(package_elm_json) => {
-                            package_elm_json.deps
-                                    .into_iter()
-                                    .filter_map(|(elm::ElmPackageName::Name(package_author, package_name), elm::ElmConstraintConstraint::Constraint(elm::ElmVersionVersion::Version(package_major_version, package_minor_version, package_patch_version), lower_bound_operator, _, _))| {
-                                        match lower_bound_operator {
-                                            elm::ElmConstraintOp::LessThan => {
-                                                // I have never seen this used
-                                                // and it would require some work to implement
-                                                // so we don't support it
-                                                None
-                                            },
-                                            elm::ElmConstraintOp::LessOrEq => Some(std::path::Path::join(
-                                                &elm_home_path,
-                                                format!("0.19.1/packages/{package_author}/{package_name}/{package_major_version}.{package_minor_version}.{package_patch_version}"),
-                                            ))
-                                        }
-                                    })
-                                    .collect::<Vec<_>>()
-                        }
-                    };
-                    let elm_source_files = elm_json_source_directories
-                        .iter()
-                        .filter_map(|source_directory_path| {
-                            list_elm_files_in_source_directory_at_path(source_directory_path).ok()
+                elm::StringString::One(allocator.alloc(elm_json_source)),
+            )
+            .ok()
+        });
+    let elm_json_source_directories = match maybe_elm_json {
+        None => {
+            vec![std::path::Path::join(&project_path, "src")]
+        }
+        Some(elm::ElmProjectProject::Application(application_elm_json)) => application_elm_json
+            .dirs
+            .into_iter()
+            .map(|elm_string| std::path::Path::join(&project_path, elm_string.to_string()))
+            .collect::<Vec<_>>(),
+        Some(elm::ElmProjectProject::Package(_)) => {
+            vec![std::path::Path::join(&project_path, "src")]
+        }
+    };
+    let direct_dependency_paths: Vec<std::path::PathBuf> = match maybe_elm_json {
+        None => {
+            vec!(std::path::Path::join(
+                &elm_home_path,
+                "0.19.1/packages/elm/core/1.0.5"
+            ))
+        }
+        Some(elm::ElmProjectProject::Application(application_elm_json)) => {
+            application_elm_json
+                .deps_direct
+                .into_iter()
+                .map(|(elm::ElmPackageName::Name(package_author, package_name), elm::ElmVersionVersion::Version(package_major_version, package_minor_version, package_patch_version))| {
+                    std::path::Path::join(
+                        &elm_home_path,
+                        format!("0.19.1/packages/{package_author}/{package_name}/{package_major_version}.{package_minor_version}.{package_patch_version}"),
+                    )
+                })
+                .collect::<Vec<_>>()
+        }
+        Some(elm::ElmProjectProject::Package(package_elm_json)) => {
+            package_elm_json.deps
+                .into_iter()
+                .filter_map(|(elm::ElmPackageName::Name(package_author, package_name), elm::ElmConstraintConstraint::Constraint(elm::ElmVersionVersion::Version(package_major_version, package_minor_version, package_patch_version), lower_bound_operator, _, _))| {
+                    match lower_bound_operator {
+                        elm::ElmConstraintOp::LessThan => {
+                            // I have never seen this used
+                            // and it would require some work to implement
+                            // so we don't support it
+                            None
+                        },
+                        elm::ElmConstraintOp::LessOrEq => Some(std::path::Path::join(
+                            &elm_home_path,
+                            format!("0.19.1/packages/{package_author}/{package_name}/{package_major_version}.{package_minor_version}.{package_patch_version}"),
+                        ))
+                    }
+                })
+                .collect::<Vec<_>>()
+        }
+    };
+    let elm_source_files = elm_json_source_directories
+        .iter()
+        .filter_map(|source_directory_path| {
+            list_elm_files_in_source_directory_at_path(source_directory_path).ok()
+        })
+        .flatten();
+    let mut module_states: std::collections::HashMap<std::path::PathBuf, ModuleState> =
+        std::collections::HashMap::new();
+    for (module_path, module_source) in elm_source_files {
+        let parse_allocator: bumpalo::Bump = bumpalo::Bump::new();
+        module_states.insert(
+            module_path,
+            ModuleState {
+                syntax: elm::elm_parser_lenient_run(
+                    elm::elm_parser_lenient_module_(&parse_allocator),
+                    elm::StringString::One(&module_source),
+                )
+                .map(elm_syntax_module_to_persistent),
+            },
+        );
+    }
+    match maybe_elm_json {
+        None => {}
+        Some(elm::ElmProjectProject::Application(_)) => {}
+        Some(elm::ElmProjectProject::Package(package_elm_json)) => {
+            for exposed_module_name in elm_project_exposed_to_module_names(package_elm_json.exposed)
+            {
+                let maybe_module_origin_path: Option<&std::path::PathBuf> = module_states
+                    .iter()
+                    .find_map(|(module_path, module_state)| {
+                        module_state.syntax.as_ref().and_then(|module_syntax| {
+                            if &module_syntax.header.value.module_name.value == &exposed_module_name
+                            {
+                                Some(module_path)
+                            } else {
+                                None
+                            }
                         })
-                        .flatten();
-                    let mut module_states: std::collections::HashMap<
-                        std::path::PathBuf,
-                        ModuleState,
-                    > = std::collections::HashMap::new();
-                    for (module_path, module_source) in elm_source_files {
-                        let parse_allocator: bumpalo::Bump = bumpalo::Bump::new();
-                        module_states.insert(
-                            module_path,
-                            ModuleState {
-                                syntax: elm::elm_parser_lenient_run(
-                                    elm::elm_parser_lenient_module_(&parse_allocator),
-                                    elm::StringString::One(&module_source),
-                                )
-                                .map(elm_syntax_module_to_persistent),
+                    });
+                match maybe_module_origin_path {
+                    None => {}
+                    Some(module_origin_path) => {
+                        dependency_exposed_module_names_so_far.insert(
+                            exposed_module_name,
+                            ProjectModuleOrigin {
+                                project_path: project_path.clone(),
+                                module_path: module_origin_path.clone(),
                             },
                         );
                     }
-                    match elm_json {
-                        elm::ElmProjectProject::Application(_) => {}
-                        elm::ElmProjectProject::Package(package_elm_json) => {
-                            for exposed_module_name in
-                                elm_project_exposed_to_module_names(package_elm_json.exposed)
-                            {
-                                let maybe_module_origin_path: Option<&std::path::PathBuf> =
-                                    module_states
-                                        .iter()
-                                        .find_map(|(module_path, module_state)| {
-                                            module_state.syntax.as_ref().and_then(|module_syntax| {
-                                                if &module_syntax.header.value.module_name.value
-                                                    == &exposed_module_name
-                                                {
-                                                    Some(module_path)
-                                                } else {
-                                                    None
-                                                }
-                                            })
-                                        });
-                                match maybe_module_origin_path {
-                                    None => {}
-                                    Some(module_origin_path) => {
-                                        dependency_exposed_module_names_so_far.insert(
-                                            exposed_module_name,
-                                            ProjectModuleOrigin {
-                                                project_path: project_path.clone(),
-                                                module_path: module_origin_path.clone(),
-                                            },
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    };
-                    let dependency_exposed_module_names = initialize_state_for_projects_into(
-                        state,
-                        elm_home_path,
-                        direct_dependency_paths.into_iter(),
-                    );
-                    state.projects.insert(
-                        project_path,
-                        ProjectState {
-                            source_directories: elm_json_source_directories,
-                            modules: module_states,
-                            dependency_exposed_module_names,
-                        },
-                    );
                 }
             }
         }
     }
+    let dependency_exposed_module_names = initialize_state_for_projects_into(
+        state,
+        elm_home_path,
+        direct_dependency_paths.into_iter(),
+    );
+    state.projects.insert(
+        project_path,
+        ProjectState {
+            source_directories: elm_json_source_directories,
+            modules: module_states,
+            dependency_exposed_module_names,
+        },
+    );
 }
 
 fn elm_project_exposed_to_module_names(elm_project_exposed: elm::ElmProjectExposed) -> Vec<String> {

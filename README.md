@@ -26,7 +26,6 @@ A minimal LSP language server for [elm](https://elm-lang.org/), written in rust 
 - show errors inline
 - support elm projects with non-root `elm.json`
 - support `tests/`
-- support non projects without `elm.json`
 
 ## installation (warning: not trivial)
 You'll need to [install `elm-to-rust`](https://github.com/lue-bird/elm-syntax-to-rust/tree/main/node-elm-to-rust) and rust itself.
