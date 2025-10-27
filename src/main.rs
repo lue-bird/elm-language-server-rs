@@ -2051,7 +2051,6 @@ fn respond_to_completion(
             name: _,
         } => {
             let module_origin = if module_origin.is_empty() {
-                // improvement idea: suggest module names as well
                 &completion_project_module
                     .module_syntax
                     .header
@@ -2260,7 +2259,6 @@ fn respond_to_completion(
             name: _,
         } => {
             let module_origin = if module_origin.is_empty() {
-                // improvement idea: suggest module names as well
                 &completion_project_module
                     .module_syntax
                     .header
