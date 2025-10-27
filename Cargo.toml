@@ -1,3 +1,4 @@
+cargo-features = ["codegen-backend"]
 [package]
 name = "elm-language-server-rs"
 edition = "2024"
@@ -17,8 +18,14 @@ tokio = { version = "1.47.1", features = [
 bumpalo = "3.19.0"
 
 [profile.dev]
-# disabling debug info speeds up builds a bunch
+# disabling debug info speeds up build
 debug = "none"
-# required to enable tail-call-elimination.
-# Without, the lsp stack overflows on medium to large files
-opt-level = 1
+# >= 1 required to enable tail-call-elimination.
+# Without, the lsp stack overflows on medium to large files.
+# Here, I chose to do 2 to get a more realistic feel for the release performance
+# but please do switch to 1 locally if you need faster compile times
+opt-level = 2
+# speeds up build a ton (about 2-10 times)
+codegen-backend = "cranelift"
+[profile.dev.package."*"]
+debug = false
