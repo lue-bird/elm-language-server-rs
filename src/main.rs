@@ -2083,8 +2083,8 @@ fn respond_to_completion(
                     None
                 } else {
                     match &origin_module_syntax.header.value.exposing.value {
-                        ElmSyntaxExposing::All(_) => None,
-                        ElmSyntaxExposing::Explicit(exposes) => Some(
+                        ElmSyntaxExposingSpecific::All(_) => None,
+                        ElmSyntaxExposingSpecific::Explicit(exposes) => Some(
                             exposes
                                 .iter()
                                 .filter_map(|expose_node| match &expose_node.value {
@@ -2290,8 +2290,8 @@ fn respond_to_completion(
                 None
             } else {
                 match &origin_module_syntax.header.value.exposing.value {
-                    ElmSyntaxExposing::All(_) => None,
-                    ElmSyntaxExposing::Explicit(exposes) => Some(
+                    ElmSyntaxExposingSpecific::All(_) => None,
+                    ElmSyntaxExposingSpecific::Explicit(exposes) => Some(
                         exposes
                             .iter()
                             .filter_map(|expose_node| match &expose_node.value {
@@ -2669,107 +2669,111 @@ fn list_elm_files_in_source_directory_at_path_into(
 // // // below persistent rust types and conversions to and from temporary elm types
 #[derive(Clone, Debug, PartialEq)]
 enum ElmSyntaxType {
-    Construct {
-        reference: ElmSyntaxNode<elm::GeneratedNameQualification<String, String>>,
-        arguments: Vec<ElmSyntaxNode<ElmSyntaxType>>,
+    Unit,
+    Variable(String),
+    Parenthesized(ElmSyntaxNode<Box<ElmSyntaxType>>),
+    Tuple {
+        part0: Option<ElmSyntaxNode<Box<ElmSyntaxType>>>,
+        part1: Option<ElmSyntaxNode<Box<ElmSyntaxType>>>,
+    },
+    Triple {
+        part0: Option<ElmSyntaxNode<Box<ElmSyntaxType>>>,
+        part1: Option<ElmSyntaxNode<Box<ElmSyntaxType>>>,
+        part2: Option<ElmSyntaxNode<Box<ElmSyntaxType>>>,
     },
     Function {
         input: ElmSyntaxNode<Box<ElmSyntaxType>>,
         arrow_key_symbol_range: lsp_types::Range,
-        output: ElmSyntaxNode<Box<ElmSyntaxType>>,
+        output: Option<ElmSyntaxNode<Box<ElmSyntaxType>>>,
     },
-    Parenthesized(ElmSyntaxNode<Box<ElmSyntaxType>>),
-    Record(
-        Vec<
-            elm::GeneratedColonKeySymbolRangeNameValue<
-                lsp_types::Range,
-                ElmSyntaxNode<String>,
-                ElmSyntaxNode<ElmSyntaxType>,
-            >,
-        >,
-    ),
+    Construct {
+        reference: ElmSyntaxNode<ElmQualifiedName>,
+        arguments: Vec<ElmSyntaxNode<ElmSyntaxType>>,
+    },
+    Record(Vec<ElmSyntaxTypeField>),
     RecordExtension {
-        record_variable: ElmSyntaxNode<String>,
+        record_variable: Option<ElmSyntaxNode<String>>,
         bar_key_symbol_range: lsp_types::Range,
-        field0: elm::GeneratedColonKeySymbolRangeNameValue<
-            lsp_types::Range,
-            ElmSyntaxNode<String>,
-            ElmSyntaxNode<Box<ElmSyntaxType>>,
-        >,
-        field1_up: Vec<
-            elm::GeneratedColonKeySymbolRangeNameValue<
-                lsp_types::Range,
-                ElmSyntaxNode<String>,
-                ElmSyntaxNode<ElmSyntaxType>,
-            >,
-        >,
+        fields: Vec<ElmSyntaxTypeField>,
     },
-    Triple {
-        part0: ElmSyntaxNode<Box<ElmSyntaxType>>,
-        part1: ElmSyntaxNode<Box<ElmSyntaxType>>,
-        part2: ElmSyntaxNode<Box<ElmSyntaxType>>,
-    },
-    Tuple {
-        part0: ElmSyntaxNode<Box<ElmSyntaxType>>,
-        part1: ElmSyntaxNode<Box<ElmSyntaxType>>,
-    },
-    Unit,
-    Variable(String),
+}
+#[derive(Clone, Debug, PartialEq)]
+struct ElmQualifiedName {
+    qualification: String,
+    name: String,
+}
+#[derive(Clone, Debug, PartialEq)]
+struct ElmSyntaxTypeField {
+    name: Option<ElmSyntaxNode<String>>,
+    colon_key_symbol_range: lsp_types::Range,
+    value: Option<ElmSyntaxNode<ElmSyntaxType>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 enum ElmSyntaxPattern {
-    As {
-        pattern: ElmSyntaxNode<Box<ElmSyntaxPattern>>,
-        as_keyword_range: lsp_types::Range,
-        variable: ElmSyntaxNode<String>,
-    },
-    Char(char),
+    Unit,
     Ignored,
+    Char(Option<char>),
     Int {
         base: elm::ElmSyntaxIntBase,
-        value: i64,
+        value: Option<i64>,
     },
-    ListCons {
-        head: ElmSyntaxNode<Box<ElmSyntaxPattern>>,
-        cons_key_symbol: lsp_types::Range,
-        tail: ElmSyntaxNode<Box<ElmSyntaxPattern>>,
-    },
-    ListExact(Vec<ElmSyntaxNode<ElmSyntaxPattern>>),
-    Parenthesized(ElmSyntaxNode<Box<ElmSyntaxPattern>>),
-    Record(Vec<ElmSyntaxNode<String>>),
     String {
         content: String,
         quoting_style: elm::ElmSyntaxStringQuotingStyle,
     },
-    Triple {
-        part0: ElmSyntaxNode<Box<ElmSyntaxPattern>>,
-        part1: ElmSyntaxNode<Box<ElmSyntaxPattern>>,
-        part2: ElmSyntaxNode<Box<ElmSyntaxPattern>>,
-    },
-    Tuple {
-        part0: ElmSyntaxNode<Box<ElmSyntaxPattern>>,
-        part1: ElmSyntaxNode<Box<ElmSyntaxPattern>>,
-    },
-    Unit,
     Variable(String),
+    As {
+        pattern: ElmSyntaxNode<Box<ElmSyntaxPattern>>,
+        as_keyword_range: lsp_types::Range,
+        variable: Option<ElmSyntaxNode<String>>,
+    },
+    Parenthesized(ElmSyntaxNode<Box<ElmSyntaxPattern>>),
+    Tuple {
+        part0: Option<ElmSyntaxNode<Box<ElmSyntaxPattern>>>,
+        part1: Option<ElmSyntaxNode<Box<ElmSyntaxPattern>>>,
+    },
+    Triple {
+        part0: Option<ElmSyntaxNode<Box<ElmSyntaxPattern>>>,
+        part1: Option<ElmSyntaxNode<Box<ElmSyntaxPattern>>>,
+        part2: Option<ElmSyntaxNode<Box<ElmSyntaxPattern>>>,
+    },
+    ListCons {
+        head: Option<ElmSyntaxNode<Box<ElmSyntaxPattern>>>,
+        cons_key_symbol: lsp_types::Range,
+        tail: Option<ElmSyntaxNode<Box<ElmSyntaxPattern>>>,
+    },
+    ListExact(Vec<ElmSyntaxNode<ElmSyntaxPattern>>),
+    Record(Vec<ElmSyntaxNode<String>>),
     Variant {
-        reference: ElmSyntaxNode<elm::GeneratedNameQualification<String, String>>,
+        reference: ElmSyntaxNode<ElmQualifiedName>,
         values: Vec<ElmSyntaxNode<ElmSyntaxPattern>>,
     },
 }
 
 #[derive(Clone, Debug, PartialEq)]
 enum ElmSyntaxModuleHeaderSpecific {
-    Effect {
+    // if you have a better name for this, please tell me
+    Pure {
         module_keyword_range: lsp_types::Range,
-        where_keyword_range: lsp_types::Range,
-        command: Option<ElmSyntaxNode<String>>,
-        subscription: Option<ElmSyntaxNode<String>>,
     },
     Port {
+        port_keyword_range: lsp_types::Range,
         module_keyword_range: lsp_types::Range,
     },
+    Effect {
+        effect_keyword_range: lsp_types::Range,
+        module_keyword_range: lsp_types::Range,
+        where_keyword_range: lsp_types::Range,
+        command: Option<EffectModuleHeaderEntry>,
+        subscription: Option<EffectModuleHeaderEntry>,
+    },
+}
+#[derive(Clone, Debug, PartialEq)]
+struct EffectModuleHeaderEntry {
+    key_range: lsp_types::Range,
+    equals_range: lsp_types::Range,
+    value_type_name: ElmSyntaxNode<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -2792,20 +2796,16 @@ enum ElmSyntaxLetDeclaration {
 
 #[derive(Clone, Debug, PartialEq)]
 enum ElmSyntaxExpression {
+    Unit,
     Call {
         called: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
         argument0: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
         argument1_up: Vec<ElmSyntaxNode<ElmSyntaxExpression>>,
     },
     CaseOf {
-        matched: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+        matched: Option<ElmSyntaxNode<Box<ElmSyntaxExpression>>>,
         of_keyword_range: lsp_types::Range,
-        case0: elm::GeneratedArrowKeySymbolRangePatternResult<
-            lsp_types::Range,
-            ElmSyntaxNode<ElmSyntaxPattern>,
-            ElmSyntaxNode<Box<ElmSyntaxExpression>>,
-        >,
-        case1_up: Vec<
+        cases: Vec<
             elm::GeneratedArrowKeySymbolRangePatternResult<
                 lsp_types::Range,
                 ElmSyntaxNode<ElmSyntaxPattern>,
@@ -2813,69 +2813,58 @@ enum ElmSyntaxExpression {
             >,
         >,
     },
-    Char(char),
+    Char(Option<char>),
     Float(f64),
     IfThenElse {
-        condition: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+        condition: Option<ElmSyntaxNode<Box<ElmSyntaxExpression>>>,
         then_keyword_range: lsp_types::Range,
-        on_true: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+        on_true: Option<ElmSyntaxNode<Box<ElmSyntaxExpression>>>,
         else_keyword_range: lsp_types::Range,
-        on_false: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+        on_false: Option<ElmSyntaxNode<Box<ElmSyntaxExpression>>>,
     },
-    InfixOperation {
+    /// elm-syntax for example uses a pratt parser
+    /// to produce the actual, semantically correct tree as you would evaluate it.
+    /// However, such a tree is pretty much irrelevant
+    /// for the existing functionality of the language server,
+    /// so we instead simply parse it "left to right". For example:
+    ///
+    ///     3 + 4 * 5 - 6
+    ///
+    /// in elm-syntax: Op (Op 3 "+" (Op 4 "*" 5)) "-" 6
+    /// here:          Op (Op (Op 3 "+" 4) "*" 5) "-" 6
+    InfixOperationIgnoringPrecedence {
         left: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
-        operator: ElmSyntaxNode<String>,
-        right: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+        operator: ElmSyntaxNode<&'static str>,
+        right: Option<ElmSyntaxNode<Box<ElmSyntaxExpression>>>,
     },
     Integer {
-        value: i64,
+        value: Option<i64>,
         base: elm::ElmSyntaxIntBase,
     },
     Lambda {
-        parameter0: ElmSyntaxNode<ElmSyntaxPattern>,
-        parameter1_up: Vec<ElmSyntaxNode<ElmSyntaxPattern>>,
+        parameters: Vec<ElmSyntaxNode<ElmSyntaxPattern>>,
         arrow_key_symbol_range: lsp_types::Range,
         result: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
     },
     LetIn {
-        declaration0: ElmSyntaxNode<Box<ElmSyntaxLetDeclaration>>,
-        declaration1_up: Vec<ElmSyntaxNode<ElmSyntaxLetDeclaration>>,
+        declarations: Vec<ElmSyntaxNode<ElmSyntaxLetDeclaration>>,
         in_keyword_range: lsp_types::Range,
-        result: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+        result: Option<ElmSyntaxNode<Box<ElmSyntaxExpression>>>,
     },
     List(Vec<ElmSyntaxNode<ElmSyntaxExpression>>),
-    Negation(ElmSyntaxNode<Box<ElmSyntaxExpression>>),
-    OperatorFunction(String),
+    Negation(Option<ElmSyntaxNode<Box<ElmSyntaxExpression>>>),
+    OperatorFunction(Option<String>),
     Parenthesized(ElmSyntaxNode<Box<ElmSyntaxExpression>>),
-    Record(
-        Vec<
-            elm::GeneratedEqualsKeySymbolRangeNameValue<
-                lsp_types::Range,
-                ElmSyntaxNode<String>,
-                ElmSyntaxNode<ElmSyntaxExpression>,
-            >,
-        >,
-    ),
+    Record(Vec<ElmSyntaxField>),
     RecordAccess {
         record: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
-        field: ElmSyntaxNode<String>,
+        field: Option<ElmSyntaxNode<String>>,
     },
-    RecordAccessFunction(String),
+    RecordAccessFunction(Option<String>),
     RecordUpdate {
         record_variable: ElmSyntaxNode<String>,
         bar_key_symbol_range: lsp_types::Range,
-        field0: elm::GeneratedEqualsKeySymbolRangeNameValue<
-            lsp_types::Range,
-            ElmSyntaxNode<String>,
-            ElmSyntaxNode<Box<ElmSyntaxExpression>>,
-        >,
-        field1_up: Vec<
-            elm::GeneratedEqualsKeySymbolRangeNameValue<
-                lsp_types::Range,
-                ElmSyntaxNode<String>,
-                ElmSyntaxNode<ElmSyntaxExpression>,
-            >,
-        >,
+        fields: Vec<ElmSyntaxField>,
     },
     Reference(elm::GeneratedNameQualification<String, String>),
     String {
@@ -2883,19 +2872,30 @@ enum ElmSyntaxExpression {
         quoting_style: elm::ElmSyntaxStringQuotingStyle,
     },
     Triple {
-        part0: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
-        part1: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
-        part2: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+        part0: Option<ElmSyntaxNode<Box<ElmSyntaxExpression>>>,
+        part1: Option<ElmSyntaxNode<Box<ElmSyntaxExpression>>>,
+        part2: Option<ElmSyntaxNode<Box<ElmSyntaxExpression>>>,
     },
     Tuple {
-        part0: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
-        part1: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+        part0: Option<ElmSyntaxNode<Box<ElmSyntaxExpression>>>,
+        part1: Option<ElmSyntaxNode<Box<ElmSyntaxExpression>>>,
     },
-    Unit,
+}
+#[derive(Clone, Debug, PartialEq)]
+struct ElmSyntaxField {
+    name: Option<ElmSyntaxNode<String>>,
+    equals_key_symbol_range: lsp_types::Range,
+    value: Option<ElmSyntaxNode<ElmSyntaxExpression>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-enum ElmSyntaxExposing {
+struct ElmSyntaxExposing {
+    exposing_keyword_range: lsp_types::Range,
+    specific: Option<ElmSyntaxNode<ElmSyntaxExposingSpecific>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum ElmSyntaxExposingSpecific {
     All(lsp_types::Range),
     Explicit(Vec<ElmSyntaxNode<ElmSyntaxExpose>>),
 }
@@ -2906,7 +2906,7 @@ enum ElmSyntaxExpose {
         name: ElmSyntaxNode<String>,
         open_range: lsp_types::Range,
     },
-    Operator(String),
+    Operator(Option<ElmSyntaxNode<&'static str>>),
     Type(String),
     Variable(String),
 }
@@ -2978,17 +2978,25 @@ fn elm_syntax_node_unbox<'a, Value>(
         value: &elm_syntax_node_box.value,
     }
 }
+fn elm_syntax_node_box<Value>(
+    elm_syntax_node_box: ElmSyntaxNode<Value>,
+) -> ElmSyntaxNode<Box<Value>> {
+    ElmSyntaxNode {
+        range: elm_syntax_node_box.range,
+        value: Box::new(elm_syntax_node_box.value),
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 struct ElmSyntaxModuleHeader {
-    exposing: ElmSyntaxNode<ElmSyntaxExposing>,
-    module_name: ElmSyntaxNode<String>,
-    specific: Option<ElmSyntaxModuleHeaderSpecific>,
+    specific: ElmSyntaxModuleHeaderSpecific,
+    module_name: Option<ElmSyntaxNode<String>>,
+    exposing: Option<ElmSyntaxExposing>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 struct ElmSyntaxModule {
-    header: ElmSyntaxNode<ElmSyntaxModuleHeader>,
+    header: Option<ElmSyntaxModuleHeader>,
     imports: Vec<ElmSyntaxNode<ElmSyntaxImport>>,
     comments: Vec<ElmSyntaxNode<String>>,
     declarations: Vec<
@@ -3001,681 +3009,14 @@ struct ElmSyntaxModule {
 
 #[derive(Clone, Debug, PartialEq)]
 struct ElmSyntaxImport {
-    module_name: ElmSyntaxNode<String>,
-    alias: Option<elm::GeneratedAsKeywordRangeName<lsp_types::Range, ElmSyntaxNode<String>>>,
-    exposing: Option<ElmSyntaxNode<ElmSyntaxExposing>>,
+    module_name: Option<ElmSyntaxNode<String>>,
+    alias: Option<EmSyntaxImportAs>,
+    exposing: Option<ElmSyntaxExposing>,
 }
-
-// // if you are looking for conversions from persistent types to elm syntax types,
-// // they can be found in previous commits (they have been removed because they aren't used, yet)
-// //
-fn elm_syntax_module_to_persistent(elm_syntax_module: elm::ElmSyntaxModule) -> ElmSyntaxModule {
-    ElmSyntaxModule {
-        header: elm_syntax_node_to_persistent(
-            elm_syntax_module.header,
-            elm_syntax_module_header_to_persistent,
-        ),
-        imports: elm_syntax_module
-            .imports
-            .into_iter()
-            .map(|import_node| {
-                elm_syntax_node_to_persistent(import_node, elm_syntax_import_to_persistent)
-            })
-            .collect::<Vec<_>>(),
-        comments: elm_syntax_module
-            .comments
-            .into_iter()
-            .map(elm_syntax_node_string_to_persistent)
-            .collect::<Vec<_>>(),
-        declarations: elm_syntax_module
-            .declarations
-            .into_iter()
-            .map(
-                |documented_declaration_node| elm::GeneratedDeclarationDocumentation {
-                    documentation: documented_declaration_node
-                        .documentation
-                        .map(elm_syntax_node_string_to_persistent),
-                    declaration: elm_syntax_node_to_persistent(
-                        documented_declaration_node.declaration,
-                        elm_syntax_declaration_to_persistent,
-                    ),
-                },
-            )
-            .collect::<Vec<_>>(),
-    }
-}
-
-fn elm_syntax_module_header_to_persistent(
-    elm_syntax_module_header: elm::ElmSyntaxModuleHeader,
-) -> ElmSyntaxModuleHeader {
-    ElmSyntaxModuleHeader {
-        module_name: elm_syntax_node_string_to_persistent(elm_syntax_module_header.module_name),
-        exposing: elm_syntax_node_to_persistent(
-            elm_syntax_module_header.exposing_,
-            elm_syntax_exposing_to_persistent,
-        ),
-        specific: elm_syntax_module_header
-            .specific
-            .map(elm_syntax_module_header_specific_to_persistent),
-    }
-}
-
-fn elm_syntax_module_header_specific_to_persistent(
-    elm_syntax_module_header_specific: elm::ElmSyntaxModuleHeaderSpecific,
-) -> ElmSyntaxModuleHeaderSpecific {
-    match elm_syntax_module_header_specific {
-        elm::ElmSyntaxModuleHeaderSpecific::ModuleHeaderSpecificEffect(
-            effect_module_header_specific,
-        ) => ElmSyntaxModuleHeaderSpecific::Effect {
-            module_keyword_range: text_grid_range_to_lsp_range(
-                effect_module_header_specific.module_keyword_range,
-            ),
-            where_keyword_range: text_grid_range_to_lsp_range(
-                effect_module_header_specific.where_keyword_range,
-            ),
-            command: effect_module_header_specific
-                .command
-                .map(elm_syntax_node_string_to_persistent),
-            subscription: effect_module_header_specific
-                .subscription
-                .map(elm_syntax_node_string_to_persistent),
-        },
-        elm::ElmSyntaxModuleHeaderSpecific::ModuleHeaderSpecificPort(
-            port_module_header_specific,
-        ) => ElmSyntaxModuleHeaderSpecific::Port {
-            module_keyword_range: text_grid_range_to_lsp_range(
-                port_module_header_specific.module_keyword_range,
-            ),
-        },
-    }
-}
-
-fn elm_syntax_import_to_persistent(elm_syntax_import: elm::ElmSyntaxImport) -> ElmSyntaxImport {
-    ElmSyntaxImport {
-        module_name: elm_syntax_node_string_to_persistent(elm_syntax_import.module_name),
-        alias: elm_syntax_import
-            .alias
-            .map(|alias| elm::GeneratedAsKeywordRangeName {
-                as_keyword_range: text_grid_range_to_lsp_range(alias.as_keyword_range),
-                name: elm_syntax_node_string_to_persistent(alias.name),
-            }),
-        exposing: elm_syntax_import.exposing_.map(|exposing_node| {
-            elm_syntax_node_to_persistent(exposing_node, elm_syntax_exposing_to_persistent)
-        }),
-    }
-}
-
-fn elm_syntax_exposing_to_persistent(
-    elm_syntax_exposing: elm::ElmSyntaxExposing,
-) -> ElmSyntaxExposing {
-    match elm_syntax_exposing {
-        elm::ElmSyntaxExposing::ExposingAll(all_range) => {
-            ElmSyntaxExposing::All(text_grid_range_to_lsp_range(all_range))
-        }
-        elm::ElmSyntaxExposing::ExposingExplicit(exposes) => ElmSyntaxExposing::Explicit(
-            exposes
-                .into_iter()
-                .map(|expose_node| {
-                    elm_syntax_node_to_persistent(expose_node, elm_syntax_expose_to_persistent)
-                })
-                .collect::<Vec<_>>(),
-        ),
-    }
-}
-
-fn elm_syntax_expose_to_persistent(elm_syntax_expose: elm::ElmSyntaxExpose) -> ElmSyntaxExpose {
-    match elm_syntax_expose {
-        elm::ElmSyntaxExpose::ExposeChoiceTypeIncludingVariants(choice_type_expose) => {
-            ElmSyntaxExpose::ChoiceTypeIncludingVariants {
-                name: elm_syntax_node_string_to_persistent(choice_type_expose.name),
-                open_range: text_grid_range_to_lsp_range(choice_type_expose.open_range),
-            }
-        }
-        elm::ElmSyntaxExpose::ExposeOperator(symbol) => {
-            ElmSyntaxExpose::Operator(symbol.to_string())
-        }
-        elm::ElmSyntaxExpose::ExposeTypeName(name) => ElmSyntaxExpose::Type(name.to_string()),
-        elm::ElmSyntaxExpose::ExposeVariable(name) => ElmSyntaxExpose::Variable(name.to_string()),
-    }
-}
-
-fn elm_syntax_declaration_to_persistent(
-    elm_syntax_declaration: elm::ElmSyntaxDeclaration,
-) -> ElmSyntaxDeclaration {
-    match elm_syntax_declaration {
-        elm::ElmSyntaxDeclaration::DeclarationChoiceType(choice_type_declaration) => {
-            ElmSyntaxDeclaration::ChoiceType {
-                name: elm_syntax_node_string_to_persistent(choice_type_declaration.name),
-                parameters: choice_type_declaration
-                    .parameters
-                    .into_iter()
-                    .map(elm_syntax_node_string_to_persistent)
-                    .collect::<Vec<_>>(),
-                equals_key_symbol_range: text_grid_range_to_lsp_range(
-                    choice_type_declaration.equals_key_symbol_range,
-                ),
-                variant0: elm::GeneratedNameValues {
-                    name: elm_syntax_node_string_to_persistent(
-                        choice_type_declaration.variant0.name,
-                    ),
-                    values: choice_type_declaration
-                        .variant0
-                        .values
-                        .into_iter()
-                        .map(elm_syntax_node_type_to_persistent)
-                        .collect::<Vec<_>>(),
-                },
-                variant1_up: choice_type_declaration
-                    .variant1_up
-                    .into_iter()
-                    .map(|variant| elm::GeneratedNameOrKeySymbolRangeValues {
-                        or_key_symbol_range: text_grid_range_to_lsp_range(
-                            variant.or_key_symbol_range,
-                        ),
-                        name: elm_syntax_node_string_to_persistent(variant.name),
-                        values: variant
-                            .values
-                            .into_iter()
-                            .map(elm_syntax_node_type_to_persistent)
-                            .collect::<Vec<_>>(),
-                    })
-                    .collect::<Vec<_>>(),
-            }
-        }
-        elm::ElmSyntaxDeclaration::DeclarationOperator(operator_declaration) => {
-            ElmSyntaxDeclaration::Operator {
-                direction: elm_syntax_node_to_persistent(
-                    operator_declaration.direction,
-                    |direction| direction,
-                ),
-                operator: elm_syntax_node_to_persistent(
-                    operator_declaration.operator,
-                    |operator| operator.to_string(),
-                ),
-                precedence: elm_syntax_node_to_persistent(
-                    operator_declaration.precedence,
-                    |precedence| precedence,
-                ),
-                function: elm_syntax_node_to_persistent(
-                    operator_declaration.function,
-                    |function| function.to_string(),
-                ),
-            }
-        }
-        elm::ElmSyntaxDeclaration::DeclarationPort(port_declaration) => {
-            ElmSyntaxDeclaration::Port {
-                name: elm_syntax_node_string_to_persistent(port_declaration.name),
-                type_: elm_syntax_node_type_to_persistent(port_declaration.type_1),
-            }
-        }
-        elm::ElmSyntaxDeclaration::DeclarationTypeAlias(type_alias_declaration) => {
-            ElmSyntaxDeclaration::TypeAlias {
-                alias_keyword_range: text_grid_range_to_lsp_range(
-                    type_alias_declaration.alias_keyword_range,
-                ),
-                name: elm_syntax_node_string_to_persistent(type_alias_declaration.name),
-                parameters: type_alias_declaration
-                    .parameters
-                    .into_iter()
-                    .map(elm_syntax_node_string_to_persistent)
-                    .collect::<Vec<_>>(),
-                equals_key_symbol_range: text_grid_range_to_lsp_range(
-                    type_alias_declaration.equals_key_symbol_range,
-                ),
-                type_: elm_syntax_node_type_to_persistent(type_alias_declaration.type_1),
-            }
-        }
-        elm::ElmSyntaxDeclaration::DeclarationValueOrFunction(variable_declaration) => {
-            ElmSyntaxDeclaration::ValueOrFunction {
-                name: variable_declaration.name.to_string(),
-                signature: variable_declaration.signature.map(|signature| {
-                    elm::GeneratedNameType0 {
-                        name: elm_syntax_node_string_to_persistent(signature.name),
-                        type_1: elm_syntax_node_type_to_persistent(signature.type_1),
-                    }
-                }),
-                implementation_name_range: text_grid_range_to_lsp_range(
-                    variable_declaration.implementation_name_range,
-                ),
-                parameters: variable_declaration
-                    .parameters
-                    .into_iter()
-                    .map(elm_syntax_node_pattern_to_persistent)
-                    .collect::<Vec<_>>(),
-                equals_key_symbol_range: text_grid_range_to_lsp_range(
-                    variable_declaration.equals_key_symbol_range,
-                ),
-                result: elm_syntax_node_expression_to_persistent(variable_declaration.result),
-            }
-        }
-    }
-}
-
-fn elm_syntax_type_to_persistent(elm_syntax_type: elm::ElmSyntaxType) -> ElmSyntaxType {
-    match elm_syntax_type {
-        elm::ElmSyntaxType::TypeConstruct(type_construct) => ElmSyntaxType::Construct {
-            reference: elm_syntax_node_to_persistent(type_construct.reference, |reference| {
-                elm::GeneratedNameQualification {
-                    qualification: reference.qualification.to_string(),
-                    name: reference.name.to_string(),
-                }
-            }),
-            arguments: type_construct
-                .arguments
-                .into_iter()
-                .map(elm_syntax_node_type_to_persistent)
-                .collect::<Vec<_>>(),
-        },
-        elm::ElmSyntaxType::TypeFunction(type_function) => ElmSyntaxType::Function {
-            input: elm_syntax_node_type_to_persistent_box(type_function.input),
-            arrow_key_symbol_range: text_grid_range_to_lsp_range(
-                type_function.arrow_key_symbol_range,
-            ),
-            output: elm_syntax_node_type_to_persistent_box(type_function.output),
-        },
-        elm::ElmSyntaxType::TypeParenthesized(in_parens) => {
-            ElmSyntaxType::Parenthesized(elm_syntax_node_type_to_persistent_box(*in_parens))
-        }
-        elm::ElmSyntaxType::TypeRecord(fields) => ElmSyntaxType::Record(
-            fields
-                .into_iter()
-                .map(|field| elm::GeneratedColonKeySymbolRangeNameValue {
-                    name: elm_syntax_node_string_to_persistent(field.name),
-                    colon_key_symbol_range: text_grid_range_to_lsp_range(
-                        field.colon_key_symbol_range,
-                    ),
-                    value: elm_syntax_node_type_to_persistent(field.value),
-                })
-                .collect::<Vec<_>>(),
-        ),
-        elm::ElmSyntaxType::TypeRecordExtension(type_record_extension) => {
-            ElmSyntaxType::RecordExtension {
-                record_variable: elm_syntax_node_string_to_persistent(
-                    type_record_extension.record_variable,
-                ),
-                bar_key_symbol_range: text_grid_range_to_lsp_range(
-                    type_record_extension.bar_key_symbol_range,
-                ),
-                field0: elm::GeneratedColonKeySymbolRangeNameValue {
-                    name: elm_syntax_node_string_to_persistent(type_record_extension.field0.name),
-                    colon_key_symbol_range: text_grid_range_to_lsp_range(
-                        type_record_extension.field0.colon_key_symbol_range,
-                    ),
-                    value: elm_syntax_node_type_to_persistent_box(
-                        type_record_extension.field0.value,
-                    ),
-                },
-                field1_up: type_record_extension
-                    .field1_up
-                    .into_iter()
-                    .map(|field| elm::GeneratedColonKeySymbolRangeNameValue {
-                        name: elm_syntax_node_string_to_persistent(field.name),
-                        colon_key_symbol_range: text_grid_range_to_lsp_range(
-                            field.colon_key_symbol_range,
-                        ),
-                        value: elm_syntax_node_type_to_persistent(field.value),
-                    })
-                    .collect::<Vec<_>>(),
-            }
-        }
-        elm::ElmSyntaxType::TypeTriple(parts) => ElmSyntaxType::Triple {
-            part0: elm_syntax_node_type_to_persistent_box(parts.part0),
-            part1: elm_syntax_node_type_to_persistent_box(parts.part1),
-            part2: elm_syntax_node_type_to_persistent_box(parts.part2),
-        },
-        elm::ElmSyntaxType::TypeTuple(parts) => ElmSyntaxType::Tuple {
-            part0: elm_syntax_node_type_to_persistent_box(parts.part0),
-            part1: elm_syntax_node_type_to_persistent_box(parts.part1),
-        },
-        elm::ElmSyntaxType::TypeUnit => ElmSyntaxType::Unit,
-        elm::ElmSyntaxType::TypeVariable(name) => ElmSyntaxType::Variable(name.to_string()),
-    }
-}
-
-fn elm_syntax_node_type_to_persistent(
-    elm_syntax_node_type: elm::ElmSyntaxNode<elm::ElmSyntaxType>,
-) -> ElmSyntaxNode<ElmSyntaxType> {
-    elm_syntax_node_to_persistent(elm_syntax_node_type, elm_syntax_type_to_persistent)
-}
-
-fn elm_syntax_node_type_to_persistent_box(
-    elm_syntax_node_type: elm::ElmSyntaxNode<elm::ElmSyntaxType>,
-) -> ElmSyntaxNode<Box<ElmSyntaxType>> {
-    elm_syntax_node_to_persistent(elm_syntax_node_type, |type_| {
-        Box::new(elm_syntax_type_to_persistent(type_))
-    })
-}
-
-fn elm_syntax_pattern_to_persistent(elm_syntax_pattern: elm::ElmSyntaxPattern) -> ElmSyntaxPattern {
-    match elm_syntax_pattern {
-        elm::ElmSyntaxPattern::PatternAs(as_pattern) => ElmSyntaxPattern::As {
-            pattern: elm_syntax_node_pattern_to_persistent_box(as_pattern.pattern),
-            as_keyword_range: text_grid_range_to_lsp_range(as_pattern.as_keyword_range),
-            variable: elm_syntax_node_string_to_persistent(as_pattern.variable),
-        },
-        elm::ElmSyntaxPattern::PatternChar(char) => ElmSyntaxPattern::Char(char),
-        elm::ElmSyntaxPattern::PatternIgnored => ElmSyntaxPattern::Ignored,
-        elm::ElmSyntaxPattern::PatternInt(int_pattern) => ElmSyntaxPattern::Int {
-            base: int_pattern.base,
-            value: int_pattern.value,
-        },
-        elm::ElmSyntaxPattern::PatternListCons(list_cons_pattern) => ElmSyntaxPattern::ListCons {
-            head: elm_syntax_node_pattern_to_persistent_box(list_cons_pattern.head),
-            cons_key_symbol: text_grid_range_to_lsp_range(list_cons_pattern.cons_key_symbol_range),
-            tail: elm_syntax_node_pattern_to_persistent_box(list_cons_pattern.tail),
-        },
-        elm::ElmSyntaxPattern::PatternListExact(elements) => ElmSyntaxPattern::ListExact(
-            elements
-                .into_iter()
-                .map(elm_syntax_node_pattern_to_persistent)
-                .collect::<Vec<_>>(),
-        ),
-        elm::ElmSyntaxPattern::PatternParenthesized(in_parens) => {
-            ElmSyntaxPattern::Parenthesized(elm_syntax_node_pattern_to_persistent_box(*in_parens))
-        }
-        elm::ElmSyntaxPattern::PatternRecord(fields) => ElmSyntaxPattern::Record(
-            fields
-                .into_iter()
-                .map(elm_syntax_node_string_to_persistent)
-                .collect::<Vec<_>>(),
-        ),
-        elm::ElmSyntaxPattern::PatternString(string_pattern) => ElmSyntaxPattern::String {
-            quoting_style: string_pattern.quoting_style,
-            content: string_pattern.content.to_string(),
-        },
-        elm::ElmSyntaxPattern::PatternTriple(parts) => ElmSyntaxPattern::Triple {
-            part0: elm_syntax_node_pattern_to_persistent_box(parts.part0),
-            part1: elm_syntax_node_pattern_to_persistent_box(parts.part1),
-            part2: elm_syntax_node_pattern_to_persistent_box(parts.part2),
-        },
-        elm::ElmSyntaxPattern::PatternTuple(parts) => ElmSyntaxPattern::Tuple {
-            part0: elm_syntax_node_pattern_to_persistent_box(parts.part0),
-            part1: elm_syntax_node_pattern_to_persistent_box(parts.part1),
-        },
-        elm::ElmSyntaxPattern::PatternUnit => ElmSyntaxPattern::Unit,
-        elm::ElmSyntaxPattern::PatternVariable(name) => {
-            ElmSyntaxPattern::Variable(name.to_string())
-        }
-        elm::ElmSyntaxPattern::PatternVariant(variant_pattern) => ElmSyntaxPattern::Variant {
-            reference: elm_syntax_node_to_persistent(variant_pattern.reference, |reference| {
-                elm::GeneratedNameQualification {
-                    qualification: reference.qualification.to_string(),
-                    name: reference.name.to_string(),
-                }
-            }),
-            values: variant_pattern
-                .values
-                .into_iter()
-                .map(elm_syntax_node_pattern_to_persistent)
-                .collect::<Vec<_>>(),
-        },
-    }
-}
-
-fn elm_syntax_node_pattern_to_persistent(
-    elm_syntax_node_pattern: elm::ElmSyntaxNode<elm::ElmSyntaxPattern>,
-) -> ElmSyntaxNode<ElmSyntaxPattern> {
-    elm_syntax_node_to_persistent(elm_syntax_node_pattern, elm_syntax_pattern_to_persistent)
-}
-
-fn elm_syntax_node_pattern_to_persistent_box(
-    elm_syntax_node_pattern: elm::ElmSyntaxNode<elm::ElmSyntaxPattern>,
-) -> ElmSyntaxNode<Box<ElmSyntaxPattern>> {
-    elm_syntax_node_to_persistent(elm_syntax_node_pattern, |pattern| {
-        Box::new(elm_syntax_pattern_to_persistent(pattern))
-    })
-}
-
-fn elm_syntax_expression_to_persistent(
-    elm_syntax_expression: elm::ElmSyntaxExpression,
-) -> ElmSyntaxExpression {
-    match elm_syntax_expression {
-        elm::ElmSyntaxExpression::ExpressionCall(call) => ElmSyntaxExpression::Call {
-            called: elm_syntax_node_expression_to_persistent_box(call.called),
-            argument0: elm_syntax_node_expression_to_persistent_box(call.argument0),
-            argument1_up: call
-                .argument1_up
-                .into_iter()
-                .map(elm_syntax_node_expression_to_persistent)
-                .collect::<Vec<_>>(),
-        },
-        elm::ElmSyntaxExpression::ExpressionCaseOf(case_of) => ElmSyntaxExpression::CaseOf {
-            matched: elm_syntax_node_expression_to_persistent_box(case_of.matched),
-            of_keyword_range: text_grid_range_to_lsp_range(case_of.of_keyword_range),
-            case0: elm::GeneratedArrowKeySymbolRangePatternResult {
-                pattern: elm_syntax_node_pattern_to_persistent(case_of.case0.pattern),
-                arrow_key_symbol_range: text_grid_range_to_lsp_range(
-                    case_of.case0.arrow_key_symbol_range,
-                ),
-                result: elm_syntax_node_expression_to_persistent_box(case_of.case0.result),
-            },
-            case1_up: case_of
-                .case1_up
-                .into_iter()
-                .map(|case| elm::GeneratedArrowKeySymbolRangePatternResult {
-                    pattern: elm_syntax_node_pattern_to_persistent(case.pattern),
-                    arrow_key_symbol_range: text_grid_range_to_lsp_range(
-                        case.arrow_key_symbol_range,
-                    ),
-                    result: elm_syntax_node_expression_to_persistent(case.result),
-                })
-                .collect::<Vec<_>>(),
-        },
-        elm::ElmSyntaxExpression::ExpressionChar(char) => ElmSyntaxExpression::Char(char),
-        elm::ElmSyntaxExpression::ExpressionFloat(float) => ElmSyntaxExpression::Float(float),
-        elm::ElmSyntaxExpression::ExpressionIfThenElse(if_then_else) => {
-            ElmSyntaxExpression::IfThenElse {
-                condition: elm_syntax_node_expression_to_persistent_box(if_then_else.condition),
-                then_keyword_range: text_grid_range_to_lsp_range(if_then_else.then_keyword_range),
-                on_true: elm_syntax_node_expression_to_persistent_box(if_then_else.on_true),
-                else_keyword_range: text_grid_range_to_lsp_range(if_then_else.else_keyword_range),
-                on_false: elm_syntax_node_expression_to_persistent_box(if_then_else.on_false),
-            }
-        }
-        elm::ElmSyntaxExpression::ExpressionInfixOperation(infix_operation) => {
-            ElmSyntaxExpression::InfixOperation {
-                left: elm_syntax_node_expression_to_persistent_box(infix_operation.left),
-                operator: elm_syntax_node_string_to_persistent(infix_operation.operator),
-                right: elm_syntax_node_expression_to_persistent_box(infix_operation.right),
-            }
-        }
-        elm::ElmSyntaxExpression::ExpressionInteger(integer_expression) => {
-            ElmSyntaxExpression::Integer {
-                base: integer_expression.base,
-                value: integer_expression.value,
-            }
-        }
-        elm::ElmSyntaxExpression::ExpressionLambda(lambda) => ElmSyntaxExpression::Lambda {
-            parameter0: elm_syntax_node_pattern_to_persistent(lambda.parameter0),
-            parameter1_up: lambda
-                .parameter1_up
-                .into_iter()
-                .map(elm_syntax_node_pattern_to_persistent)
-                .collect::<Vec<_>>(),
-            arrow_key_symbol_range: text_grid_range_to_lsp_range(lambda.arrow_key_symbol_range),
-            result: elm_syntax_node_expression_to_persistent_box(lambda.result),
-        },
-        elm::ElmSyntaxExpression::ExpressionLetIn(let_in) => ElmSyntaxExpression::LetIn {
-            declaration0: elm_syntax_node_to_persistent(let_in.declaration0, |declaration| {
-                Box::new(elm_syntax_let_declaration_to_persistent(declaration))
-            }),
-            declaration1_up: let_in
-                .declaration1_up
-                .into_iter()
-                .map(|declaration_node| {
-                    elm_syntax_node_to_persistent(
-                        declaration_node,
-                        elm_syntax_let_declaration_to_persistent,
-                    )
-                })
-                .collect::<Vec<_>>(),
-            in_keyword_range: text_grid_range_to_lsp_range(let_in.in_keyword_range),
-            result: elm_syntax_node_expression_to_persistent_box(let_in.result),
-        },
-        elm::ElmSyntaxExpression::ExpressionList(elements) => ElmSyntaxExpression::List(
-            elements
-                .into_iter()
-                .map(elm_syntax_node_expression_to_persistent)
-                .collect::<Vec<_>>(),
-        ),
-        elm::ElmSyntaxExpression::ExpressionNegation(in_negation) => ElmSyntaxExpression::Negation(
-            elm_syntax_node_expression_to_persistent_box(*in_negation),
-        ),
-        elm::ElmSyntaxExpression::ExpressionOperatorFunction(symbol) => {
-            ElmSyntaxExpression::OperatorFunction(symbol.to_string())
-        }
-        elm::ElmSyntaxExpression::ExpressionParenthesized(in_parens) => {
-            ElmSyntaxExpression::Parenthesized(elm_syntax_node_expression_to_persistent_box(
-                *in_parens,
-            ))
-        }
-        elm::ElmSyntaxExpression::ExpressionRecord(fields) => ElmSyntaxExpression::Record(
-            fields
-                .into_iter()
-                .map(|field| elm::GeneratedEqualsKeySymbolRangeNameValue {
-                    name: elm_syntax_node_string_to_persistent(field.name),
-                    equals_key_symbol_range: text_grid_range_to_lsp_range(
-                        field.equals_key_symbol_range,
-                    ),
-                    value: elm_syntax_node_expression_to_persistent(field.value),
-                })
-                .collect::<Vec<_>>(),
-        ),
-        elm::ElmSyntaxExpression::ExpressionRecordAccess(record_access) => {
-            ElmSyntaxExpression::RecordAccess {
-                record: elm_syntax_node_expression_to_persistent_box(record_access.record),
-                field: elm_syntax_node_string_to_persistent(record_access.field),
-            }
-        }
-        elm::ElmSyntaxExpression::ExpressionRecordAccessFunction(field) => {
-            ElmSyntaxExpression::RecordAccessFunction(field.to_string())
-        }
-        elm::ElmSyntaxExpression::ExpressionRecordUpdate(record_update) => {
-            ElmSyntaxExpression::RecordUpdate {
-                record_variable: elm_syntax_node_string_to_persistent(
-                    record_update.record_variable,
-                ),
-                bar_key_symbol_range: text_grid_range_to_lsp_range(
-                    record_update.bar_key_symbol_range,
-                ),
-                field0: elm::GeneratedEqualsKeySymbolRangeNameValue {
-                    name: elm_syntax_node_string_to_persistent(record_update.field0.name),
-                    equals_key_symbol_range: text_grid_range_to_lsp_range(
-                        record_update.field0.equals_key_symbol_range,
-                    ),
-                    value: elm_syntax_node_expression_to_persistent_box(record_update.field0.value),
-                },
-                field1_up: record_update
-                    .field1_up
-                    .into_iter()
-                    .map(|field| elm::GeneratedEqualsKeySymbolRangeNameValue {
-                        name: elm_syntax_node_string_to_persistent(field.name),
-                        equals_key_symbol_range: text_grid_range_to_lsp_range(
-                            field.equals_key_symbol_range,
-                        ),
-                        value: elm_syntax_node_expression_to_persistent(field.value),
-                    })
-                    .collect::<Vec<_>>(),
-            }
-        }
-        elm::ElmSyntaxExpression::ExpressionReference(reference) => {
-            ElmSyntaxExpression::Reference(elm::GeneratedNameQualification {
-                qualification: reference.qualification.to_string(),
-                name: reference.name.to_string(),
-            })
-        }
-        elm::ElmSyntaxExpression::ExpressionString(string_expression) => {
-            ElmSyntaxExpression::String {
-                quoting_style: string_expression.quoting_style,
-                content: string_expression.content.to_string(),
-            }
-        }
-        elm::ElmSyntaxExpression::ExpressionTriple(parts) => ElmSyntaxExpression::Triple {
-            part0: elm_syntax_node_expression_to_persistent_box(parts.part0),
-            part1: elm_syntax_node_expression_to_persistent_box(parts.part1),
-            part2: elm_syntax_node_expression_to_persistent_box(parts.part2),
-        },
-        elm::ElmSyntaxExpression::ExpressionTuple(parts) => ElmSyntaxExpression::Tuple {
-            part0: elm_syntax_node_expression_to_persistent_box(parts.part0),
-            part1: elm_syntax_node_expression_to_persistent_box(parts.part1),
-        },
-        elm::ElmSyntaxExpression::ExpressionUnit => ElmSyntaxExpression::Unit,
-    }
-}
-
-fn elm_syntax_node_expression_to_persistent(
-    elm_syntax_node_expression: elm::ElmSyntaxNode<elm::ElmSyntaxExpression>,
-) -> ElmSyntaxNode<ElmSyntaxExpression> {
-    elm_syntax_node_to_persistent(
-        elm_syntax_node_expression,
-        elm_syntax_expression_to_persistent,
-    )
-}
-
-fn elm_syntax_node_expression_to_persistent_box(
-    elm_syntax_node_expression: elm::ElmSyntaxNode<elm::ElmSyntaxExpression>,
-) -> ElmSyntaxNode<Box<ElmSyntaxExpression>> {
-    elm_syntax_node_to_persistent(elm_syntax_node_expression, |expression| {
-        Box::new(elm_syntax_expression_to_persistent(expression))
-    })
-}
-
-fn elm_syntax_let_declaration_to_persistent(
-    elm_syntax_let_declaration: elm::ElmSyntaxLetDeclaration,
-) -> ElmSyntaxLetDeclaration {
-    match elm_syntax_let_declaration {
-        elm::ElmSyntaxLetDeclaration::LetDestructuring(destructuring) => {
-            ElmSyntaxLetDeclaration::Destructuring {
-                pattern: elm_syntax_node_pattern_to_persistent(destructuring.pattern),
-                equals_key_symbol_range: text_grid_range_to_lsp_range(
-                    destructuring.equals_key_symbol_range,
-                ),
-                expression: elm_syntax_node_expression_to_persistent(destructuring.expression),
-            }
-        }
-        elm::ElmSyntaxLetDeclaration::LetValueOrFunctionDeclaration(variable_declaration) => {
-            ElmSyntaxLetDeclaration::ValueOrFunctionDeclaration {
-                name: variable_declaration.name.to_string(),
-                signature: variable_declaration.signature.map(|signature| {
-                    elm::GeneratedNameType0 {
-                        name: elm_syntax_node_string_to_persistent(signature.name),
-                        type_1: elm_syntax_node_type_to_persistent(signature.type_1),
-                    }
-                }),
-                implementation_name_range: text_grid_range_to_lsp_range(
-                    variable_declaration.implementation_name_range,
-                ),
-                parameters: variable_declaration
-                    .parameters
-                    .into_iter()
-                    .map(elm_syntax_node_pattern_to_persistent)
-                    .collect::<Vec<_>>(),
-                equals_key_symbol_range: text_grid_range_to_lsp_range(
-                    variable_declaration.equals_key_symbol_range,
-                ),
-                result: elm_syntax_node_expression_to_persistent(variable_declaration.result),
-            }
-        }
-    }
-}
-
-fn elm_syntax_node_string_to_persistent(
-    elm_syntax_node_string: elm::ElmSyntaxNode<elm::StringString>,
-) -> ElmSyntaxNode<String> {
-    ElmSyntaxNode {
-        range: text_grid_range_to_lsp_range(elm_syntax_node_string.range),
-        value: elm_syntax_node_string.value.to_string(),
-    }
-}
-
-fn elm_syntax_node_to_persistent<Value, ValuePersistent>(
-    elm_syntax_node: elm::ElmSyntaxNode<Value>,
-    value_to_persistent: fn(Value) -> ValuePersistent,
-) -> ElmSyntaxNode<ValuePersistent> {
-    ElmSyntaxNode {
-        range: text_grid_range_to_lsp_range(elm_syntax_node.range),
-        value: value_to_persistent(elm_syntax_node.value),
-    }
+#[derive(Clone, Debug, PartialEq)]
+struct EmSyntaxImportAs {
+    as_keyword_range: lsp_types::Range,
+    name: Option<ElmSyntaxNode<String>>,
 }
 
 /// Create through module_origin_lookup_for_implicit_imports or
@@ -3830,6 +3171,14 @@ fn elm_syntax_module_create_origin_lookup<'a>(
     elm_syntax_module: &'a ElmSyntaxModule,
 ) -> ModuleOriginLookup<'a> {
     let mut module_origin_lookup: ModuleOriginLookup = module_origin_lookup_for_implicit_imports();
+    let self_module_name: &str = match elm_syntax_module
+        .header
+        .as_ref()
+        .and_then(|header| header.module_name.as_ref())
+    {
+        None => "",
+        Some(module_header) => &module_header.value,
+    };
     for documented_declaration in elm_syntax_module.declarations.iter() {
         match &documented_declaration.declaration.value {
             ElmSyntaxDeclaration::ChoiceType {
@@ -3839,19 +3188,16 @@ fn elm_syntax_module_create_origin_lookup<'a>(
                 variant0: variant0,
                 variant1_up: variant1_up,
             } => {
-                module_origin_lookup.unqualified.insert(
-                    &name.value,
-                    &elm_syntax_module.header.value.module_name.value,
-                );
-                module_origin_lookup.unqualified.insert(
-                    &variant0.name.value,
-                    &elm_syntax_module.header.value.module_name.value,
-                );
+                module_origin_lookup
+                    .unqualified
+                    .insert(&name.value, self_module_name);
+                module_origin_lookup
+                    .unqualified
+                    .insert(&variant0.name.value, self_module_name);
                 for variant in variant1_up.iter() {
-                    module_origin_lookup.unqualified.insert(
-                        &variant.name.value,
-                        &elm_syntax_module.header.value.module_name.value,
-                    );
+                    module_origin_lookup
+                        .unqualified
+                        .insert(&variant.name.value, self_module_name);
                 }
             }
             ElmSyntaxDeclaration::Operator {
@@ -3860,16 +3206,14 @@ fn elm_syntax_module_create_origin_lookup<'a>(
                 function: _,
                 precedence: _,
             } => {
-                module_origin_lookup.unqualified.insert(
-                    &operator.value,
-                    &elm_syntax_module.header.value.module_name.value,
-                );
+                module_origin_lookup
+                    .unqualified
+                    .insert(&operator.value, self_module_name);
             }
             ElmSyntaxDeclaration::Port { name, type_: _ } => {
-                module_origin_lookup.unqualified.insert(
-                    &name.value,
-                    &elm_syntax_module.header.value.module_name.value,
-                );
+                module_origin_lookup
+                    .unqualified
+                    .insert(&name.value, self_module_name);
             }
             ElmSyntaxDeclaration::TypeAlias {
                 alias_keyword_range: _,
@@ -3878,10 +3222,9 @@ fn elm_syntax_module_create_origin_lookup<'a>(
                 parameters: _,
                 type_: _,
             } => {
-                module_origin_lookup.unqualified.insert(
-                    &name.value,
-                    &elm_syntax_module.header.value.module_name.value,
-                );
+                module_origin_lookup
+                    .unqualified
+                    .insert(&name.value, self_module_name);
             }
             ElmSyntaxDeclaration::ValueOrFunction {
                 name,
@@ -3893,14 +3236,23 @@ fn elm_syntax_module_create_origin_lookup<'a>(
             } => {
                 module_origin_lookup
                     .unqualified
-                    .insert(name, &elm_syntax_module.header.value.module_name.value);
+                    .insert(name, self_module_name);
             }
         }
     }
-    for import_node in &elm_syntax_module.imports {
-        let allowed_qualification: &str = match import_node.value.alias {
-            None => &import_node.value.module_name.value,
-            Some(ref import_alias) => &import_alias.name.value,
+    for (import_module_name, import) in elm_syntax_module.imports.iter().filter_map(|import_node| {
+        import_node
+            .value
+            .module_name
+            .as_ref()
+            .map(|module_name| (&module_name.value, &import_node.value))
+    }) {
+        let allowed_qualification: &str = match import.alias {
+            None => import_module_name,
+            Some(ref import_alias) => match import_alias.name {
+                Some(ref import_alias_name) => &import_alias_name.value,
+                None => import_module_name,
+            },
         };
         match module_origin_lookup
             .uniquely_qualified
@@ -3929,12 +3281,10 @@ fn elm_syntax_module_create_origin_lookup<'a>(
                     );
                 }
                 let imported_module_maybe_syntax: Option<&ElmSyntaxModule> =
-                    project_state_get_module_with_name(
-                        state,
-                        project_state,
-                        &import_node.value.module_name.value,
-                    )
-                    .and_then(|(_, imported_module_state)| imported_module_state.syntax.as_ref());
+                    project_state_get_module_with_name(state, project_state, import_module_name)
+                        .and_then(|(_, imported_module_state)| {
+                            imported_module_state.syntax.as_ref()
+                        });
                 for imported_module_expose in imported_module_maybe_syntax
                     .map(elm_syntax_module_exposed_symbols)
                     .into_iter()
@@ -3945,112 +3295,115 @@ fn elm_syntax_module_create_origin_lookup<'a>(
                             qualification: allowed_qualification,
                             name: imported_module_expose,
                         },
-                        &import_node.value.module_name.value,
+                        import_module_name,
                     );
                 }
             }
             None => {
                 module_origin_lookup
                     .uniquely_qualified
-                    .insert(allowed_qualification, &import_node.value.module_name.value);
+                    .insert(allowed_qualification, import_module_name);
             }
         }
-        match import_node.value.exposing {
+        match import.exposing {
             None => {}
-            Some(ref import_exposing) => match import_exposing.value {
-                ElmSyntaxExposing::Explicit(ref exposes) => {
-                    for expose_node in exposes {
-                        match &expose_node.value {
-                            ElmSyntaxExpose::ChoiceTypeIncludingVariants {
-                                name: choice_type_expose_name,
-                                open_range: _,
-                            } => {
-                                module_origin_lookup.unqualified.insert(
-                                    &choice_type_expose_name.value,
-                                    &import_node.value.module_name.value,
-                                );
-                                let imported_module_maybe_syntax: Option<&ElmSyntaxModule> =
-                                    project_state_get_module_with_name(
-                                        state,
-                                        project_state,
-                                        &import_node.value.module_name.value,
-                                    )
-                                    .and_then(
-                                        |(_, imported_module_state)| {
-                                            imported_module_state.syntax.as_ref()
-                                        },
-                                    );
-                                match imported_module_maybe_syntax {
-                                    None => {}
-                                    Some(imported_module_syntax) => {
-                                        'until_origin_choice_type_declaration_found: for documented_declaration in
-                                            imported_module_syntax.declarations.iter()
-                                        {
-                                            match &documented_declaration.declaration.value {
-                                                ElmSyntaxDeclaration::ChoiceType {
-                                                    name: imported_module_choice_type_name,
-                                                    parameters: _,
-                                                    equals_key_symbol_range: _,
-                                                    variant0: imported_module_choice_type_variant0,
-                                                    variant1_up:
-                                                        imported_module_choice_type_variant1_up,
-                                                } => {
-                                                    if choice_type_expose_name
-                                                        == imported_module_choice_type_name
-                                                    {
-                                                        module_origin_lookup.unqualified.insert(
+            Some(ref import_exposing) => {
+                match import_exposing.specific.as_ref().map(|node| &node.value) {
+                    None => {}
+                    Some(ElmSyntaxExposingSpecific::All(_)) => {
+                        for import_exposed_symbol in
+                            elm_syntax_module_exposed_symbols(elm_syntax_module)
+                        {
+                            module_origin_lookup
+                                .unqualified
+                                .insert(import_exposed_symbol, import_module_name);
+                        }
+                    }
+                    Some(ElmSyntaxExposingSpecific::Explicit(exposes)) => {
+                        for expose_node in exposes {
+                            match &expose_node.value {
+                                ElmSyntaxExpose::ChoiceTypeIncludingVariants {
+                                    name: choice_type_expose_name,
+                                    open_range: _,
+                                } => {
+                                    module_origin_lookup
+                                        .unqualified
+                                        .insert(&choice_type_expose_name.value, import_module_name);
+                                    let imported_module_maybe_syntax: Option<&ElmSyntaxModule> =
+                                        project_state_get_module_with_name(
+                                            state,
+                                            project_state,
+                                            import_module_name,
+                                        )
+                                        .and_then(
+                                            |(_, imported_module_state)| {
+                                                imported_module_state.syntax.as_ref()
+                                            },
+                                        );
+                                    match imported_module_maybe_syntax {
+                                        None => {}
+                                        Some(imported_module_syntax) => {
+                                            'until_origin_choice_type_declaration_found: for documented_declaration in
+                                                imported_module_syntax.declarations.iter()
+                                            {
+                                                match &documented_declaration.declaration.value {
+                                                    ElmSyntaxDeclaration::ChoiceType {
+                                                        name: imported_module_choice_type_name,
+                                                        parameters: _,
+                                                        equals_key_symbol_range: _,
+                                                        variant0:
+                                                            imported_module_choice_type_variant0,
+                                                        variant1_up:
+                                                            imported_module_choice_type_variant1_up,
+                                                    } => {
+                                                        if choice_type_expose_name
+                                                            == imported_module_choice_type_name
+                                                        {
+                                                            module_origin_lookup.unqualified.insert(
                                                             &imported_module_choice_type_variant0
                                                                 .name
                                                                 .value,
-                                                            &import_node.value.module_name.value,
+                                                            import_module_name,
                                                         );
-                                                        for imported_module_choice_type_variant in
+                                                            for imported_module_choice_type_variant in
                                                             imported_module_choice_type_variant1_up
                                                         {
                                                             module_origin_lookup
                                                             .unqualified
                                                             .insert(
                                                                 &imported_module_choice_type_variant.name.value,
-                                                                &import_node.value.module_name.value,
+                                                                import_module_name,
                                                             );
                                                         }
-                                                        break 'until_origin_choice_type_declaration_found;
+                                                            break 'until_origin_choice_type_declaration_found;
+                                                        }
                                                     }
+                                                    _ => {}
                                                 }
-                                                _ => {}
                                             }
                                         }
                                     }
                                 }
-                            }
-                            ElmSyntaxExpose::Operator(symbol) => {
-                                module_origin_lookup
-                                    .unqualified
-                                    .insert(symbol, &import_node.value.module_name.value);
-                            }
-                            ElmSyntaxExpose::Type(name) => {
-                                module_origin_lookup
-                                    .unqualified
-                                    .insert(name, &import_node.value.module_name.value);
-                            }
-                            ElmSyntaxExpose::Variable(name) => {
-                                module_origin_lookup
-                                    .unqualified
-                                    .insert(name, &import_node.value.module_name.value);
+                                ElmSyntaxExpose::Operator(symbol) => {
+                                    module_origin_lookup
+                                        .unqualified
+                                        .insert(symbol, import_module_name);
+                                }
+                                ElmSyntaxExpose::Type(name) => {
+                                    module_origin_lookup
+                                        .unqualified
+                                        .insert(name, import_module_name);
+                                }
+                                ElmSyntaxExpose::Variable(name) => {
+                                    module_origin_lookup
+                                        .unqualified
+                                        .insert(name, import_module_name);
+                                }
                             }
                         }
                     }
                 }
-                ElmSyntaxExposing::All(_) => {
-                    for import_exposed_symbol in
-                        elm_syntax_module_exposed_symbols(elm_syntax_module)
-                    {
-                        module_origin_lookup
-                            .unqualified
-                            .insert(import_exposed_symbol, &import_node.value.module_name.value);
-                    }
-                }
-            },
+            }
         }
     }
     module_origin_lookup
@@ -4058,8 +3411,15 @@ fn elm_syntax_module_create_origin_lookup<'a>(
 
 fn elm_syntax_module_exposed_symbols<'a>(elm_syntax_module: &'a ElmSyntaxModule) -> Vec<&'a str> {
     let mut exposed_symbols: Vec<&str> = Vec::new();
-    match elm_syntax_module.header.value.exposing.value {
-        ElmSyntaxExposing::All(_) => {
+    match elm_syntax_module
+        .header
+        .as_ref()
+        .and_then(|header| header.exposing.as_ref())
+        .and_then(|exposing| exposing.specific.as_ref())
+        .as_ref()
+        .map(|node| &node.value)
+    {
+        None | Some(ElmSyntaxExposingSpecific::All(_)) => {
             for documented_declaration in elm_syntax_module.declarations.iter() {
                 match &documented_declaration.declaration.value {
                     ElmSyntaxDeclaration::ChoiceType {
@@ -4111,7 +3471,7 @@ fn elm_syntax_module_exposed_symbols<'a>(elm_syntax_module: &'a ElmSyntaxModule)
                 }
             }
         }
-        ElmSyntaxExposing::Explicit(ref exposes) => {
+        Some(ElmSyntaxExposingSpecific::Explicit(exposes)) => {
             for expose in exposes {
                 match &expose.value {
                     ElmSyntaxExpose::ChoiceTypeIncludingVariants {
@@ -4405,7 +3765,7 @@ fn elm_syntax_import_find_reference_at_position<'a>(
 }
 
 fn elm_syntax_exposing_from_module_find_reference_at_position<'a>(
-    elm_syntax_exposing_node: ElmSyntaxNode<&'a ElmSyntaxExposing>,
+    elm_syntax_exposing_node: ElmSyntaxNode<&'a ElmSyntaxExposingSpecific>,
     module_name: &'a str,
     position: lsp_types::Position,
 ) -> Option<ElmSyntaxNode<ElmSyntaxSymbol<'a>>> {
@@ -4413,49 +3773,51 @@ fn elm_syntax_exposing_from_module_find_reference_at_position<'a>(
         None
     } else {
         match elm_syntax_exposing_node.value {
-            ElmSyntaxExposing::All(_) => None,
-            ElmSyntaxExposing::Explicit(exposes) => exposes.iter().find_map(|expose_node| {
-                if lsp_range_includes_position(expose_node.range, position) {
-                    Some(match &expose_node.value {
-                        ElmSyntaxExpose::ChoiceTypeIncludingVariants {
-                            name,
-                            open_range: _,
-                        } => ElmSyntaxNode {
-                            value: ElmSyntaxSymbol::Type {
-                                module_origin: module_name,
-                                name: &name.value,
+            ElmSyntaxExposingSpecific::All(_) => None,
+            ElmSyntaxExposingSpecific::Explicit(exposes) => {
+                exposes.iter().find_map(|expose_node| {
+                    if lsp_range_includes_position(expose_node.range, position) {
+                        Some(match &expose_node.value {
+                            ElmSyntaxExpose::ChoiceTypeIncludingVariants {
+                                name,
+                                open_range: _,
+                            } => ElmSyntaxNode {
+                                value: ElmSyntaxSymbol::Type {
+                                    module_origin: module_name,
+                                    name: &name.value,
+                                },
+                                range: expose_node.range,
                             },
-                            range: expose_node.range,
-                        },
-                        ElmSyntaxExpose::Operator(symbol) => ElmSyntaxNode {
-                            value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
-                                module_origin: module_name,
-                                name: symbol,
+                            ElmSyntaxExpose::Operator(symbol) => ElmSyntaxNode {
+                                value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
+                                    module_origin: module_name,
+                                    name: symbol,
+                                },
+                                range: lsp_types::Range {
+                                    start: lsp_position_add_characters(expose_node.range.start, 1),
+                                    end: lsp_position_add_characters(expose_node.range.end, -1),
+                                },
                             },
-                            range: lsp_types::Range {
-                                start: lsp_position_add_characters(expose_node.range.start, 1),
-                                end: lsp_position_add_characters(expose_node.range.end, -1),
+                            ElmSyntaxExpose::Type(name) => ElmSyntaxNode {
+                                value: ElmSyntaxSymbol::Type {
+                                    module_origin: module_name,
+                                    name: name,
+                                },
+                                range: expose_node.range,
                             },
-                        },
-                        ElmSyntaxExpose::Type(name) => ElmSyntaxNode {
-                            value: ElmSyntaxSymbol::Type {
-                                module_origin: module_name,
-                                name: name,
+                            ElmSyntaxExpose::Variable(name) => ElmSyntaxNode {
+                                value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
+                                    module_origin: module_name,
+                                    name: name,
+                                },
+                                range: expose_node.range,
                             },
-                            range: expose_node.range,
-                        },
-                        ElmSyntaxExpose::Variable(name) => ElmSyntaxNode {
-                            value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
-                                module_origin: module_name,
-                                name: name,
-                            },
-                            range: expose_node.range,
-                        },
-                    })
-                } else {
-                    None
-                }
-            }),
+                        })
+                    } else {
+                        None
+                    }
+                })
+            }
         }
     }
 }
@@ -5121,7 +4483,7 @@ fn elm_syntax_expression_find_reference_at_position<'a>(
                     position,
                 )
             }),
-            ElmSyntaxExpression::InfixOperation {
+            ElmSyntaxExpression::InfixOperationIgnoringPrecedence {
                 left,
                 operator,
                 right,
@@ -5684,12 +5046,12 @@ fn elm_syntax_import_uses_of_reference_into(
 fn elm_syntax_exposing_uses_of_reference_into(
     uses_so_far: &mut Vec<lsp_types::Range>,
     origin_module: &str,
-    elm_syntax_exposing: &ElmSyntaxExposing,
+    elm_syntax_exposing: &ElmSyntaxExposingSpecific,
     symbol_to_collect_uses_of: ElmDeclaredSymbol,
 ) {
     match elm_syntax_exposing {
-        ElmSyntaxExposing::All(_) => {}
-        ElmSyntaxExposing::Explicit(exposes) => {
+        ElmSyntaxExposingSpecific::All(_) => {}
+        ElmSyntaxExposingSpecific::Explicit(exposes) => {
             for expose in exposes {
                 match &expose.value {
                     ElmSyntaxExpose::ChoiceTypeIncludingVariants {
@@ -6216,7 +5578,7 @@ fn elm_syntax_expression_uses_of_reference_into(
                 symbol_to_collect_uses_of,
             );
         }
-        ElmSyntaxExpression::InfixOperation {
+        ElmSyntaxExpression::InfixOperationIgnoringPrecedence {
             left,
             operator: _,
             right,
@@ -7123,7 +6485,7 @@ fn elm_syntax_highlight_import_into(
 
 fn elm_syntax_highlight_exposing_into(
     highlighted_so_far: &mut Vec<ElmSyntaxNode<ElmSyntaxHighlightKind>>,
-    elm_syntax_exposing_node: ElmSyntaxNode<&ElmSyntaxExposing>,
+    elm_syntax_exposing_node: ElmSyntaxNode<&ElmSyntaxExposingSpecific>,
 ) {
     highlighted_so_far.push(ElmSyntaxNode {
         range: lsp_types::Range {
@@ -7133,13 +6495,13 @@ fn elm_syntax_highlight_exposing_into(
         value: ElmSyntaxHighlightKind::KeySymbol,
     });
     match elm_syntax_exposing_node.value {
-        ElmSyntaxExposing::All(ellipsis_range) => {
+        ElmSyntaxExposingSpecific::All(ellipsis_range) => {
             highlighted_so_far.push(ElmSyntaxNode {
                 range: *ellipsis_range,
                 value: ElmSyntaxHighlightKind::KeySymbol,
             });
         }
-        ElmSyntaxExposing::Explicit(exposes) => {
+        ElmSyntaxExposingSpecific::Explicit(exposes) => {
             for expose_node in exposes {
                 match &expose_node.value {
                     ElmSyntaxExpose::ChoiceTypeIncludingVariants {
@@ -7774,7 +7136,7 @@ fn elm_syntax_highlight_expression_into(
                 elm_syntax_node_unbox(on_false),
             );
         }
-        ElmSyntaxExpression::InfixOperation {
+        ElmSyntaxExpression::InfixOperationIgnoringPrecedence {
             left,
             operator: operator_node,
             right,
@@ -7981,12 +7343,7 @@ fn elm_syntax_highlight_expression_into(
                     range: elm_syntax_expression_node.range,
                     value: reference,
                 },
-                if reference
-                    .name
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_uppercase())
-                {
+                if reference.name.starts_with(|c| c.is_uppercase()) {
                     ElmSyntaxHighlightKind::Variant
                 } else {
                     ElmSyntaxHighlightKind::Variable
@@ -8101,6 +7458,1496 @@ fn elm_syntax_highlight_let_declaration_into(
                 highlighted_so_far,
                 elm_syntax_node_as_ref(result),
             );
+        }
+    }
+}
+
+// //
+struct ParseState {
+    source: String, // TODO change to Box<str>
+    offset_utf8: usize,
+    position: lsp_types::Position,
+    indent: u16,
+    lower_indents_stack: Vec<u16>,
+    comments: Vec<ElmSyntaxNode<ElmSyntaxComment>>,
+}
+enum ElmSyntaxComment {
+    /// --
+    UntilLinebreak(String),
+    /// {- ... -}
+    Block,
+}
+
+fn parse_linebreak(state: &mut ParseState) -> bool {
+    if state.source[state.offset_utf8..].starts_with("\n") {
+        state.offset_utf8 += 1;
+        state.position.line += 1;
+        state.position.character = 0;
+        true
+    } else if state.source[state.offset_utf8..].starts_with("\r\n") {
+        state.offset_utf8 += 2;
+        state.position.line += 1;
+        state.position.character = 0;
+        true
+    } else {
+        false
+    }
+}
+fn parse_linebreak_as_str(state: &mut ParseState) -> Option<&str> {
+    if state.source[state.offset_utf8..].starts_with("\n") {
+        state.offset_utf8 += 1;
+        state.position.line += 1;
+        state.position.character = 0;
+        Some("\n")
+    } else if state.source[state.offset_utf8..].starts_with("\r\n") {
+        state.offset_utf8 += 2;
+        state.position.line += 1;
+        state.position.character = 0;
+        Some("\r\n")
+    } else {
+        None
+    }
+}
+/// prefer using after parse_line_break or similar failed
+fn parse_any_guaranteed_non_linebreak_char(state: &mut ParseState) -> bool {
+    match state.source[state.offset_utf8..].chars().next() {
+        None => false,
+        Some(parsed_char) => {
+            state.offset_utf8 += parsed_char.len_utf8();
+            state.position.character += parsed_char.len_utf8() as u32;
+            true
+        }
+    }
+}
+/// prefer using after parse_line_break or similar failed
+fn parse_any_guaranteed_non_linebreak_char_not_0_indented(state: &mut ParseState) -> bool {
+    match state.source[state.offset_utf8..].chars().next() {
+        None => false,
+        Some(parsed_char) => {
+            if state.position.character <= 0 && !parsed_char.is_whitespace() {
+                false
+            } else {
+                state.offset_utf8 += parsed_char.len_utf8();
+                state.position.character += parsed_char.len_utf8() as u32;
+                true
+            }
+        }
+    }
+}
+fn parse_any_char(state: &mut ParseState) -> bool {
+    parse_linebreak(state) || parse_any_guaranteed_non_linebreak_char(state)
+}
+fn parse_any_char_not_0_indented(state: &mut ParseState) -> bool {
+    parse_linebreak(state) || parse_any_guaranteed_non_linebreak_char_not_0_indented(state)
+}
+/// symbol cannot be non-utf8 characters or \n
+fn parse_char_symbol_as_char(state: &mut ParseState, symbol: char) -> Option<char> {
+    if state.source[state.offset_utf8..].starts_with(symbol) {
+        state.offset_utf8 += symbol.len_utf8();
+        state.position.character += symbol.len_utf8() as u32;
+        Some(symbol)
+    } else {
+        None
+    }
+}
+/// symbol cannot contain non-utf8 characters or \n
+fn parse_symbol(state: &mut ParseState, symbol: &'static str) -> bool {
+    if state.source[state.offset_utf8..].starts_with(symbol) {
+        state.offset_utf8 += symbol.len();
+        state.position.character += symbol.len() as u32;
+        true
+    } else {
+        false
+    }
+}
+/// symbol cannot contain non-utf8 characters or \n
+fn parse_symbol_as<A>(state: &mut ParseState, symbol: &'static str, result: A) -> Option<A> {
+    if parse_symbol(state, symbol) {
+        Some(result)
+    } else {
+        None
+    }
+}
+/// symbol cannot contain non-utf8 characters or \n
+fn parse_symbol_as_str(state: &mut ParseState, symbol: &'static str) -> Option<&'static str> {
+    parse_symbol_as(state, symbol, symbol)
+}
+/// symbol cannot contain non-utf8 characters or \n
+fn parse_symbol_as_range(state: &mut ParseState, symbol: &'static str) -> Option<lsp_types::Range> {
+    let start_position: lsp_types::Position = state.position;
+    if parse_symbol(state, symbol) {
+        Some(lsp_types::Range {
+            start: start_position,
+            end: state.position,
+        })
+    } else {
+        None
+    }
+}
+
+/// given condition must not succeed on linebreak
+fn parse_same_line_while(state: &mut ParseState, char_is_valid: impl Fn(char) -> bool) {
+    let consumed_length_utf8: usize = state.source[state.offset_utf8..]
+        .chars()
+        .take_while(|&c| char_is_valid(c))
+        .map(char::len_utf8)
+        .sum();
+    state.offset_utf8 += consumed_length_utf8;
+    state.position.character += consumed_length_utf8 as u32;
+}
+/// given condition must not succeed on linebreak
+fn parse_same_line_while_as_str(
+    state: &mut ParseState,
+    char_is_valid: impl Fn(char) -> bool,
+) -> &str {
+    let start_offset_utf8: usize = state.offset_utf8;
+    parse_same_line_while(state, char_is_valid);
+    &state.source[start_offset_utf8..state.offset_utf8]
+}
+/// given condition must not succeed on linebreak
+fn parse_same_line_char_if(state: &mut ParseState, char_is_valid: impl Fn(char) -> bool) -> bool {
+    if state.source[state.offset_utf8..].starts_with(char_is_valid) {
+        state.offset_utf8 += 1;
+        state.position.character += 1;
+        true
+    } else {
+        false
+    }
+}
+/// symbol cannot contain non-utf8 characters or \n
+/// TODO prefer parse_until_including_symbol_or_before_0_indented_or_end_of_source where possible
+fn parse_until_including_symbol_or_before_end_of_source(
+    state: &mut ParseState,
+    end_symbol: &'static str,
+) {
+    'until_including_symbol_or_end_of_source: while !parse_symbol(state, end_symbol) {
+        if !parse_any_char(state) {
+            break 'until_including_symbol_or_end_of_source;
+        }
+    }
+}
+/// symbol cannot contain non-utf8 characters or \n
+fn parse_until_including_symbol_or_before_0_indented_or_end_of_source(
+    state: &mut ParseState,
+    end_symbol: &'static str,
+) {
+    'until_including_symbol_or_end_of_source: while !parse_symbol(state, end_symbol) {
+        if !parse_any_char_not_0_indented(state) {
+            break 'until_including_symbol_or_end_of_source;
+        }
+    }
+}
+/// symbol cannot contain non-utf8 characters or \n
+fn parse_until_including_symbol_or_excluding_end_of_line(
+    state: &mut ParseState,
+    end_symbol: &'static str,
+) {
+    'until_including_symbol_or_excluding_end_of_line: while !parse_symbol(state, end_symbol) {
+        if state.source[state.offset_utf8..].starts_with("\n")
+            || state.source[state.offset_utf8..].starts_with("\r\n")
+        {
+            break 'until_including_symbol_or_excluding_end_of_line;
+        } else if parse_any_guaranteed_non_linebreak_char(state) {
+        } else {
+            break 'until_including_symbol_or_excluding_end_of_line;
+        }
+    }
+}
+fn parse_elm_whitespace_and_comments(state: &mut ParseState) {
+    'while_whitespace: loop {
+        if let Some(next_char) = state.source[state.offset_utf8..].chars().next()
+            && next_char.is_whitespace()
+        {
+            state.offset_utf8 += next_char.len_utf8();
+            state.position.character += next_char.len_utf8() as u32;
+        } else if parse_linebreak(state) {
+        } else if parse_elm_comment(state) {
+        } else {
+            break 'while_whitespace;
+        }
+    }
+}
+fn parse_elm_comment(state: &mut ParseState) -> bool {
+    parse_elm_comment_until_linebreak(state) || parse_elm_comment_block(state)
+}
+fn parse_elm_comment_until_linebreak(state: &mut ParseState) -> bool {
+    let position_before: lsp_types::Position = state.position;
+    if parse_symbol(state, "--") {
+        let comment: &str = state.source[state.offset_utf8..]
+            .lines()
+            .next()
+            .unwrap_or("");
+        state.offset_utf8 += comment.len();
+        state.position.line += 1;
+        state.position.character = 0;
+        state.comments.push(ElmSyntaxNode {
+            range: lsp_types::Range {
+                start: position_before,
+                end: state.position,
+            },
+            value: ElmSyntaxComment::UntilLinebreak(comment.to_string()),
+        });
+        true
+    } else {
+        false
+    }
+}
+/// does not parse documentation comment (starting with {-|)
+fn parse_elm_comment_block(state: &mut ParseState) -> bool {
+    if state.source[state.offset_utf8..].starts_with("{-|") {
+        return false;
+    }
+    let start_offset_utf8 = state.offset_utf8;
+    let start_position: lsp_types::Position = state.position;
+    if !parse_symbol(state, "{-") {
+        return false;
+    }
+    let mut nesting_level: u32 = 1;
+    'until_fully_unnested: loop {
+        if parse_linebreak(state) {
+        } else if parse_symbol(state, "{-") {
+            nesting_level += 1;
+        } else if parse_symbol(state, "-}") {
+            if nesting_level <= 1 {
+                break 'until_fully_unnested;
+            } else {
+                nesting_level -= 1;
+            }
+        } else if parse_any_guaranteed_non_linebreak_char(state) {
+        } else {
+            // end of source
+            return false;
+        }
+    }
+    state.comments.push(ElmSyntaxNode {
+        range: lsp_types::Range {
+            start: start_position,
+            end: state.position,
+        },
+        value: ElmSyntaxComment::UntilLinebreak(
+            state.source[start_offset_utf8..state.offset_utf8].to_string(),
+        ),
+    });
+    true
+}
+fn parse_elm_lowercase(state: &mut ParseState) -> Option<String> {
+    let mut chars_from_offset = state.source[state.offset_utf8..].chars();
+    if let Some(first_char) = chars_from_offset.next()
+        && first_char.is_lowercase()
+    {
+        let mut parsed_name: String = first_char.to_string();
+        parsed_name.extend(chars_from_offset.take_while(|&c| c.is_alphanumeric() || c == '_'));
+        state.offset_utf8 += parsed_name.len();
+        state.position.character += parsed_name.len() as u32;
+        Some(parsed_name)
+    } else {
+        None
+    }
+}
+fn parse_elm_lowercase_node(state: &mut ParseState) -> Option<ElmSyntaxNode<String>> {
+    let start_position = state.position;
+    parse_elm_lowercase(state).map(|name| ElmSyntaxNode {
+        range: lsp_types::Range {
+            start: start_position,
+            end: state.position,
+        },
+        value: name,
+    })
+}
+fn parse_elm_uppercase(state: &mut ParseState) -> Option<String> {
+    let mut chars_from_offset = state.source[state.offset_utf8..].chars();
+    if let Some(first_char) = chars_from_offset.next()
+        && first_char.is_uppercase()
+    {
+        let mut parsed_name: String = first_char.to_string();
+        parsed_name.extend(chars_from_offset.take_while(|&c| c.is_alphanumeric() || c == '_'));
+        state.offset_utf8 += parsed_name.len();
+        state.position.character += parsed_name.len() as u32;
+        Some(parsed_name)
+    } else {
+        None
+    }
+}
+fn parse_elm_uppercase_node(state: &mut ParseState) -> Option<ElmSyntaxNode<String>> {
+    let start_position: lsp_types::Position = state.position;
+    parse_elm_uppercase(state).map(|name| ElmSyntaxNode {
+        range: lsp_types::Range {
+            start: start_position,
+            end: state.position,
+        },
+        value: name,
+    })
+}
+fn parse_elm_uppercase_possibly_dot_separated_node(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<String>> {
+    // implementation note: state will only be updated at the very end,
+    // offset is instead tracked in the variable below:
+    let mut current_offset_utf8: usize = state.offset_utf8;
+    if state.source[current_offset_utf8..].starts_with(char::is_uppercase) {
+        current_offset_utf8 += 1;
+        current_offset_utf8 += state.source[current_offset_utf8..]
+            .chars()
+            .take_while(|&c| c.is_alphanumeric() || c == '_')
+            .count();
+        'from_dots: loop {
+            let mut next_chars: std::str::Chars = state.source[current_offset_utf8..].chars();
+            if (next_chars.next() == Some('.'))
+                && (next_chars.next().is_some_and(char::is_uppercase))
+            {
+                current_offset_utf8 += 2;
+                current_offset_utf8 += state.source[current_offset_utf8..]
+                    .chars()
+                    .take_while(|&c| c.is_alphanumeric() || c == '_')
+                    .count();
+            } else {
+                break 'from_dots;
+            }
+        }
+        let end_position: lsp_types::Position = lsp_types::Position {
+            line: state.position.line,
+            character: state.position.character
+                + ((current_offset_utf8 - state.offset_utf8) as u32),
+        };
+        let parsed_name_node: ElmSyntaxNode<String> = ElmSyntaxNode {
+            range: lsp_types::Range {
+                start: state.position,
+                end: end_position,
+            },
+            value: state.source[state.offset_utf8..current_offset_utf8].to_string(),
+        };
+        state.offset_utf8 = current_offset_utf8;
+        state.position = end_position;
+        Some(parsed_name_node)
+    } else {
+        None
+    }
+}
+fn parse_elm_operator_node(state: &mut ParseState) -> Option<ElmSyntaxNode<&'static str>> {
+    // can be optimized by only slicing once for each symbol length
+    let start_position = state.position;
+    parse_symbol_as_str(state, "<")
+        .or_else(|| parse_symbol_as_str(state, ">"))
+        .or_else(|| parse_symbol_as_str(state, "+"))
+        .or_else(|| parse_symbol_as_str(state, "*"))
+        .or_else(|| parse_symbol_as_str(state, "/"))
+        .or_else(|| parse_symbol_as_str(state, "^"))
+        .or_else(|| parse_symbol_as_str(state, "=="))
+        .or_else(|| parse_symbol_as_str(state, "/="))
+        .or_else(|| parse_symbol_as_str(state, "::"))
+        .or_else(|| parse_symbol_as_str(state, "++"))
+        .or_else(|| parse_symbol_as_str(state, "<|"))
+        .or_else(|| parse_symbol_as_str(state, "|>"))
+        .or_else(|| parse_symbol_as_str(state, "||"))
+        .or_else(|| parse_symbol_as_str(state, "&&"))
+        .or_else(|| parse_symbol_as_str(state, "<="))
+        .or_else(|| parse_symbol_as_str(state, ">="))
+        .or_else(|| parse_symbol_as_str(state, "|="))
+        .or_else(|| parse_symbol_as_str(state, "|."))
+        .or_else(|| parse_symbol_as_str(state, "//"))
+        .or_else(|| parse_symbol_as_str(state, "<<"))
+        .or_else(|| parse_symbol_as_str(state, ">>"))
+        .or_else(|| parse_symbol_as_str(state, "</>"))
+        .or_else(|| parse_symbol_as_str(state, "<?>"))
+        .map(|parsed_symbol| ElmSyntaxNode {
+            range: lsp_types::Range {
+                start: start_position,
+                end: state.position,
+            },
+            value: parsed_symbol,
+        })
+}
+fn parse_elm_syntax_expose(state: &mut ParseState) -> Option<ElmSyntaxExpose> {
+    if parse_symbol(state, "(") {
+        parse_elm_whitespace_and_comments(state);
+        let maybe_operator_symbol = parse_elm_operator_node(state);
+        parse_elm_whitespace_and_comments(state);
+        parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, ")");
+        Some(ElmSyntaxExpose::Operator(maybe_operator_symbol))
+    } else if let Some(variable_name) = parse_elm_lowercase(state) {
+        Some(ElmSyntaxExpose::Variable(variable_name))
+    } else if let Some(type_name_node) = parse_elm_uppercase_node(state) {
+        parse_elm_whitespace_and_comments(state);
+        let maybe_open_range = if parse_symbol(state, "(") {
+            parse_elm_whitespace_and_comments(state);
+            parse_symbol_as_range(state, "..").and_then(|exposing_variants_range| {
+                parse_elm_whitespace_and_comments(state);
+                parse_symbol_as(state, ")", exposing_variants_range)
+            })
+        } else {
+            None
+        };
+        match maybe_open_range {
+            None => Some(ElmSyntaxExpose::Type(type_name_node.value)),
+            Some(exposing_variants_range) => Some(ElmSyntaxExpose::ChoiceTypeIncludingVariants {
+                name: type_name_node,
+                open_range: exposing_variants_range,
+            }),
+        }
+    } else {
+        None
+    }
+}
+fn parse_elm_syntax_expose_node(state: &mut ParseState) -> Option<ElmSyntaxNode<ElmSyntaxExpose>> {
+    let start_position = state.position;
+    parse_elm_syntax_expose(state).map(|expose| ElmSyntaxNode {
+        range: lsp_types::Range {
+            start: start_position,
+            end: state.position,
+        },
+        value: expose,
+    })
+}
+
+fn parse_elm_syntax_import(state: &mut ParseState) -> Option<ElmSyntaxImport> {
+    if parse_symbol(state, "import") {
+        parse_elm_whitespace_and_comments(state);
+        let maybe_module_name_node = parse_elm_uppercase_possibly_dot_separated_node(state);
+        parse_elm_whitespace_and_comments(state);
+        let maybe_alias = parse_symbol_as_range(state, "as").and_then(|as_keyword_range| {
+            parse_elm_whitespace_and_comments(state);
+            let maybe_alias_name_node = parse_elm_uppercase_node(state);
+            Some(EmSyntaxImportAs {
+                as_keyword_range: as_keyword_range,
+                name: maybe_alias_name_node,
+            })
+        });
+        parse_elm_whitespace_and_comments(state);
+        let maybe_exposing = parse_elm_syntax_exposing(state);
+        Some(ElmSyntaxImport {
+            module_name: maybe_module_name_node,
+            alias: maybe_alias,
+            exposing: maybe_exposing,
+        })
+    } else {
+        None
+    }
+}
+fn parse_elm_syntax_exposing(state: &mut ParseState) -> Option<ElmSyntaxExposing> {
+    let exposing_keyword_range = parse_symbol_as_range(state, "exposing")?;
+    parse_elm_whitespace_and_comments(state);
+    let maybe_specific = parse_elm_syntax_exposing_specific_node(state);
+    Some(ElmSyntaxExposing {
+        exposing_keyword_range: exposing_keyword_range,
+        specific: maybe_specific,
+    })
+}
+fn parse_elm_syntax_exposing_specific_node(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<ElmSyntaxExposingSpecific>> {
+    let start_position: lsp_types::Position = state.position;
+    if !parse_symbol(state, "(") {
+        return None;
+    }
+    parse_elm_whitespace_and_comments(state);
+    let exposing_specific: ElmSyntaxExposingSpecific = match parse_symbol_as_range(state, "..") {
+        Some(all_range) => {
+            parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, ")");
+            ElmSyntaxExposingSpecific::All(all_range)
+        }
+        None => {
+            let mut expose_nodes: Vec<ElmSyntaxNode<ElmSyntaxExpose>> = Vec::new();
+            'parsing_exposes: while !parse_symbol(state, ")") {
+                match parse_elm_syntax_expose_node(state) {
+                    Some(expose_node) => {
+                        expose_nodes.push(expose_node);
+                        parse_elm_whitespace_and_comments(state);
+                        let _ = parse_symbol(state, ",");
+                        parse_elm_whitespace_and_comments(state);
+                    }
+                    None => {
+                        if !parse_any_char_not_0_indented(state) {
+                            break 'parsing_exposes;
+                        }
+                    }
+                }
+            }
+            ElmSyntaxExposingSpecific::Explicit(expose_nodes)
+        }
+    };
+    Some(ElmSyntaxNode {
+        range: lsp_types::Range {
+            start: start_position,
+            end: state.position,
+        },
+        value: exposing_specific,
+    })
+}
+
+fn parse_elm_syntax_module_header(state: &mut ParseState) -> Option<ElmSyntaxModuleHeader> {
+    if let Some(module_keyword_range) = parse_symbol_as_range(state, "module") {
+        parse_elm_whitespace_and_comments(state);
+        let maybe_module_name_node = parse_elm_uppercase_possibly_dot_separated_node(state);
+        parse_elm_whitespace_and_comments(state);
+        let maybe_exposing = parse_elm_syntax_exposing(state);
+        Some(ElmSyntaxModuleHeader {
+            specific: ElmSyntaxModuleHeaderSpecific::Pure {
+                module_keyword_range: module_keyword_range,
+            },
+            module_name: maybe_module_name_node,
+            exposing: maybe_exposing,
+        })
+    } else if let Some(port_keyword_range) = parse_symbol_as_range(state, "port") {
+        parse_elm_whitespace_and_comments(state);
+        let module_keyword_range = parse_symbol_as_range(state, "module")?;
+        parse_elm_whitespace_and_comments(state);
+        let maybe_module_name_node = parse_elm_uppercase_possibly_dot_separated_node(state);
+        parse_elm_whitespace_and_comments(state);
+        let maybe_exposing = parse_elm_syntax_exposing(state);
+        Some(ElmSyntaxModuleHeader {
+            specific: ElmSyntaxModuleHeaderSpecific::Port {
+                port_keyword_range: port_keyword_range,
+                module_keyword_range: module_keyword_range,
+            },
+            module_name: maybe_module_name_node,
+            exposing: maybe_exposing,
+        })
+    } else if let Some(effect_keyword_range) = parse_symbol_as_range(state, "effect") {
+        parse_elm_whitespace_and_comments(state);
+        let module_keyword_range = parse_symbol_as_range(state, "module")?;
+        parse_elm_whitespace_and_comments(state);
+        let maybe_module_name_node = parse_elm_uppercase_possibly_dot_separated_node(state);
+        parse_elm_whitespace_and_comments(state);
+        let where_keyword_range = parse_symbol_as_range(state, "where")?;
+        parse_elm_whitespace_and_comments(state);
+
+        let maybe_command_entry: Option<EffectModuleHeaderEntry>;
+        let maybe_subscription_entry: Option<EffectModuleHeaderEntry>;
+        if parse_symbol(state, "{") {
+            parse_elm_whitespace_and_comments(state);
+            maybe_command_entry =
+                parse_elm_syntax_effect_module_header_where_entry(state, "command");
+            parse_elm_whitespace_and_comments(state);
+            let _: bool = parse_symbol(state, ",");
+            parse_elm_whitespace_and_comments(state);
+            maybe_subscription_entry =
+                parse_elm_syntax_effect_module_header_where_entry(state, "subscription");
+            parse_elm_whitespace_and_comments(state);
+            parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, "}");
+        } else {
+            maybe_command_entry = None;
+            maybe_subscription_entry = None;
+        }
+
+        parse_elm_whitespace_and_comments(state);
+        let maybe_exposing = parse_elm_syntax_exposing(state);
+        Some(ElmSyntaxModuleHeader {
+            specific: ElmSyntaxModuleHeaderSpecific::Effect {
+                effect_keyword_range: effect_keyword_range,
+                module_keyword_range,
+                where_keyword_range: where_keyword_range,
+                command: maybe_command_entry,
+                subscription: maybe_subscription_entry,
+            },
+            module_name: maybe_module_name_node,
+            exposing: maybe_exposing,
+        })
+    } else {
+        None
+    }
+}
+
+fn parse_elm_syntax_effect_module_header_where_entry(
+    state: &mut ParseState,
+    key: &'static str,
+) -> Option<EffectModuleHeaderEntry> {
+    let key_range = parse_symbol_as_range(state, key)?;
+    parse_elm_whitespace_and_comments(state);
+    let equals_range = parse_symbol_as_range(state, "=")?;
+    parse_elm_whitespace_and_comments(state);
+    let type_name_node = parse_elm_uppercase_node(state)?;
+    Some(EffectModuleHeaderEntry {
+        key_range: key_range,
+        equals_range: equals_range,
+        value_type_name: type_name_node,
+    })
+}
+fn parse_elm_syntax_type_space_separated_node(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<ElmSyntaxType>> {
+    let start_type_node: ElmSyntaxNode<ElmSyntaxType> =
+        parse_elm_syntax_type_not_function_node(state)?;
+    parse_elm_whitespace_and_comments(state);
+    if let Some(arrow_key_symbol_range) = parse_symbol_as_range(state, "->") {
+        parse_elm_whitespace_and_comments(state);
+        let maybe_output_type = parse_elm_syntax_type_space_separated_node(state);
+        Some(ElmSyntaxNode {
+            range: lsp_types::Range {
+                start: start_type_node.range.start,
+                end: match maybe_output_type {
+                    None => arrow_key_symbol_range.end,
+                    Some(ref output_type_node) => output_type_node.range.end,
+                },
+            },
+            value: ElmSyntaxType::Function {
+                input: elm_syntax_node_box(start_type_node),
+                arrow_key_symbol_range: arrow_key_symbol_range,
+                output: maybe_output_type.map(elm_syntax_node_box),
+            },
+        })
+    } else {
+        Some(start_type_node)
+    }
+}
+fn parse_elm_syntax_type_not_function_node(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<ElmSyntaxType>> {
+    parse_elm_syntax_type_construct_node(state).or_else(|| {
+        let start_position: lsp_types::Position = state.position;
+        parse_symbol_as(state, "()", ElmSyntaxType::Unit)
+            .or_else(|| parse_elm_lowercase(state).map(ElmSyntaxType::Variable))
+            .or_else(|| parse_elm_syntax_type_parenthesized_or_tuple_or_triple(state))
+            .or_else(|| parse_elm_syntax_type_record_or_record_extension(state))
+            .map(|type_| ElmSyntaxNode {
+                range: lsp_types::Range {
+                    start: start_position,
+                    end: state.position,
+                },
+                value: type_,
+            })
+    })
+}
+fn parse_elm_syntax_type_not_space_separated_node(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<ElmSyntaxType>> {
+    let start_position = state.position;
+    parse_elm_syntax_type_not_space_separated(state).map(|type_| ElmSyntaxNode {
+        range: lsp_types::Range {
+            start: start_position,
+            end: state.position,
+        },
+        value: type_,
+    })
+}
+fn parse_elm_syntax_type_not_space_separated(state: &mut ParseState) -> Option<ElmSyntaxType> {
+    parse_symbol_as(state, "()", ElmSyntaxType::Unit)
+        .or_else(|| parse_elm_lowercase(state).map(ElmSyntaxType::Variable))
+        .or_else(|| parse_elm_syntax_type_parenthesized_or_tuple_or_triple(state))
+        .or_else(|| {
+            parse_elm_qualified_uppercase_reference_node(state).map(|reference_node| {
+                ElmSyntaxType::Construct {
+                    reference: reference_node,
+                    arguments: vec![],
+                }
+            })
+        })
+        .or_else(|| parse_elm_syntax_type_record_or_record_extension(state))
+}
+fn parse_elm_syntax_type_record_or_record_extension(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxType> {
+    if !parse_symbol(state, "{") {
+        return None;
+    }
+    parse_elm_whitespace_and_comments(state);
+    let maybe_start_name: Option<ElmSyntaxNode<String>> = parse_elm_lowercase_node(state);
+    parse_elm_whitespace_and_comments(state);
+    if let Some(field0_colon_key_symbol_range) = parse_symbol_as_range(state, ":") {
+        parse_elm_whitespace_and_comments(state);
+        let maybe_field0_value: Option<ElmSyntaxNode<ElmSyntaxType>> =
+            parse_elm_syntax_type_space_separated_node(state);
+        let mut fields: Vec<ElmSyntaxTypeField> = vec![ElmSyntaxTypeField {
+            name: maybe_start_name,
+            colon_key_symbol_range: field0_colon_key_symbol_range,
+            value: maybe_field0_value,
+        }];
+        parse_elm_whitespace_and_comments(state);
+        'parsing_field1_up: while parse_symbol(state, ",") {
+            match parse_elm_syntax_type_field(state) {
+                None => {
+                    break 'parsing_field1_up;
+                }
+                Some(field) => {
+                    fields.push(field);
+                    parse_elm_whitespace_and_comments(state);
+                }
+            }
+        }
+        parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, "}");
+        Some(ElmSyntaxType::Record(fields))
+    } else if let Some(bar_key_symbol_range) = parse_symbol_as_range(state, "|") {
+        parse_elm_whitespace_and_comments(state);
+        let mut fields: Vec<ElmSyntaxTypeField> = vec![];
+        if let Some(field0) = parse_elm_syntax_type_field(state) {
+            fields.push(field0);
+            parse_elm_whitespace_and_comments(state);
+            'parsing_field1_up: while parse_symbol(state, ",") {
+                match parse_elm_syntax_type_field(state) {
+                    None => {
+                        break 'parsing_field1_up;
+                    }
+                    Some(field) => {
+                        fields.push(field);
+                        parse_elm_whitespace_and_comments(state);
+                    }
+                }
+            }
+        }
+        parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, "}");
+        Some(ElmSyntaxType::RecordExtension {
+            record_variable: maybe_start_name,
+            bar_key_symbol_range: bar_key_symbol_range,
+            fields: fields,
+        })
+    } else {
+        parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, "}");
+        Some(ElmSyntaxType::Record(vec![]))
+    }
+}
+fn parse_elm_syntax_type_field(state: &mut ParseState) -> Option<ElmSyntaxTypeField> {
+    let maybe_name: Option<ElmSyntaxNode<String>> = parse_elm_lowercase_node(state);
+    parse_elm_whitespace_and_comments(state);
+    let colon_key_symbol_range: lsp_types::Range = parse_symbol_as_range(state, ":")?;
+    parse_elm_whitespace_and_comments(state);
+    let maybe_value: Option<ElmSyntaxNode<ElmSyntaxType>> =
+        parse_elm_syntax_type_space_separated_node(state);
+    Some(ElmSyntaxTypeField {
+        name: maybe_name,
+        colon_key_symbol_range: colon_key_symbol_range,
+        value: maybe_value,
+    })
+}
+fn parse_elm_syntax_type_construct_node(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<ElmSyntaxType>> {
+    let reference_node: ElmSyntaxNode<ElmQualifiedName> =
+        parse_elm_qualified_uppercase_reference_node(state)?;
+    let mut arguments: Vec<ElmSyntaxNode<ElmSyntaxType>> = Vec::new();
+    let mut construct_end_position: lsp_types::Position = reference_node.range.end;
+    'parsing_arguments: loop {
+        parse_elm_whitespace_and_comments(state);
+        if state.position.character < state.indent as u32 {
+            break 'parsing_arguments;
+        }
+        match parse_elm_syntax_type_not_space_separated_node(state) {
+            None => {
+                break 'parsing_arguments;
+            }
+            Some(argument_node) => {
+                construct_end_position = argument_node.range.end;
+                arguments.push(argument_node);
+            }
+        }
+    }
+    Some(ElmSyntaxNode {
+        range: lsp_types::Range {
+            start: reference_node.range.start,
+            end: construct_end_position,
+        },
+        value: ElmSyntaxType::Construct {
+            reference: reference_node,
+            arguments: arguments,
+        },
+    })
+}
+fn parse_elm_qualified_uppercase_reference_node(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<ElmQualifiedName>> {
+    let start_position: lsp_types::Position = state.position;
+    let start_offset_utf8: usize = state.offset_utf8;
+    if !parse_same_line_char_if(state, char::is_uppercase) {
+        return None;
+    }
+    parse_same_line_while(state, |c| c.is_alphanumeric() || c == '_');
+    if parse_symbol(state, ".") {
+        loop {
+            let after_last_dot_offset_utf8: usize = state.offset_utf8;
+            if parse_same_line_char_if(state, char::is_uppercase) {
+                parse_same_line_while(state, |c| c.is_alphanumeric() || c == '_');
+                if !parse_symbol(state, ".") {
+                    return Some(ElmSyntaxNode {
+                        range: lsp_types::Range {
+                            start: start_position,
+                            end: state.position,
+                        },
+                        value: ElmQualifiedName {
+                            qualification: state.source
+                                [start_offset_utf8..(after_last_dot_offset_utf8 - 1)]
+                                .to_string(),
+                            name: state.source[after_last_dot_offset_utf8..state.offset_utf8]
+                                .to_string(),
+                        },
+                    });
+                }
+            } else {
+                // stopping at . and in effect having an empty name is explicitly allowed!
+                return Some(ElmSyntaxNode {
+                    range: lsp_types::Range {
+                        start: start_position,
+                        end: state.position,
+                    },
+                    value: ElmQualifiedName {
+                        qualification: state.source[start_offset_utf8..state.offset_utf8]
+                            .to_string(),
+                        name: "".to_string(),
+                    },
+                });
+            }
+        }
+    } else {
+        Some(ElmSyntaxNode {
+            range: lsp_types::Range {
+                start: start_position,
+                end: state.position,
+            },
+            value: ElmQualifiedName {
+                qualification: "".to_string(),
+                name: state.source[start_offset_utf8..state.offset_utf8].to_string(),
+            },
+        })
+    }
+}
+fn parse_elm_syntax_type_parenthesized_or_tuple_or_triple(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxType> {
+    if !parse_symbol(state, "(") {
+        return None;
+    }
+    parse_elm_whitespace_and_comments(state);
+    let maybe_in_parens_0: Option<ElmSyntaxNode<ElmSyntaxType>> =
+        parse_elm_syntax_type_space_separated_node(state);
+    parse_elm_whitespace_and_comments(state);
+    if !parse_symbol(state, ",") {
+        parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, ")");
+        Some(match maybe_in_parens_0 {
+            None => ElmSyntaxType::Unit,
+            Some(in_parens) => ElmSyntaxType::Parenthesized(elm_syntax_node_box(in_parens)),
+        })
+    } else {
+        parse_elm_whitespace_and_comments(state);
+        let maybe_part1: Option<ElmSyntaxNode<ElmSyntaxType>> =
+            parse_elm_syntax_type_space_separated_node(state);
+        parse_elm_whitespace_and_comments(state);
+        if !parse_symbol(state, ",") {
+            parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, ")");
+            Some(ElmSyntaxType::Tuple {
+                part0: maybe_in_parens_0.map(elm_syntax_node_box),
+                part1: maybe_part1.map(elm_syntax_node_box),
+            })
+        } else {
+            parse_elm_whitespace_and_comments(state);
+            let maybe_part2: Option<ElmSyntaxNode<ElmSyntaxType>> =
+                parse_elm_syntax_type_space_separated_node(state);
+            parse_elm_whitespace_and_comments(state);
+            parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, ")");
+            Some(ElmSyntaxType::Triple {
+                part0: maybe_in_parens_0.map(elm_syntax_node_box),
+                part1: maybe_part1.map(elm_syntax_node_box),
+                part2: maybe_part2.map(elm_syntax_node_box),
+            })
+        }
+    }
+}
+fn parse_elm_syntax_pattern_space_separated_node(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<ElmSyntaxPattern>> {
+    let start_pattern = parse_elm_syntax_pattern_not_as_or_cons_node(state)?;
+    parse_elm_whitespace_and_comments(state);
+    let mut consed_left_to_right: Vec<(lsp_types::Range, Option<ElmSyntaxNode<ElmSyntaxPattern>>)> =
+        vec![];
+    while let Some(cons_key_symbol_range) = parse_symbol_as_range(state, "::") {
+        parse_elm_whitespace_and_comments(state);
+        let maybe_tail_pattern = parse_elm_syntax_pattern_not_as_or_cons_node(state);
+        consed_left_to_right.push((cons_key_symbol_range, maybe_tail_pattern));
+        parse_elm_whitespace_and_comments(state);
+    }
+    parse_elm_whitespace_and_comments(state);
+    let maybe_combined_tail_cons = consed_left_to_right.into_iter().rev().reduce(
+        |(cons_tail_key_symbol_range, maybe_tail), (cons_head_key_symbol_range, maybe_head)| {
+            (
+                cons_head_key_symbol_range,
+                Some(ElmSyntaxNode {
+                    range: lsp_types::Range {
+                        start: match maybe_head {
+                            Some(ref head_node) => head_node.range.start,
+                            None => cons_tail_key_symbol_range.start,
+                        },
+                        end: match maybe_tail {
+                            Some(ref tail_node) => tail_node.range.end,
+                            None => cons_tail_key_symbol_range.end,
+                        },
+                    },
+                    value: ElmSyntaxPattern::ListCons {
+                        head: maybe_head.map(elm_syntax_node_box),
+                        cons_key_symbol: cons_tail_key_symbol_range,
+                        tail: maybe_tail.map(elm_syntax_node_box),
+                    },
+                }),
+            )
+        },
+    );
+    let pattern_with_conses = match maybe_combined_tail_cons {
+        None => start_pattern,
+        Some((cons_key_symbol_range, maybe_tail)) => ElmSyntaxNode {
+            range: lsp_types::Range {
+                start: start_pattern.range.start,
+                end: match maybe_tail {
+                    Some(ref tail_node) => tail_node.range.end,
+                    None => cons_key_symbol_range.end,
+                },
+            },
+            value: ElmSyntaxPattern::ListCons {
+                head: Some(elm_syntax_node_box(start_pattern)),
+                cons_key_symbol: cons_key_symbol_range,
+                tail: maybe_tail.map(elm_syntax_node_box),
+            },
+        },
+    };
+    match parse_symbol_as_range(state, "as") {
+        None => Some(pattern_with_conses),
+        Some(as_keyword_range) => {
+            parse_elm_whitespace_and_comments(state);
+            let maybe_variable = parse_elm_lowercase_node(state);
+            Some(ElmSyntaxNode {
+                range: lsp_types::Range {
+                    start: pattern_with_conses.range.start,
+                    end: match maybe_variable {
+                        Some(ref variable_node) => variable_node.range.end,
+                        None => as_keyword_range.end,
+                    },
+                },
+                value: ElmSyntaxPattern::As {
+                    pattern: elm_syntax_node_box(pattern_with_conses),
+                    as_keyword_range: as_keyword_range,
+                    variable: maybe_variable,
+                },
+            })
+        }
+    }
+}
+
+fn parse_elm_syntax_pattern_not_as_or_cons_node(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<ElmSyntaxPattern>> {
+    parse_elm_syntax_pattern_construct_node(state).or_else(|| {
+        let start_position = state.position;
+        parse_symbol_as(state, "()", ElmSyntaxPattern::Unit)
+            .or_else(|| parse_symbol_as(state, "_", ElmSyntaxPattern::Ignored))
+            .or_else(|| parse_elm_lowercase(state).map(ElmSyntaxPattern::Variable))
+            .or_else(|| parse_elm_char(state).map(ElmSyntaxPattern::Char))
+            .or_else(|| parse_elm_syntax_pattern_string(state))
+            .or_else(|| parse_elm_syntax_pattern_parenthesized_or_tuple_or_triple(state))
+            .or_else(|| parse_elm_syntax_pattern_list_exact(state))
+            .or_else(|| parse_elm_syntax_pattern_record(state))
+            .or_else(|| parse_elm_syntax_pattern_integer(state))
+            .map(|pattern| ElmSyntaxNode {
+                range: lsp_types::Range {
+                    start: start_position,
+                    end: state.position,
+                },
+                value: pattern,
+            })
+    })
+}
+fn parse_elm_syntax_pattern_not_space_separated(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxPattern> {
+    parse_symbol_as(state, "()", ElmSyntaxPattern::Unit)
+        .or_else(|| parse_symbol_as(state, "_", ElmSyntaxPattern::Ignored))
+        .or_else(|| parse_elm_syntax_pattern_parenthesized_or_tuple_or_triple(state))
+        .or_else(|| parse_elm_lowercase(state).map(ElmSyntaxPattern::Variable))
+        .or_else(|| {
+            parse_elm_qualified_uppercase_reference_node(state).map(|reference_node| {
+                ElmSyntaxPattern::Variant {
+                    reference: reference_node,
+                    values: vec![],
+                }
+            })
+        })
+        .or_else(|| parse_elm_char(state).map(ElmSyntaxPattern::Char))
+        .or_else(|| parse_elm_syntax_pattern_string(state))
+        .or_else(|| parse_elm_syntax_pattern_list_exact(state))
+        .or_else(|| parse_elm_syntax_pattern_record(state))
+        .or_else(|| parse_elm_syntax_pattern_integer(state))
+}
+fn parse_elm_syntax_pattern_list_exact(state: &mut ParseState) -> Option<ElmSyntaxPattern> {
+    if !parse_symbol(state, "[") {
+        return None;
+    }
+    parse_elm_whitespace_and_comments(state);
+    let mut elements: Vec<ElmSyntaxNode<ElmSyntaxPattern>> = Vec::new();
+    'parsing_exposes: while !parse_symbol(state, "]") {
+        match parse_elm_syntax_pattern_space_separated_node(state) {
+            Some(pattern_node) => {
+                elements.push(pattern_node);
+                parse_elm_whitespace_and_comments(state);
+                let _ = parse_symbol(state, ",");
+                parse_elm_whitespace_and_comments(state);
+            }
+            None => {
+                if !parse_any_char_not_0_indented(state) {
+                    break 'parsing_exposes;
+                }
+            }
+        }
+    }
+    Some(ElmSyntaxPattern::ListExact(elements))
+}
+fn parse_elm_syntax_pattern_record(state: &mut ParseState) -> Option<ElmSyntaxPattern> {
+    if !parse_symbol(state, "{") {
+        return None;
+    }
+    parse_elm_whitespace_and_comments(state);
+    let mut field_names: Vec<ElmSyntaxNode<String>> = Vec::new();
+    'parsing_exposes: while !parse_symbol(state, "}") {
+        match parse_elm_lowercase_node(state) {
+            Some(field_name_node) => {
+                field_names.push(field_name_node);
+                parse_elm_whitespace_and_comments(state);
+                let _ = parse_symbol(state, ",");
+                parse_elm_whitespace_and_comments(state);
+            }
+            None => {
+                if !parse_any_char_not_0_indented(state) {
+                    break 'parsing_exposes;
+                }
+            }
+        }
+    }
+    Some(ElmSyntaxPattern::Record(field_names))
+}
+fn parse_elm_syntax_pattern_not_space_separated_node(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<ElmSyntaxPattern>> {
+    let start_position = state.position;
+    parse_elm_syntax_pattern_not_space_separated(state).map(|pattern| ElmSyntaxNode {
+        range: lsp_types::Range {
+            start: start_position,
+            end: state.position,
+        },
+        value: pattern,
+    })
+}
+
+fn parse_elm_syntax_pattern_construct_node(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<ElmSyntaxPattern>> {
+    let reference_node: ElmSyntaxNode<ElmQualifiedName> =
+        parse_elm_qualified_uppercase_reference_node(state)?;
+    let mut values: Vec<ElmSyntaxNode<ElmSyntaxPattern>> = Vec::new();
+    let mut variant_end_position: lsp_types::Position = reference_node.range.end;
+    'parsing_arguments: loop {
+        parse_elm_whitespace_and_comments(state);
+        match parse_elm_syntax_pattern_not_space_separated_node(state) {
+            None => {
+                break 'parsing_arguments;
+            }
+            Some(value_node) => {
+                variant_end_position = value_node.range.end;
+                values.push(value_node);
+            }
+        }
+    }
+    Some(ElmSyntaxNode {
+        range: lsp_types::Range {
+            start: reference_node.range.start,
+            end: variant_end_position,
+        },
+        value: ElmSyntaxPattern::Variant {
+            reference: reference_node,
+            values: values,
+        },
+    })
+}
+fn parse_elm_syntax_pattern_string(state: &mut ParseState) -> Option<ElmSyntaxPattern> {
+    parse_elm_string_triple_quoted(state)
+        .map(|content| ElmSyntaxPattern::String {
+            content: content,
+            quoting_style: elm::ElmSyntaxStringQuotingStyle::StringTripleQuoted,
+        })
+        .or_else(|| {
+            parse_elm_string_single_quoted(state).map(|content| ElmSyntaxPattern::String {
+                content: content,
+                quoting_style: elm::ElmSyntaxStringQuotingStyle::StringSingleQuoted,
+            })
+        })
+}
+
+fn parse_elm_syntax_pattern_integer(state: &mut ParseState) -> Option<ElmSyntaxPattern> {
+    parse_elm_unsigned_integer_base10(state)
+        .map(|value| ElmSyntaxPattern::Int {
+            base: elm::ElmSyntaxIntBase::IntBase10,
+            value: value,
+        })
+        .or_else(|| {
+            parse_elm_unsigned_integer_base16(state).map(|value| ElmSyntaxPattern::Int {
+                base: elm::ElmSyntaxIntBase::IntBase16,
+                value: value,
+            })
+        })
+}
+fn parse_elm_syntax_pattern_parenthesized_or_tuple_or_triple(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxPattern> {
+    if !parse_symbol(state, "(") {
+        return None;
+    }
+    parse_elm_whitespace_and_comments(state);
+    let maybe_in_parens_0 = parse_elm_syntax_pattern_space_separated_node(state);
+    parse_elm_whitespace_and_comments(state);
+    if !parse_symbol(state, ",") {
+        parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, ")");
+        Some(match maybe_in_parens_0 {
+            None => ElmSyntaxPattern::Unit,
+            Some(in_parens) => ElmSyntaxPattern::Parenthesized(elm_syntax_node_box(in_parens)),
+        })
+    } else {
+        parse_elm_whitespace_and_comments(state);
+        let maybe_part1 = parse_elm_syntax_pattern_space_separated_node(state);
+        parse_elm_whitespace_and_comments(state);
+        if !parse_symbol(state, ",") {
+            parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, ")");
+            Some(ElmSyntaxPattern::Tuple {
+                part0: maybe_in_parens_0.map(elm_syntax_node_box),
+                part1: maybe_part1.map(elm_syntax_node_box),
+            })
+        } else {
+            parse_elm_whitespace_and_comments(state);
+            let maybe_part2 = parse_elm_syntax_pattern_space_separated_node(state);
+            parse_elm_whitespace_and_comments(state);
+            parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, ")");
+            Some(ElmSyntaxPattern::Triple {
+                part0: maybe_in_parens_0.map(elm_syntax_node_box),
+                part1: maybe_part1.map(elm_syntax_node_box),
+                part2: maybe_part2.map(elm_syntax_node_box),
+            })
+        }
+    }
+}
+fn parse_elm_unsigned_integer_base16(state: &mut ParseState) -> Option<Option<i64>> {
+    if !parse_symbol(state, "0x") {
+        return None;
+    }
+    let hex_str: &str = parse_same_line_while_as_str(state, |c| c.is_ascii_hexdigit());
+    Some(i64::from_str_radix(hex_str, 16).ok())
+}
+fn parse_elm_unsigned_integer_base10(state: &mut ParseState) -> Option<Option<i64>> {
+    if parse_symbol(state, "0") {
+        return Some(Some(0));
+    }
+    let start_offset_utf8: usize = state.offset_utf8;
+    if !parse_same_line_char_if(state, |c| c >= '1' && c <= '9') {
+        return None;
+    }
+    parse_same_line_while(state, |c| c.is_ascii_digit());
+    let decimal_str: &str = &state.source[start_offset_utf8..state.offset_utf8];
+    Some(i64::from_str_radix(decimal_str, 10).ok())
+}
+/// TODO merge with parse_elm_integer_base10 and return as enum
+fn parse_elm_float(state: &mut ParseState) -> Option<f64> {
+    let mut current_offset_utf8: usize = state.offset_utf8;
+    current_offset_utf8 += state.source[current_offset_utf8..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .map(char::len_utf8)
+        .sum::<usize>();
+
+    if state.source[current_offset_utf8..].starts_with('.') {
+        current_offset_utf8 += state.source[current_offset_utf8..]
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .map(char::len_utf8)
+            .sum::<usize>();
+    }
+
+    let parse_result: Result<f64, std::num::ParseFloatError> =
+        if state.source[current_offset_utf8..].starts_with(|c| c == 'e' || c == 'E') {
+            current_offset_utf8 += 1;
+            if state.source[current_offset_utf8..].starts_with('+') {
+                current_offset_utf8 += state.source[current_offset_utf8..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .map(char::len_utf8)
+                    .sum::<usize>();
+                // rust's f64::from_str does not allow e+..., only e...
+                let decimal_str: String =
+                    state.source[state.offset_utf8..current_offset_utf8].replace("+", "");
+                str::parse::<f64>(&decimal_str)
+            } else {
+                if state.source[current_offset_utf8..].starts_with("-") {
+                    current_offset_utf8 += 1;
+                }
+                current_offset_utf8 += state.source[current_offset_utf8..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .map(char::len_utf8)
+                    .sum::<usize>();
+                let decimal_str: &str = &state.source[state.offset_utf8..current_offset_utf8];
+                str::parse::<f64>(decimal_str)
+            }
+        } else {
+            let decimal_str: &str = &state.source[state.offset_utf8..current_offset_utf8];
+            str::parse::<f64>(decimal_str)
+        };
+    match parse_result {
+        Ok(parsed_f64) => {
+            state.position.character = (current_offset_utf8 - state.offset_utf8) as u32;
+            state.offset_utf8 = current_offset_utf8;
+            Some(parsed_f64)
+        }
+        Err(_) => None,
+    }
+}
+fn parse_elm_char(state: &mut ParseState) -> Option<Option<char>> {
+    if !parse_symbol(state, "'") {
+        return None;
+    }
+    let result: Option<char> = parse_elm_text_content_char(state);
+    parse_until_including_symbol_or_excluding_end_of_line(state, "'");
+    Some(result)
+}
+/// commits after a single quote, so check for triple quoted beforehand
+fn parse_elm_string_single_quoted(state: &mut ParseState) -> Option<String> {
+    if !parse_symbol(state, "\"") {
+        return None;
+    }
+    let mut result = String::new();
+    while !(parse_symbol(state, "\"") || parse_linebreak(state)) {
+        match parse_elm_text_content_char(state) {
+            Some(next_content_char) => {
+                result.push(next_content_char);
+            }
+            None => {
+                parse_until_including_symbol_or_excluding_end_of_line(state, "\"");
+                return Some(result);
+            }
+        }
+    }
+    Some(result)
+}
+fn parse_elm_string_triple_quoted(state: &mut ParseState) -> Option<String> {
+    if !parse_symbol(state, "\"\"\"") {
+        return None;
+    }
+    let mut result = String::new();
+    while !parse_symbol(state, "\"\"\"") {
+        match parse_linebreak_as_str(state) {
+            Some(linebreak) => result.push_str(linebreak),
+            None => match parse_char_symbol_as_char(state, '\"')
+                .or_else(|| parse_elm_text_content_char(state))
+            {
+                Some(next_content_char) => {
+                    result.push(next_content_char);
+                }
+                None => {
+                    parse_until_including_symbol_or_before_end_of_source(state, "\"\"\"");
+                    return Some(result);
+                }
+            },
+        }
+    }
+    Some(result)
+}
+fn parse_elm_text_content_char(state: &mut ParseState) -> Option<char> {
+    parse_symbol_as(state, "\\\\", '\\')
+        .or_else(|| parse_symbol_as(state, "\\'", '\''))
+        .or_else(|| parse_symbol_as(state, "\\\n", '\n'))
+        .or_else(|| parse_symbol_as(state, "\\\r", '\r'))
+        .or_else(|| parse_symbol_as(state, "\\\t", '\t'))
+        .or_else(|| parse_symbol_as(state, "\\\"", '"'))
+        .or_else(|| {
+            if parse_symbol(state, "\\u{") {
+                let unicode_hex_start_offset_utf8: usize = state.offset_utf8;
+                parse_same_line_while(state, |c| c.is_ascii_hexdigit());
+                let unicode_hex_end_offset_utf8: usize = state.offset_utf8;
+                parse_until_including_symbol_or_excluding_end_of_line(state, "}");
+                let unicode_hex_str: &str =
+                    &state.source[unicode_hex_start_offset_utf8..unicode_hex_end_offset_utf8];
+                u32::from_str_radix(unicode_hex_str, 16)
+                    .ok()
+                    .and_then(|unicode| char::from_u32(unicode))
+            } else {
+                None
+            }
+        })
+        .or_else(|| {
+            if state.source[state.offset_utf8..].starts_with("\n")
+                || state.source[state.offset_utf8..].starts_with("\r\n")
+            {
+                None
+            } else {
+                state.source[state.offset_utf8..].chars().next()
+            }
+        })
+}
+
+fn parse_elm_syntax_expression_space_separated_node(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<ElmSyntaxExpression>> {
+    let left_node: ElmSyntaxNode<ElmSyntaxExpression> =
+        parse_expression_not_infix_operation_node(state)?;
+    parse_elm_whitespace_and_comments(state);
+    Some(match parse_elm_operator_node(state) {
+        None => left_node,
+        Some(operator_node) => {
+            let maybe_right: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
+                parse_elm_syntax_expression_space_separated_node(state);
+            ElmSyntaxNode {
+                range: lsp_types::Range {
+                    start: left_node.range.start,
+                    end: match maybe_right {
+                        None => operator_node.range.end,
+                        Some(ref right_node) => right_node.range.end,
+                    },
+                },
+                value: ElmSyntaxExpression::InfixOperationIgnoringPrecedence {
+                    left: elm_syntax_node_box(left_node),
+                    operator: operator_node,
+                    right: maybe_right.map(elm_syntax_node_box),
+                },
+            }
+        }
+    })
+}
+fn parse_expression_not_infix_operation_node(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<ElmSyntaxExpression>> {
+    let called_node: ElmSyntaxNode<ElmSyntaxExpression> =
+        parse_expression_not_space_separated_node(state)?;
+    parse_elm_whitespace_and_comments(state);
+    Some(
+        if (state.position.character >= state.indent as u32)
+            && let Some(argument0_node) = parse_expression_not_space_separated_node(state)
+        {
+            let mut argument1_up: Vec<ElmSyntaxNode<ElmSyntaxExpression>> = Vec::new();
+            let mut construct_end_position: lsp_types::Position = argument0_node.range.end;
+            'parsing_argument1_up: loop {
+                parse_elm_whitespace_and_comments(state);
+                if state.position.character < state.indent as u32 {
+                    break 'parsing_argument1_up;
+                }
+                match parse_expression_not_space_separated_node(state) {
+                    None => {
+                        break 'parsing_argument1_up;
+                    }
+                    Some(argument_node) => {
+                        construct_end_position = argument_node.range.end;
+                        argument1_up.push(argument_node);
+                    }
+                }
+            }
+            ElmSyntaxNode {
+                range: lsp_types::Range {
+                    start: called_node.range.start,
+                    end: construct_end_position,
+                },
+                value: ElmSyntaxExpression::Call {
+                    called: elm_syntax_node_box(called_node),
+                    argument0: elm_syntax_node_box(argument0_node),
+                    argument1_up: argument1_up,
+                },
+            }
+        } else {
+            called_node
+        },
+    )
+}
+fn parse_expression_not_space_separated_node(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<ElmSyntaxExpression>> {
+    let start_position: lsp_types::Position = state.position;
+    let start_expression: ElmSyntaxExpression =
+        parse_symbol_as(state, "()", ElmSyntaxExpression::Unit)
+            .or_else(|| parse_elm_char(state).map(ElmSyntaxExpression::Char))
+            .or_else(|| parse_elm_syntax_expression_string(state))
+            .or_else(|| parse_elm_syntax_expression_list_exact(state))
+            .or_else(|| todo!())?;
+    let mut result_node = ElmSyntaxNode {
+        range: lsp_types::Range {
+            start: start_position,
+            end: state.position,
+        },
+        value: start_expression,
+    };
+    while parse_symbol(state, ".") {
+        let maybe_field_name: Option<ElmSyntaxNode<String>> = parse_elm_lowercase_node(state);
+        result_node = ElmSyntaxNode {
+            range: lsp_types::Range {
+                start: start_position,
+                end: state.position,
+            },
+            value: ElmSyntaxExpression::RecordAccess {
+                record: elm_syntax_node_box(result_node),
+                field: maybe_field_name,
+            },
+        }
+    }
+    Some(result_node)
+}
+fn parse_elm_syntax_expression_string(state: &mut ParseState) -> Option<ElmSyntaxExpression> {
+    parse_elm_string_triple_quoted(state)
+        .map(|content| ElmSyntaxExpression::String {
+            content: content,
+            quoting_style: elm::ElmSyntaxStringQuotingStyle::StringTripleQuoted,
+        })
+        .or_else(|| {
+            parse_elm_string_single_quoted(state).map(|content| ElmSyntaxExpression::String {
+                content: content,
+                quoting_style: elm::ElmSyntaxStringQuotingStyle::StringSingleQuoted,
+            })
+        })
+}
+fn parse_elm_syntax_expression_list_exact(state: &mut ParseState) -> Option<ElmSyntaxExpression> {
+    if !parse_symbol(state, "[") {
+        return None;
+    }
+    parse_elm_whitespace_and_comments(state);
+    let mut elements: Vec<ElmSyntaxNode<ElmSyntaxExpression>> = Vec::new();
+    'parsing_exposes: while !parse_symbol(state, "]") {
+        match parse_elm_syntax_expression_space_separated_node(state) {
+            Some(expression_node) => {
+                elements.push(expression_node);
+                parse_elm_whitespace_and_comments(state);
+                let _ = parse_symbol(state, ",");
+                parse_elm_whitespace_and_comments(state);
+            }
+            None => {
+                if !parse_any_char_not_0_indented(state) {
+                    break 'parsing_exposes;
+                }
+            }
+        }
+    }
+    Some(ElmSyntaxExpression::List(elements))
+}
+fn parse_elm_syntax_expression_parenthesized_or_tuple_or_triple(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxExpression> {
+    if !parse_symbol(state, "(") {
+        return None;
+    }
+    parse_elm_whitespace_and_comments(state);
+    let maybe_in_parens_0: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
+        parse_elm_syntax_expression_space_separated_node(state);
+    parse_elm_whitespace_and_comments(state);
+    if !parse_symbol(state, ",") {
+        parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, ")");
+        Some(match maybe_in_parens_0 {
+            None => ElmSyntaxExpression::Unit,
+            Some(in_parens) => ElmSyntaxExpression::Parenthesized(elm_syntax_node_box(in_parens)),
+        })
+    } else {
+        parse_elm_whitespace_and_comments(state);
+        let maybe_part1: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
+            parse_elm_syntax_expression_space_separated_node(state);
+        parse_elm_whitespace_and_comments(state);
+        if !parse_symbol(state, ",") {
+            parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, ")");
+            Some(ElmSyntaxExpression::Tuple {
+                part0: maybe_in_parens_0.map(elm_syntax_node_box),
+                part1: maybe_part1.map(elm_syntax_node_box),
+            })
+        } else {
+            parse_elm_whitespace_and_comments(state);
+            let maybe_part2: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
+                parse_elm_syntax_expression_space_separated_node(state);
+            parse_elm_whitespace_and_comments(state);
+            parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, ")");
+            Some(ElmSyntaxExpression::Triple {
+                part0: maybe_in_parens_0.map(elm_syntax_node_box),
+                part1: maybe_part1.map(elm_syntax_node_box),
+                part2: maybe_part2.map(elm_syntax_node_box),
+            })
         }
     }
 }
