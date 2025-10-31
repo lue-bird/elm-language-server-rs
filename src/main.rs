@@ -21,7 +21,7 @@ struct ProjectModuleOrigin {
     module_path: std::path::PathBuf,
 }
 struct ModuleState {
-    syntax: Option<ElmSyntaxModule>,
+    syntax: ElmSyntaxModule,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -167,7 +167,7 @@ async fn main() {
                             state_update_source_at_path(
                                 state,
                                 changed_file_path,
-                                &changed_file_source,
+                                changed_file_source,
                             );
                         }
                     }
@@ -197,7 +197,7 @@ async fn main() {
                                         state_update_source_at_path(
                                             state,
                                             changed_file_path,
-                                            &changed_file_source,
+                                            changed_file_source,
                                         );
                                     }
                                 }
@@ -401,15 +401,10 @@ fn initialize_state_for_project_into(
     let mut module_states: std::collections::HashMap<std::path::PathBuf, ModuleState> =
         std::collections::HashMap::new();
     for (module_path, module_source) in elm_source_files {
-        let parse_allocator: bumpalo::Bump = bumpalo::Bump::new();
         module_states.insert(
             module_path,
             ModuleState {
-                syntax: elm::elm_parser_lenient_run(
-                    elm::elm_parser_lenient_module_(&parse_allocator),
-                    elm::StringString::One(&module_source),
-                )
-                .map(elm_syntax_module_to_persistent),
+                syntax: parse_elm_syntax_module(module_source),
             },
         );
     }
@@ -422,14 +417,23 @@ fn initialize_state_for_project_into(
                 let maybe_module_origin_path: Option<&std::path::PathBuf> = module_states
                     .iter()
                     .find_map(|(module_path, module_state)| {
-                        module_state.syntax.as_ref().and_then(|module_syntax| {
-                            if &module_syntax.header.value.module_name.value == &exposed_module_name
-                            {
-                                Some(module_path)
-                            } else {
-                                None
-                            }
-                        })
+                        if module_state
+                            .syntax
+                            .header
+                            .as_ref()
+                            .is_some_and(|header_node| {
+                                header_node
+                                    .module_name
+                                    .as_ref()
+                                    .is_some_and(|module_name_node| {
+                                        &module_name_node.value == &exposed_module_name
+                                    })
+                            })
+                        {
+                            Some(module_path)
+                        } else {
+                            None
+                        }
                     });
                 match maybe_module_origin_path {
                     None => {}
@@ -496,9 +500,17 @@ fn project_state_get_module_with_name<'a>(
             .modules
             .iter()
             .find_map(|(module_path, module_state)| {
-                if module_state.syntax.as_ref().is_some_and(|module_syntax| {
-                    &module_syntax.header.value.module_name.value == module_name
-                }) {
+                if module_state
+                    .syntax
+                    .header
+                    .as_ref()
+                    .is_some_and(|header_node| {
+                        header_node
+                            .module_name
+                            .as_ref()
+                            .is_some_and(|module_name_node| &module_name_node.value == &module_name)
+                    })
+                {
                     Some((module_path, module_state))
                 } else {
                     None
@@ -516,13 +528,12 @@ fn state_get_project_module_by_lsp_url<'a>(
     state: &'a State,
     uri: &lsp_types::Url,
 ) -> Option<ProjectModuleState<'a>> {
-    let file_path = uri.to_file_path().ok()?;
+    let file_path: std::path::PathBuf = uri.to_file_path().ok()?;
     state.projects.values().find_map(|project_state| {
         let module_state = project_state.modules.get(&file_path)?;
-        let module_syntax = module_state.syntax.as_ref()?;
         Some(ProjectModuleState {
             project: project_state,
-            module_syntax: module_syntax,
+            module_syntax: &module_state.syntax,
         })
     })
 }
@@ -552,22 +563,17 @@ fn respond_to_hover(
             module_origin: hovered_module_name,
             alias_name: _,
         } => {
-            let origin_module_syntax = project_state_get_module_with_name(
+            let (_, origin_module_state) = project_state_get_module_with_name(
                 state,
                 project_module_state.project,
                 hovered_module_name,
-            )
-            .and_then(|(_, m)| m.syntax.as_ref())?;
-            let maybe_module_documentation_comment = origin_module_syntax
-                .comments
-                .iter()
-                .find(|comment_node| comment_node.value.starts_with("{-|"));
+            )?;
             // also show list of exports maybe?
             Some(lsp_types::Hover {
                 contents: lsp_types::HoverContents::Scalar(lsp_types::MarkedString::String(
-                    match maybe_module_documentation_comment {
+                    match origin_module_state.syntax.documentation {
                         None => "_module has no documentation comment_".to_string(),
-                        Some(module_documentation) => {
+                        Some(ref module_documentation) => {
                             documentation_comment_to_markdown(&module_documentation.value)
                         }
                     },
@@ -612,34 +618,42 @@ fn respond_to_hover(
             module_origin: hovered_module_origin,
             name: hovered_name,
         } => {
-            let origin_module_syntax = project_state_get_module_with_name(
+            let (_, origin_module_state) = project_state_get_module_with_name(
                 state,
                 project_module_state.project,
                 hovered_module_origin,
-            )
-            .and_then(|(_, m)| m.syntax.as_ref())?;
+            )?;
             let module_origin_lookup: ModuleOriginLookup = elm_syntax_module_create_origin_lookup(
                 state,
                 project_module_state.project,
-                origin_module_syntax,
+                &origin_module_state.syntax,
             );
-            origin_module_syntax
+            origin_module_state
+                .syntax
                 .declarations
                 .iter()
                 .find_map(|origin_module_declaration| {
-                    match &origin_module_declaration.declaration.value {
+                    let origin_module_declaration_node = origin_module_declaration.declaration.as_ref()?;
+                    match &origin_module_declaration_node.value {
                         ElmSyntaxDeclaration::ChoiceType {
                             name: origin_module_declaration_name,
                             parameters: origin_module_declaration_parameters,
                             equals_key_symbol_range: _,
-                            variant0: origin_module_declaration_variant0,
+                            variant0_name: origin_module_declaration_variant0_name_node,
+                            variant0_values: origin_module_declaration_variant0_values,
                             variant1_up: origin_module_declaration_variant1_up,
                         } => {
-                            let any_declared_name_matches_hovered =
-                                (&origin_module_declaration_variant0.name.value == hovered_name)
-                                    || (origin_module_declaration_variant1_up
-                                        .iter()
-                                        .any(|variant| &variant.name.value == hovered_name));
+                            let any_declared_name_matches_hovered: bool =
+                                (origin_module_declaration_variant0_name_node
+                                    .as_ref()
+                                    .is_some_and(|name_node| name_node.value == hovered_name))
+                                    || (origin_module_declaration_variant1_up.iter().any(
+                                        |variant| {
+                                            variant.name.as_ref().is_some_and(|name_node| {
+                                                &name_node.value == hovered_name
+                                            })
+                                        },
+                                    ));
                             if any_declared_name_matches_hovered {
                                 Some(lsp_types::Hover {
                                     contents: lsp_types::HoverContents::Markup(
@@ -650,13 +664,19 @@ fn respond_to_hover(
                                                 &present_choice_type_declaration_info_markdown(
                                                     &module_origin_lookup,
                                                     hovered_module_origin,
-                                                    &origin_module_declaration_name.value,
+                                                    origin_module_declaration_name
+                                                        .as_ref()
+                                                        .map(|node| node.value.as_str())
+                                                        .unwrap_or(""),
                                                     origin_module_declaration
                                                         .documentation
                                                         .as_ref(),
-                                                    origin_module_declaration_parameters,
-                                                    origin_module_declaration_variant0,
-                                                    origin_module_declaration_variant1_up,
+                                                    &origin_module_declaration_parameters,
+                                                    origin_module_declaration_variant0_name_node
+                                                        .as_ref()
+                                                        .map(|node| node.value.as_str()),
+                                                    &origin_module_declaration_variant0_values,
+                                                    &origin_module_declaration_variant1_up,
                                                 )
                                             ),
                                         },
@@ -668,47 +688,56 @@ fn respond_to_hover(
                             }
                         }
                         ElmSyntaxDeclaration::Operator {
-                            direction: origin_module_declaration_direction,
-                            operator: origin_module_declaration_operator,
-                            function: origin_module_declaration_function,
-                            precedence: origin_module_declaration_precedence,
+                            direction: maybe_origin_module_declaration_direction,
+                            operator: maybe_origin_module_declaration_operator,
+                            function: maybe_origin_module_declaration_function,
+                            precedence: maybe_origin_module_declaration_precedence,
                         } => {
-                            if hovered_name == &origin_module_declaration_operator.value {
+                            if maybe_origin_module_declaration_operator
+                                .as_ref()
+                                .is_some_and(|operator_node| &operator_node.value == hovered_name)
+                            {
                                 let maybe_origin_operator_function_declaration =
-                                    origin_module_syntax.declarations.iter().find_map(
-                                        |origin_module_declaration| match &origin_module_declaration
-                                            .declaration
-                                            .value
-                                        {
-                                            ElmSyntaxDeclaration::ValueOrFunction {
-                                                name: origin_module_declaration_name,
-                                                signature: origin_module_declaration_signature,
-                                                implementation_name_range: _,
-                                                parameters: _,
-                                                equals_key_symbol_range: _,
-                                                result: _,
-                                            } if origin_module_declaration_name
-                                                == &origin_module_declaration_function.value =>
-                                            {
-                                                Some((
-                                                    origin_module_declaration_signature,
-                                                    origin_module_declaration
-                                                        .documentation
-                                                        .as_ref(),
-                                                ))
-                                            }
-                                            _ => None,
-                                        },
+                                    maybe_origin_module_declaration_function.as_ref().and_then(
+                                        |origin_module_declaration_function_node| {
+                                            origin_module_state.syntax.declarations.iter().find_map(
+                                                |origin_module_declaration| {
+                                                    let origin_module_declaration_node = origin_module_declaration.declaration.as_ref()?;
+                                                    match &origin_module_declaration_node.value {
+                                                        ElmSyntaxDeclaration::Variable {
+                                                            start_name: origin_module_declaration_name,
+                                                            signature: origin_module_declaration_signature,
+                                                            parameters: _,
+                                                            equals_key_symbol_range: _,
+                                                            result: _,
+                                                        } if &origin_module_declaration_name.value
+                                                            == &origin_module_declaration_function_node.value => {
+                                                            Some((
+                                                                origin_module_declaration_signature.as_ref(),
+                                                                origin_module_declaration
+                                                                    .documentation
+                                                                    .as_ref(),
+                                                            ))
+                                                        }
+                                                        _ => None,
+                                                    }
+                                                })
+                                            },
+                                        );
+                                let hover_markdown: String =
+                                    present_operator_declaration_info_markdown(
+                                        &module_origin_lookup,
+                                        hovered_module_origin,
+                                        maybe_origin_module_declaration_operator
+                                            .as_ref()
+                                            .map(|node| node.value.as_str()),
+                                        maybe_origin_operator_function_declaration,
+                                        origin_module_declaration.documentation.as_ref(),
+                                        maybe_origin_module_declaration_precedence
+                                            .map(|node| node.value),
+                                        maybe_origin_module_declaration_direction
+                                            .map(|node| node.value),
                                     );
-                                let hover_markdown = present_operator_declaration_info_markdown(
-                                    &module_origin_lookup,
-                                    hovered_module_origin,
-                                    &origin_module_declaration_operator.value,
-                                    maybe_origin_operator_function_declaration,
-                                    origin_module_declaration.documentation.as_ref(),
-                                    origin_module_declaration_precedence.value,
-                                    origin_module_declaration_direction.value,
-                                );
                                 Some(lsp_types::Hover {
                                     contents: lsp_types::HoverContents::Markup(
                                         lsp_types::MarkupContent {
@@ -724,9 +753,10 @@ fn respond_to_hover(
                         }
                         ElmSyntaxDeclaration::Port {
                             name: origin_module_declaration_name,
+                            colon_key_symbol_range: _,
                             type_,
                         } => {
-                            if &origin_module_declaration_name.value == hovered_name {
+                            if origin_module_declaration_name.as_ref().map(|node| node.value.as_str()) == Some(hovered_name) {
                                 Some(lsp_types::Hover {
                                     contents: lsp_types::HoverContents::Markup(
                                         lsp_types::MarkupContent {
@@ -736,7 +766,7 @@ fn respond_to_hover(
                                                 &hovered_module_origin,
                                                 hovered_name,
                                                 origin_module_declaration.documentation.as_ref(),
-                                                &type_.value,
+                                                type_.as_ref().map(|node| &node.value),
                                             ),
                                         },
                                     ),
@@ -748,12 +778,15 @@ fn respond_to_hover(
                         }
                         ElmSyntaxDeclaration::TypeAlias {
                             alias_keyword_range: _,
-                            name: origin_module_declaration_name,
+                            name: maybe_origin_module_declaration_name,
                             parameters: origin_module_declaration_parameters,
                             equals_key_symbol_range: _,
                             type_,
                         } => {
-                            if &origin_module_declaration_name.value == hovered_name {
+                            if maybe_origin_module_declaration_name
+                                .as_ref()
+                                .is_some_and(|name_node| &name_node.value == hovered_name)
+                            {
                                 Some(lsp_types::Hover {
                                     contents: lsp_types::HoverContents::Markup(
                                         lsp_types::MarkupContent {
@@ -763,12 +796,12 @@ fn respond_to_hover(
                                                 &present_type_alias_declaration_info_markdown(
                                                     &module_origin_lookup,
                                                     hovered_module_origin,
-                                                    &origin_module_declaration_name.value,
+                                                    hovered_name,
                                                     origin_module_declaration
                                                         .documentation
                                                         .as_ref(),
-                                                    origin_module_declaration_parameters,
-                                                    &type_.value
+                                                    &origin_module_declaration_parameters,
+                                                    type_.as_ref().map(|node| &node.value)
                                                 )
                                             ),
                                         },
@@ -779,15 +812,14 @@ fn respond_to_hover(
                                 None
                             }
                         }
-                        ElmSyntaxDeclaration::ValueOrFunction {
-                            name: origin_module_declaration_name,
+                        ElmSyntaxDeclaration::Variable {
+                            start_name: origin_module_declaration_name_node,
                             signature: origin_module_declaration_maybe_signature,
-                            implementation_name_range: _,
                             parameters: _,
                             equals_key_symbol_range: _,
                             result: _,
                         } => {
-                            if origin_module_declaration_name == hovered_name {
+                            if &origin_module_declaration_name_node.value == hovered_name {
                                 Some(lsp_types::Hover {
                                     contents: lsp_types::HoverContents::Markup(
                                         lsp_types::MarkupContent {
@@ -795,9 +827,16 @@ fn respond_to_hover(
                                             value: present_variable_declaration_info_markdown(
                                                 &module_origin_lookup,
                                                 hovered_module_origin,
-                                                origin_module_declaration_name,
+                                                &origin_module_declaration_name_node.value,
                                                 origin_module_declaration.documentation.as_ref(),
-                                                origin_module_declaration_maybe_signature.as_ref(),
+                                                origin_module_declaration_maybe_signature
+                                                    .as_ref()
+                                                    .and_then(|signature| {
+                                                        signature
+                                                            .type_
+                                                            .as_ref()
+                                                            .map(|node| &node.value)
+                                                    }),
                                             ),
                                         },
                                     ),
@@ -825,30 +864,36 @@ fn respond_to_hover(
                     range: Some(hovered_reference.range),
                 });
             }
-            let origin_module_syntax = project_state_get_module_with_name(
+            let (_, origin_module_state) = project_state_get_module_with_name(
                 state,
                 project_module_state.project,
                 hovered_module_origin,
-            )
-            .and_then(|(_, m)| m.syntax.as_ref())?;
+            )?;
             let module_origin_lookup: ModuleOriginLookup = elm_syntax_module_create_origin_lookup(
                 state,
                 project_module_state.project,
-                origin_module_syntax,
+                &origin_module_state.syntax,
             );
-            origin_module_syntax
+            origin_module_state
+                .syntax
                 .declarations
                 .iter()
                 .find_map(|origin_module_declaration| {
-                    match &origin_module_declaration.declaration.value {
+                    let origin_module_declaration_node =
+                        origin_module_declaration.declaration.as_ref()?;
+                    match &origin_module_declaration_node.value {
                         ElmSyntaxDeclaration::ChoiceType {
                             name: origin_module_declaration_name,
                             parameters: origin_module_declaration_parameters,
                             equals_key_symbol_range: _,
-                            variant0: origin_module_declaration_variant0,
+                            variant0_name: maybe_origin_module_declaration_variant0_name_node,
+                            variant0_values: maybe_origin_module_declaration_variant0_values,
                             variant1_up: origin_module_declaration_variant1_up,
                         } => {
-                            if &origin_module_declaration_name.value == hovered_name {
+                            if origin_module_declaration_name
+                                .as_ref()
+                                .is_some_and(|name_node| &name_node.value == hovered_name)
+                            {
                                 Some(lsp_types::Hover {
                                     contents: lsp_types::HoverContents::Markup(
                                         lsp_types::MarkupContent {
@@ -856,11 +901,14 @@ fn respond_to_hover(
                                             value: present_choice_type_declaration_info_markdown(
                                                 &module_origin_lookup,
                                                 hovered_module_origin,
-                                                &origin_module_declaration_name.value,
+                                                hovered_name,
                                                 origin_module_declaration.documentation.as_ref(),
-                                                origin_module_declaration_parameters,
-                                                origin_module_declaration_variant0,
-                                                origin_module_declaration_variant1_up,
+                                                &origin_module_declaration_parameters,
+                                                maybe_origin_module_declaration_variant0_name_node
+                                                    .as_ref()
+                                                    .map(|node| node.value.as_str()),
+                                                &maybe_origin_module_declaration_variant0_values,
+                                                &origin_module_declaration_variant1_up,
                                             ),
                                         },
                                     ),
@@ -879,7 +927,10 @@ fn respond_to_hover(
                             equals_key_symbol_range: _,
                             type_,
                         } => {
-                            if &origin_module_declaration_name.value == hovered_name {
+                            if origin_module_declaration_name
+                                .as_ref()
+                                .is_some_and(|name_node| &name_node.value == hovered_name)
+                            {
                                 Some(lsp_types::Hover {
                                     contents: lsp_types::HoverContents::Markup(
                                         lsp_types::MarkupContent {
@@ -889,8 +940,8 @@ fn respond_to_hover(
                                                 hovered_module_origin,
                                                 hovered_name,
                                                 origin_module_declaration.documentation.as_ref(),
-                                                origin_module_declaration_parameters,
-                                                &type_.value,
+                                                &origin_module_declaration_parameters,
+                                                type_.as_ref().map(|node| &node.value),
                                             ),
                                         },
                                     ),
@@ -900,7 +951,7 @@ fn respond_to_hover(
                                 None
                             }
                         }
-                        ElmSyntaxDeclaration::ValueOrFunction { .. } => None,
+                        ElmSyntaxDeclaration::Variable { .. } => None,
                     }
                 })
         }
@@ -973,7 +1024,8 @@ fn respond_to_goto_definition(
                     name: _,
                     parameters: origin_type_parameters,
                     equals_key_symbol_range: _,
-                    variant0: _,
+                    variant0_name: _,
+                    variant0_values: _,
                     variant1_up: _,
                 } => {
                     let goto_type_variable_name_origin_parameter_node = origin_type_parameters
@@ -1015,7 +1067,7 @@ fn respond_to_goto_definition(
                         },
                     ))
                 }
-                ElmSyntaxDeclaration::ValueOrFunction { .. } => None,
+                ElmSyntaxDeclaration::Variable { .. } => None,
             }
         }
         ElmSyntaxSymbol::ModuleName(goto_module_name)
@@ -1029,13 +1081,42 @@ fn respond_to_goto_definition(
                     project_module_state.project,
                     goto_module_name,
                 )?;
-            let origin_module_syntax = origin_module_state.syntax.as_ref()?;
-            let origin_module_file_url =
+            let origin_module_file_url: lsp_types::Url =
                 lsp_types::Url::from_file_path(origin_module_file_path).ok()?;
             Some(lsp_types::GotoDefinitionResponse::Scalar(
                 lsp_types::Location {
                     uri: origin_module_file_url,
-                    range: origin_module_syntax.header.value.module_name.range,
+                    range: match origin_module_state.syntax.header {
+                        Some(ref module_header) => match module_header.module_name {
+                            Some(ref module_name_node) => module_name_node.range,
+                            None => match module_header.specific {
+                                ElmSyntaxModuleHeaderSpecific::Pure {
+                                    module_keyword_range,
+                                } => module_keyword_range,
+                                ElmSyntaxModuleHeaderSpecific::Port {
+                                    port_keyword_range: _,
+                                    module_keyword_range,
+                                } => module_keyword_range,
+                                ElmSyntaxModuleHeaderSpecific::Effect {
+                                    effect_keyword_range: _,
+                                    module_keyword_range,
+                                    where_keyword_range: _,
+                                    command: _,
+                                    subscription: _,
+                                } => module_keyword_range,
+                            },
+                        },
+                        None => lsp_types::Range {
+                            start: lsp_types::Position {
+                                line: 0,
+                                character: 0,
+                            },
+                            end: lsp_types::Position {
+                                line: 1,
+                                character: 0,
+                            },
+                        },
+                    },
                 },
             ))
         }
@@ -1049,121 +1130,170 @@ fn respond_to_goto_definition(
                     project_module_state.project,
                     goto_module_origin,
                 )?;
-            let origin_module_syntax = origin_module_state.syntax.as_ref()?;
-            origin_module_syntax
+            origin_module_state
+                .syntax
                 .declarations
                 .iter()
                 .find_map(|origin_module_declaration| {
-                    match &origin_module_declaration.declaration.value {
+                    let origin_module_declaration_node =
+                        origin_module_declaration.declaration.as_ref()?;
+                    match &origin_module_declaration_node.value {
                         ElmSyntaxDeclaration::ChoiceType {
                             name: _,
                             parameters: _,
                             equals_key_symbol_range: _,
-                            variant0: origin_module_declaration_variant0,
+                            variant0_name: maybe_origin_module_declaration_variant0_name_node,
+                            variant0_values: _,
                             variant1_up: origin_module_declaration_variant1_up,
                         } => {
-                            if &origin_module_declaration_variant0.name.value == goto_name {
+                            if let Some(origin_module_declaration_variant0_name_node) =
+                                maybe_origin_module_declaration_variant0_name_node
+                                && &origin_module_declaration_variant0_name_node.value == goto_name
+                            {
                                 lsp_types::Url::from_file_path(origin_module_file_path)
                                     .ok()
-                                    .map(|origin_module_file_url| lsp_types::GotoDefinitionResponse::Scalar(lsp_types::Location {
-                                        uri: origin_module_file_url,
-                                        range: origin_module_declaration_variant0.name.range,
-                                    }))
+                                    .map(|origin_module_file_url| {
+                                        lsp_types::GotoDefinitionResponse::Scalar(
+                                            lsp_types::Location {
+                                                uri: origin_module_file_url,
+                                                range: origin_module_declaration_variant0_name_node
+                                                    .range,
+                                            },
+                                        )
+                                    })
                             } else {
                                 origin_module_declaration_variant1_up
                                     .iter()
-                                    .find(|variant| &variant.name.value == goto_name)
-                                    .and_then(|variant| {
+                                    .find_map(|variant| {
+                                        variant.name.as_ref().and_then(|variant_name_node| {
+                                            if &variant_name_node.value == goto_name {
+                                                Some(variant_name_node.range)
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                    })
+                                    .and_then(|variant_name_range| {
                                         lsp_types::Url::from_file_path(origin_module_file_path)
                                             .ok()
-                                            .map(|origin_module_file_url| lsp_types::GotoDefinitionResponse::Scalar(lsp_types::Location {
-                                                uri: origin_module_file_url,
-                                                range: variant.name.range,
-                                            }))
+                                            .map(|origin_module_file_url| {
+                                                lsp_types::GotoDefinitionResponse::Scalar(
+                                                    lsp_types::Location {
+                                                        uri: origin_module_file_url,
+                                                        range: variant_name_range,
+                                                    },
+                                                )
+                                            })
                                     })
                             }
                         }
                         ElmSyntaxDeclaration::Operator {
                             direction: _,
-                            operator: origin_module_declaration_operator,
-                            function: origin_module_declaration_function,
+                            operator: maybe_origin_module_declaration_operator,
+                            function: maybe_origin_module_declaration_function,
                             precedence: _,
                         } => {
-                            if goto_name == &origin_module_declaration_operator.value {
+                            if let Some(origin_module_declaration_operator_node) =
+                                maybe_origin_module_declaration_operator
+                                && &origin_module_declaration_operator_node.value == goto_name
+                            {
                                 lsp_types::Url::from_file_path(origin_module_file_path)
                                     .ok()
-                                    .map(|origin_module_file_url| lsp_types::GotoDefinitionResponse::Scalar(lsp_types::Location {
-                                        uri: origin_module_file_url,
-                                        range: origin_module_declaration_operator.range,
-                                    }))
-                            } else if goto_name == &origin_module_declaration_function.value {
+                                    .map(|origin_module_file_url| {
+                                        lsp_types::GotoDefinitionResponse::Scalar(
+                                            lsp_types::Location {
+                                                uri: origin_module_file_url,
+                                                range: origin_module_declaration_operator_node
+                                                    .range,
+                                            },
+                                        )
+                                    })
+                            } else if let Some(origin_module_declaration_function_node) =
+                                maybe_origin_module_declaration_function
+                                && goto_name == &origin_module_declaration_function_node.value
+                            {
                                 lsp_types::Url::from_file_path(origin_module_file_path)
                                     .ok()
-                                    .map(|origin_module_file_url| lsp_types::GotoDefinitionResponse::Scalar(lsp_types::Location {
-                                        uri: origin_module_file_url,
-                                        range: origin_module_declaration_function.range,
-                                    }))
+                                    .map(|origin_module_file_url| {
+                                        lsp_types::GotoDefinitionResponse::Scalar(
+                                            lsp_types::Location {
+                                                uri: origin_module_file_url,
+                                                range: origin_module_declaration_function_node
+                                                    .range,
+                                            },
+                                        )
+                                    })
                             } else {
                                 None
                             }
                         }
                         ElmSyntaxDeclaration::Port {
-                            name: origin_module_declaration_name,
+                            name: maybe_origin_module_declaration_name,
+                            colon_key_symbol_range: _,
                             type_: _,
                         } => {
-                            if &origin_module_declaration_name.value == goto_name {
+                            if let Some(origin_module_declaration_name_node) =
+                                maybe_origin_module_declaration_name
+                                && &origin_module_declaration_name_node.value == goto_name
+                            {
                                 lsp_types::Url::from_file_path(origin_module_file_path)
                                     .ok()
-                                    .map(|origin_module_file_url| lsp_types::GotoDefinitionResponse::Scalar(lsp_types::Location {
-                                        uri: origin_module_file_url,
-                                        range: origin_module_declaration_name.range,
-                                    }))
+                                    .map(|origin_module_file_url| {
+                                        lsp_types::GotoDefinitionResponse::Scalar(
+                                            lsp_types::Location {
+                                                uri: origin_module_file_url,
+                                                range: origin_module_declaration_name_node.range,
+                                            },
+                                        )
+                                    })
                             } else {
                                 None
                             }
                         }
                         ElmSyntaxDeclaration::TypeAlias {
                             alias_keyword_range: _,
-                            name: origin_module_declaration_name,
+                            name: maybe_origin_module_declaration_name,
                             parameters: _,
                             equals_key_symbol_range: _,
                             type_: _,
                         } => {
                             // record type alias constructor function
-                            if &origin_module_declaration_name.value == goto_name {
+                            if let Some(origin_module_declaration_name_node) =
+                                maybe_origin_module_declaration_name
+                                && &origin_module_declaration_name_node.value == goto_name
+                            {
                                 lsp_types::Url::from_file_path(origin_module_file_path)
                                     .ok()
-                                    .map(|origin_module_file_url| lsp_types::GotoDefinitionResponse::Scalar(lsp_types::Location {
-                                        uri: origin_module_file_url,
-                                        range: origin_module_declaration_name.range,
-                                    }))
+                                    .map(|origin_module_file_url| {
+                                        lsp_types::GotoDefinitionResponse::Scalar(
+                                            lsp_types::Location {
+                                                uri: origin_module_file_url,
+                                                range: origin_module_declaration_name_node.range,
+                                            },
+                                        )
+                                    })
                             } else {
                                 None
                             }
                         }
-                        ElmSyntaxDeclaration::ValueOrFunction {
-                            name: origin_module_declaration_name,
-                            signature: origin_module_declaration_maybe_signature,
-                            implementation_name_range:
-                                origin_module_declaration_implementation_name_range,
+                        ElmSyntaxDeclaration::Variable {
+                            start_name: origin_module_declaration_name_node,
+                            signature: _,
                             parameters: _,
                             equals_key_symbol_range: _,
                             result: _,
                         } => {
-                            if origin_module_declaration_name == goto_name {
+                            if &origin_module_declaration_name_node.value == goto_name {
                                 lsp_types::Url::from_file_path(origin_module_file_path)
                                     .ok()
-                                    .map(|origin_module_file_url| lsp_types::GotoDefinitionResponse::Scalar(lsp_types::Location {
-                                        uri: origin_module_file_url,
-                                        range: match origin_module_declaration_maybe_signature {
-                                            Some(origin_module_declaration_signature) => {
-                                                origin_module_declaration_signature.name.range
-                                            }
-                                            None => {
-                                                *origin_module_declaration_implementation_name_range
-                                            }
-                                        },
-                                    }))
+                                    .map(|origin_module_file_url| {
+                                        lsp_types::GotoDefinitionResponse::Scalar(
+                                            lsp_types::Location {
+                                                uri: origin_module_file_url,
+                                                range: origin_module_declaration_name_node.range,
+                                            },
+                                        )
+                                    })
                             } else {
                                 None
                             }
@@ -1181,27 +1311,33 @@ fn respond_to_goto_definition(
                     project_module_state.project,
                     goto_module_origin,
                 )?;
-            let origin_module_syntax = origin_module_state.syntax.as_ref()?;
-            origin_module_syntax
+            origin_module_state
+                .syntax
                 .declarations
                 .iter()
                 .find_map(|origin_module_declaration| {
-                    match &origin_module_declaration.declaration.value {
+                    let origin_module_declaration_node =
+                        origin_module_declaration.declaration.as_ref()?;
+                    match &origin_module_declaration_node.value {
                         ElmSyntaxDeclaration::ChoiceType {
-                            name: origin_module_declaration_name,
+                            name: maybe_origin_module_declaration_name,
                             parameters: _,
                             equals_key_symbol_range: _,
-                            variant0: _,
+                            variant0_name: _,
+                            variant0_values: _,
                             variant1_up: _,
                         } => {
-                            if &origin_module_declaration_name.value == goto_name {
+                            if let Some(origin_module_declaration_name_node) =
+                                maybe_origin_module_declaration_name
+                                && &origin_module_declaration_name_node.value == goto_name
+                            {
                                 lsp_types::Url::from_file_path(origin_module_file_path)
                                     .ok()
                                     .map(|origin_module_file_url| {
                                         lsp_types::GotoDefinitionResponse::Scalar(
                                             lsp_types::Location {
                                                 uri: origin_module_file_url,
-                                                range: origin_module_declaration_name.range,
+                                                range: origin_module_declaration_name_node.range,
                                             },
                                         )
                                     })
@@ -1213,19 +1349,22 @@ fn respond_to_goto_definition(
                         ElmSyntaxDeclaration::Port { .. } => None,
                         ElmSyntaxDeclaration::TypeAlias {
                             alias_keyword_range: _,
-                            name: origin_module_declaration_name,
+                            name: maybe_origin_module_declaration_name,
                             parameters: _,
                             equals_key_symbol_range: _,
                             type_: _,
                         } => {
-                            if &origin_module_declaration_name.value == goto_name {
+                            if let Some(origin_module_declaration_name_node) =
+                                maybe_origin_module_declaration_name
+                                && &origin_module_declaration_name_node.value == goto_name
+                            {
                                 lsp_types::Url::from_file_path(origin_module_file_path)
                                     .ok()
                                     .map(|origin_module_file_url| {
                                         lsp_types::GotoDefinitionResponse::Scalar(
                                             lsp_types::Location {
                                                 uri: origin_module_file_url,
-                                                range: origin_module_declaration_name.range,
+                                                range: origin_module_declaration_name_node.range,
                                             },
                                         )
                                     })
@@ -1233,7 +1372,7 @@ fn respond_to_goto_definition(
                                 None
                             }
                         }
-                        ElmSyntaxDeclaration::ValueOrFunction { .. } => None,
+                        ElmSyntaxDeclaration::Variable { .. } => None,
                     }
                 })
         }
@@ -1334,15 +1473,10 @@ fn state_iter_all_modules<'a>(
         project_state
             .modules
             .iter()
-            .filter_map(|(module_path, module_state)| {
-                module_state
-                    .syntax
-                    .as_ref()
-                    .map(|module_syntax| ProjectModuleOriginAndState {
-                        project_state: project_state,
-                        module_path: module_path,
-                        module_syntax: module_syntax,
-                    })
+            .map(|(module_path, module_state)| ProjectModuleOriginAndState {
+                project_state: project_state,
+                module_path: module_path,
+                module_syntax: &module_state.syntax,
             })
     })
 }
@@ -1355,12 +1489,11 @@ fn respond_to_rename(
         state,
         &rename_arguments.text_document_position.text_document.uri,
     )?;
-    let to_rename_module_syntax = project_module_state.module_syntax;
     let symbol_to_rename: ElmSyntaxNode<ElmSyntaxSymbol> =
         elm_syntax_module_find_reference_at_position(
             state,
             project_module_state.project,
-            to_rename_module_syntax,
+            project_module_state.module_syntax,
             rename_arguments.text_document_position.position,
         )?;
     Some(match symbol_to_rename.value {
@@ -1375,7 +1508,7 @@ fn respond_to_rename(
                 &elm_syntax_module_create_origin_lookup(
                     state,
                     project_module_state.project,
-                    to_rename_module_syntax,
+                    project_module_state.module_syntax,
                 ),
                 &[LocalBinding {
                     name: local_binding_to_rename,
@@ -1420,7 +1553,7 @@ fn respond_to_rename(
                 &mut all_uses_of_renamed_module_name,
                 state,
                 project_module_state.project,
-                to_rename_module_syntax,
+                project_module_state.module_syntax,
                 ElmDeclaredSymbol::ImportAlias {
                     module_origin: import_alias_to_rename_module_origin,
                     alias_name: import_alias_to_rename,
@@ -1449,11 +1582,17 @@ fn respond_to_rename(
             let mut all_uses_of_renamed_module_name: Vec<lsp_types::Range> = Vec::new();
             elm_syntax_declaration_uses_of_reference_into(
                 &mut all_uses_of_renamed_module_name,
-                &to_rename_module_syntax.header.value.module_name.value,
+                project_module_state
+                    .module_syntax
+                    .header
+                    .as_ref()
+                    .and_then(|header| header.module_name.as_ref())
+                    .map(|node| node.value.as_str())
+                    .unwrap_or(""),
                 &elm_syntax_module_create_origin_lookup(
                     state,
                     project_module_state.project,
-                    to_rename_module_syntax,
+                    project_module_state.module_syntax,
                 ),
                 scope_declaration,
                 ElmDeclaredSymbol::TypeVariable(type_variable_to_rename),
@@ -1479,14 +1618,13 @@ fn respond_to_rename(
             .values()
             .flat_map(|project| project.modules.iter())
             .filter_map(|(elm_module_file_path, elm_module_state)| {
-                let elm_module_syntax = elm_module_state.syntax.as_ref()?;
                 let elm_module_uri = lsp_types::Url::from_file_path(elm_module_file_path).ok()?;
                 let mut all_uses_of_renamed_module_name: Vec<lsp_types::Range> = Vec::new();
                 elm_syntax_module_uses_of_reference_into(
                     &mut all_uses_of_renamed_module_name,
                     state,
                     project_module_state.project,
-                    elm_module_syntax,
+                    &elm_module_state.syntax,
                     ElmDeclaredSymbol::ModuleName(module_name_to_rename),
                 );
                 Some(lsp_types::TextDocumentEdit {
@@ -1545,33 +1683,34 @@ fn respond_to_rename(
             module_origin: to_rename_module_origin,
             name: type_name_to_rename,
         } => {
-            let to_rename_is_record_type_alias = project_state_get_module_with_name(
-                state,
-                project_module_state.project,
-                to_rename_module_origin,
-            )
-            .and_then(|(_, to_rename_module_state)| to_rename_module_state.syntax.as_ref())
-            .is_some_and(|to_rename_module_syntax| {
-                to_rename_module_syntax
-                    .declarations
-                    .iter()
-                    .any(
-                        |documented_declaration| match &documented_declaration.declaration.value {
-                            ElmSyntaxDeclaration::TypeAlias {
-                                type_:
-                                    ElmSyntaxNode {
-                                        value: ElmSyntaxType::Record(_),
-                                        range: _,
-                                    },
-                                alias_keyword_range: _,
-                                name: record_type_alias,
-                                parameters: _,
-                                equals_key_symbol_range: _,
-                            } => record_type_alias.value == type_name_to_rename,
-                            _ => false,
+            let to_rename_is_record_type_alias: bool =
+                project_state_get_module_with_name(
+                    state,
+                    project_module_state.project,
+                    to_rename_module_origin,
+                )
+                .is_some_and(|(_, to_rename_module_state)| {
+                    to_rename_module_state.syntax.declarations.iter().any(
+                        |documented_declaration| {
+                            documented_declaration.declaration.as_ref().is_some_and(
+                                |declaration_node| match &declaration_node.value {
+                                    ElmSyntaxDeclaration::TypeAlias {
+                                        type_:
+                                            Some(ElmSyntaxNode {
+                                                value: ElmSyntaxType::Record(_),
+                                                range: _,
+                                            }),
+                                        alias_keyword_range: _,
+                                        name: Some(record_type_alias_name_node),
+                                        parameters: _,
+                                        equals_key_symbol_range: _,
+                                    } => record_type_alias_name_node.value == type_name_to_rename,
+                                    _ => false,
+                                },
+                            )
                         },
                     )
-            });
+                });
             let elm_declared_symbol_to_rename = if to_rename_is_record_type_alias {
                 ElmDeclaredSymbol::RecordTypeAlias {
                     module_origin: to_rename_module_origin,
@@ -1710,19 +1849,14 @@ fn present_variable_declaration_info_markdown(
     module_origin: &str,
     name: &str,
     maybe_documentation: Option<&ElmSyntaxNode<String>>,
-    maybe_signature: Option<
-        &elm::GeneratedNameType0<ElmSyntaxNode<String>, ElmSyntaxNode<ElmSyntaxType>>,
-    >,
+    maybe_signature_type: Option<&ElmSyntaxType>,
 ) -> String {
-    let description = match maybe_signature {
-        Some(origin_module_declaration_signature) => format!(
+    let description = match maybe_signature_type {
+        Some(signature_type) => format!(
             "```elm\n{}.{} : {}\n```\n",
             module_origin,
             name,
-            &elm_syntax_type_to_single_line_string(
-                &module_origin_lookup,
-                &origin_module_declaration_signature.type_1.value,
-            )
+            &elm_syntax_type_to_single_line_string(&module_origin_lookup, signature_type,)
         ),
         None => format!("```elm\n{}.{}\n```\n", &module_origin, &name),
     };
@@ -1738,13 +1872,16 @@ fn present_port_declaration_info_markdown(
     module_origin: &str,
     name: &str,
     maybe_documentation: Option<&ElmSyntaxNode<String>>,
-    type_: &ElmSyntaxType,
+    maybe_type: Option<&ElmSyntaxType>,
 ) -> String {
-    let description = format!(
+    let description: String = format!(
         "```elm\nport {}.{} : {}\n```\n",
         module_origin,
         name,
-        &elm_syntax_type_to_single_line_string(&module_origin_lookup, type_)
+        &match maybe_type {
+            None => "".to_string(),
+            Some(type_) => elm_syntax_type_to_single_line_string(&module_origin_lookup, type_),
+        }
     );
     match maybe_documentation {
         None => description,
@@ -1759,7 +1896,7 @@ fn present_type_alias_declaration_info_markdown(
     name: &str,
     maybe_documentation: Option<&ElmSyntaxNode<String>>,
     parameters: &[ElmSyntaxNode<String>],
-    type_: &ElmSyntaxType,
+    maybe_type: Option<&ElmSyntaxType>,
 ) -> String {
     let description = format!(
         "```elm\ntype alias {}.{}{} =\n    {}\n```\n",
@@ -1770,7 +1907,10 @@ fn present_type_alias_declaration_info_markdown(
             .fold(String::new(), |so_far, parameter_node| so_far
                 + " "
                 + &parameter_node.value,),
-        &elm_syntax_type_to_single_line_string(&module_origin_lookup, type_,)
+        &match maybe_type {
+            None => "".to_string(),
+            Some(type_) => elm_syntax_type_to_single_line_string(&module_origin_lookup, type_),
+        }
     );
     match maybe_documentation {
         None => description,
@@ -1816,25 +1956,19 @@ fn present_choice_type_declaration_info_markdown(
     name: &str,
     maybe_documentation: Option<&ElmSyntaxNode<String>>,
     parameters: &[ElmSyntaxNode<String>],
-    variant0: &elm::GeneratedNameValues<ElmSyntaxNode<String>, Vec<ElmSyntaxNode<ElmSyntaxType>>>,
-    variant1_up: &[elm::GeneratedNameOrKeySymbolRangeValues<
-        ElmSyntaxNode<String>,
-        lsp_types::Range,
-        Vec<ElmSyntaxNode<ElmSyntaxType>>,
-    >],
+    variant0_name: Option<&str>,
+    variant0_values: &[ElmSyntaxNode<ElmSyntaxType>],
+    variant1_up: &[ElmSyntaxChoiceTypeDeclarationTailingVariant],
 ) -> String {
     let description = format!(
-        "```elm\ntype {}.{}{}\n    = {}{}{}\n```\n",
-        module_origin,
-        name,
+        "```elm\ntype {module_origin}.{name}{}\n    = {}{}{}\n```\n",
         &parameters
             .iter()
             .fold(String::new(), |so_far, parameter_node| so_far
                 + " "
                 + &parameter_node.value,),
-        &variant0.name.value,
-        &variant0
-            .values
+        &variant0_name.unwrap_or(""),
+        &variant0_values
             .iter()
             .fold(String::new(), |so_far, value_node| so_far
                 + " "
@@ -1846,7 +1980,11 @@ fn present_choice_type_declaration_info_markdown(
             .iter()
             .fold(String::new(), |so_far, variant| so_far
                 + "\n    | "
-                + &variant.name.value
+                + &variant
+                    .name
+                    .as_ref()
+                    .map(|node| node.value.as_str())
+                    .unwrap_or("")
                 + &variant.values.iter().fold(
                     String::new(),
                     |so_far, value_node| so_far
@@ -1867,14 +2005,14 @@ fn present_choice_type_declaration_info_markdown(
 fn present_operator_declaration_info_markdown(
     module_origin_lookup: &ModuleOriginLookup,
     module_origin: &str,
-    operator_symbol: &str,
+    operator_symbol: Option<&str>,
     maybe_origin_operator_function_declaration: Option<(
-        &Option<elm::GeneratedNameType0<ElmSyntaxNode<String>, ElmSyntaxNode<ElmSyntaxType>>>,
+        Option<&ElmSyntaxVariableDeclarationSignature>,
         Option<&ElmSyntaxNode<String>>,
     )>,
     maybe_documentation: Option<&ElmSyntaxNode<String>>,
-    precedence: i64,
-    direction: elm::ElmSyntaxInfixDirection,
+    precedence: Option<i64>,
+    maybe_direction: Option<elm::ElmSyntaxInfixDirection>,
 ) -> String {
     match maybe_origin_operator_function_declaration {
         Some((
@@ -1882,16 +2020,27 @@ fn present_operator_declaration_info_markdown(
             origin_operator_function_maybe_documentation,
         )) => {
             let description = format!(
-                "```elm\ninfix {} {precedence} {module_origin}.({operator_symbol}){}\n```\n",
-                elm_syntax_infix_direction_to_str(direction),
+                "```elm\ninfix {} {} {module_origin}.({}){}\n```\n",
+                maybe_direction
+                    .map(elm_syntax_infix_direction_to_str)
+                    .unwrap_or(""),
+                &precedence
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "".to_string()),
+                operator_symbol.unwrap_or(""),
                 &(match origin_operator_function_maybe_signature {
                     None => "".to_string(),
                     Some(origin_operator_function_signature) => {
                         " : ".to_string()
-                            + &elm_syntax_type_to_single_line_string(
-                                &module_origin_lookup,
-                                &origin_operator_function_signature.type_1.value,
-                            )
+                            + &match origin_operator_function_signature.type_ {
+                                None => "".to_string(),
+                                Some(ref origin_operator_function_type) => {
+                                    elm_syntax_type_to_single_line_string(
+                                        &module_origin_lookup,
+                                        &origin_operator_function_type.value,
+                                    )
+                                }
+                            }
                     }
                 })
             );
@@ -1906,8 +2055,14 @@ fn present_operator_declaration_info_markdown(
         }
         None => {
             let description = format!(
-                "```elm\ninfix {} {precedence} {module_origin}.({operator_symbol})\n```\n",
-                elm_syntax_infix_direction_to_str(direction)
+                "```elm\ninfix {} {} {module_origin}.({})\n```\n",
+                maybe_direction
+                    .map(elm_syntax_infix_direction_to_str)
+                    .unwrap_or(""),
+                precedence
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "".to_string()),
+                operator_symbol.unwrap_or("")
             );
             match maybe_documentation {
                 None => description,
@@ -1956,13 +2111,13 @@ fn respond_to_completion(
             None
         }
         ElmSyntaxSymbol::ModuleName(module_name) => {
-            if module_name
-                == &completion_project_module
+            if Some(module_name)
+                == completion_project_module
                     .module_syntax
                     .header
-                    .value
-                    .module_name
-                    .value
+                    .as_ref()
+                    .and_then(|header| header.module_name.as_ref())
+                    .map(|node| node.value.as_str())
             {
                 return None;
             }
@@ -1973,16 +2128,16 @@ fn respond_to_completion(
                     .iter()
                     .filter_map(
                         |(importable_dependency_module_name, importable_dependency_module_origin)| {
-                            let importable_dependency_module_syntax =
+                            let importable_dependency_module_state =
                                 state.projects.get(&importable_dependency_module_origin.project_path)
                                 .and_then(|dependency_state| {
                                     dependency_state.modules.get(&importable_dependency_module_origin.module_path)
-                                })
-                                .and_then(|importable_dependency_module_state| importable_dependency_module_state.syntax.as_ref())?;
-                            let maybe_importable_dependency_module_documentation_comment = importable_dependency_module_syntax
-                                .comments
-                                .iter()
-                                .find(|comment_node| comment_node.value.starts_with("{-|"));
+                                })?;
+                            let maybe_importable_dependency_module_documentation_comment =
+                                importable_dependency_module_state
+                                    .syntax
+                                    .documentation
+                                    .as_ref();
                             Some(lsp_types::CompletionItem {
                                 label: importable_dependency_module_name.clone(),
                                 kind: Some(lsp_types::CompletionItemKind::MODULE),
@@ -2009,18 +2164,18 @@ fn respond_to_completion(
                             .modules
                             .iter()
                             .filter_map(|(_, project_module)| {
-                                let project_module_syntax = project_module.syntax.as_ref()?;
-                                let maybe_project_module_documentation_comment = project_module_syntax
-                                    .comments
-                                    .iter()
-                                    .find(|comment_node| comment_node.value.starts_with("{-|"));
-                                Some(lsp_types::CompletionItem {
-                                    label: project_module_syntax
+                                let project_module_name = project_module
+                                        .syntax
                                         .header
-                                        .value
-                                        .module_name
-                                        .value
-                                        .clone(),
+                                        .as_ref()
+                                        .and_then(|header| header.module_name.as_ref())
+                                        .map(|node| &node.value)?;
+                                let maybe_project_module_documentation_comment = project_module
+                                    .syntax
+                                    .documentation
+                                    .as_ref();
+                                Some(lsp_types::CompletionItem {
+                                    label: project_module_name.clone(),
                                     kind: Some(
                                         lsp_types::CompletionItemKind::MODULE,
                                     ),
@@ -2054,9 +2209,10 @@ fn respond_to_completion(
                 &completion_project_module
                     .module_syntax
                     .header
-                    .value
-                    .module_name
-                    .value
+                    .as_ref()
+                    .and_then(|header| header.module_name.as_ref())
+                    .map(|node| node.value.as_str())
+                    .unwrap_or("")
             } else {
                 module_origin
             };
@@ -2065,78 +2221,103 @@ fn respond_to_completion(
                 completion_project_module.project,
                 module_origin,
             )?;
-            let origin_module_syntax = origin_module_state.syntax.as_ref()?;
             let module_origin_lookup: ModuleOriginLookup = elm_syntax_module_create_origin_lookup(
                 state,
                 completion_project_module.project,
-                origin_module_syntax,
+                &origin_module_state.syntax,
             );
             let variable_and_open_choice_type_exposes_from_origin_module_or_none_if_all =
-                if module_origin
-                    == &completion_project_module
+                if Some(module_origin)
+                    == completion_project_module
                         .module_syntax
                         .header
-                        .value
-                        .module_name
-                        .value
+                        .as_ref()
+                        .and_then(|header| header.module_name.as_ref())
+                        .map(|node| node.value.as_str())
                 {
                     None
                 } else {
-                    match &origin_module_syntax.header.value.exposing.value {
-                        ElmSyntaxExposingSpecific::All(_) => None,
-                        ElmSyntaxExposingSpecific::Explicit(exposes) => Some(
+                    match origin_module_state
+                        .syntax
+                        .header
+                        .as_ref()
+                        .and_then(|header| header.exposing.as_ref())
+                        .and_then(|exposing| exposing.specific.as_ref())
+                        .map(|node| &node.value)
+                    {
+                        None | Some(ElmSyntaxExposingSpecific::All(_)) => None,
+                        Some(ElmSyntaxExposingSpecific::Explicit(exposes)) => Some(
                             exposes
                                 .iter()
                                 .filter_map(|expose_node| match &expose_node.value {
                                     ElmSyntaxExpose::ChoiceTypeIncludingVariants {
                                         name: open_choice_type_name,
                                         open_range: _,
-                                    } => Some(&open_choice_type_name.value),
+                                    } => Some(open_choice_type_name.value.as_str()),
                                     ElmSyntaxExpose::Operator(operator_symbol) => {
-                                        Some(operator_symbol)
+                                        operator_symbol.as_ref().map(|node| node.value)
                                     }
                                     ElmSyntaxExpose::Type(_) => None,
-                                    ElmSyntaxExpose::Variable(name) => Some(name),
+                                    ElmSyntaxExpose::Variable(name) => Some(name.as_str()),
                                 })
                                 .collect::<std::collections::HashSet<_>>(),
                         ),
                     }
                 };
 
-            let mut completion_items = Vec::new();
-            for origin_module_declaration in origin_module_syntax.declarations.iter() {
-                match &origin_module_declaration.declaration.value {
+            let mut completion_items: Vec<lsp_types::CompletionItem> = Vec::new();
+            for (origin_module_declaration_node, origin_module_declaration_documentation) in
+                origin_module_state.syntax.declarations.iter().filter_map(
+                    |documented_declaration| {
+                        documented_declaration
+                            .declaration
+                            .as_ref()
+                            .map(|declaration_node| {
+                                (
+                                    declaration_node,
+                                    documented_declaration.documentation.as_ref(),
+                                )
+                            })
+                    },
+                )
+            {
+                match &origin_module_declaration_node.value {
                     ElmSyntaxDeclaration::ChoiceType {
-                        name: choice_type_name,
+                        name: maybe_choice_type_name,
                         parameters,
                         equals_key_symbol_range: _,
-                        variant0,
+                        variant0_name,
+                        variant0_values,
                         variant1_up,
                     } => {
-                        if variable_and_open_choice_type_exposes_from_origin_module_or_none_if_all
+                        if let Some(choice_type_name_node) = maybe_choice_type_name && variable_and_open_choice_type_exposes_from_origin_module_or_none_if_all
                             .as_ref()
-                            .is_none_or(|expose| expose.contains(&choice_type_name.value))
+                            .is_none_or(|expose| expose.contains(choice_type_name_node.value.as_str()))
                         {
                             let info_markdown = format!(
                                 "variant in\n{}",
                                 present_choice_type_declaration_info_markdown(
                                     &module_origin_lookup,
                                     module_origin,
-                                    &choice_type_name.value,
-                                    origin_module_declaration.documentation.as_ref(),
-                                    parameters,
-                                    variant0,
-                                    variant1_up,
+                                    &choice_type_name_node.value,
+                                    origin_module_declaration_documentation,
+                                    &parameters,
+                                    variant0_name.as_ref().map(|node| node.value.as_str()),
+                                    &variant0_values,
+                                    &variant1_up,
                                 ),
                             );
                             completion_items.extend(
-                                std::iter::once(variant0.name.value.clone())
+                                variant0_name
+                                    .as_ref()
+                                    .map(|node| node.value.clone())
+                                    .into_iter()
                                     .chain(
                                         variant1_up
                                             .iter()
-                                            .map(|variant| variant.name.value.clone()),
+                                            .filter_map(|variant| variant.name.as_ref().map(|node| node.value.clone())),
                                     )
-                                    .map(|variant_name| lsp_types::CompletionItem {
+                                    .map(|variant_name: String| lsp_types::CompletionItem {
                                         label: variant_name,
                                         kind: Some(lsp_types::CompletionItemKind::ENUM_MEMBER),
                                         documentation: Some(
@@ -2152,13 +2333,18 @@ fn respond_to_completion(
                             );
                         }
                     }
-                    ElmSyntaxDeclaration::Port { name, type_ } => {
-                        if variable_and_open_choice_type_exposes_from_origin_module_or_none_if_all
+                    ElmSyntaxDeclaration::Port {
+                        name,
+                        colon_key_symbol_range: _,
+                        type_,
+                    } => {
+                        if let Some(name_node) = name &&
+                            variable_and_open_choice_type_exposes_from_origin_module_or_none_if_all
                             .as_ref()
-                            .is_none_or(|expose| expose.contains(&name.value))
+                            .is_none_or(|expose| expose.contains(name_node.value.as_str()))
                         {
                             completion_items.push(lsp_types::CompletionItem {
-                                label: name.value.clone(),
+                                label: name_node.value.clone(),
                                 kind: Some(lsp_types::CompletionItemKind::FUNCTION),
                                 documentation: Some(lsp_types::Documentation::MarkupContent(
                                     lsp_types::MarkupContent {
@@ -2166,9 +2352,9 @@ fn respond_to_completion(
                                         value: present_port_declaration_info_markdown(
                                             &module_origin_lookup,
                                             module_origin,
-                                            &name.value,
-                                            origin_module_declaration.documentation.as_ref(),
-                                            &type_.value,
+                                            &name_node.value,
+                                            origin_module_declaration_documentation,
+                                            type_.as_ref().map(|node| &node.value),
                                         ),
                                     },
                                 )),
@@ -2178,18 +2364,19 @@ fn respond_to_completion(
                     }
                     ElmSyntaxDeclaration::TypeAlias {
                         alias_keyword_range: _,
-                        name,
+                        name: maybe_name,
                         parameters,
                         equals_key_symbol_range: _,
-                        type_,
+                        type_: maybe_type,
                     } => {
-                        if variable_and_open_choice_type_exposes_from_origin_module_or_none_if_all
+                        if let Some(name_node) = maybe_name && variable_and_open_choice_type_exposes_from_origin_module_or_none_if_all
                             .as_ref()
-                            .is_none_or(|expose| expose.contains(&name.value))
+                            .is_none_or(|expose| expose.contains(name_node.value.as_str()))
                         {
-                            if let ElmSyntaxType::Record(_) = type_.value {
+                            if let Some(type_node) = maybe_type &&
+                               let ElmSyntaxType::Record(_) = type_node.value {
                                 completion_items.push(lsp_types::CompletionItem {
-                                    label: name.value.clone(),
+                                    label: name_node.value.clone(),
                                     kind: Some(lsp_types::CompletionItemKind::CONSTRUCTOR),
                                     documentation: Some(lsp_types::Documentation::MarkupContent(
                                         lsp_types::MarkupContent {
@@ -2199,12 +2386,10 @@ fn respond_to_completion(
                                                 &present_type_alias_declaration_info_markdown(
                                                     &module_origin_lookup,
                                                     module_origin,
-                                                    &name.value,
-                                                    origin_module_declaration
-                                                        .documentation
-                                                        .as_ref(),
+                                                    &name_node.value,
+                                                    origin_module_declaration_documentation,
                                                     parameters,
-                                                    &type_.value,
+                                                    Some(&type_node.value),
                                                 )
                                             ),
                                         },
@@ -2214,20 +2399,19 @@ fn respond_to_completion(
                             }
                         }
                     }
-                    ElmSyntaxDeclaration::ValueOrFunction {
-                        name,
+                    ElmSyntaxDeclaration::Variable {
+                        start_name: start_name_node,
                         signature: maybe_signature,
-                        implementation_name_range: _,
                         parameters: _,
                         equals_key_symbol_range: _,
                         result: _,
                     } => {
                         if variable_and_open_choice_type_exposes_from_origin_module_or_none_if_all
                             .as_ref()
-                            .is_none_or(|expose| expose.contains(name))
+                            .is_none_or(|expose| expose.contains(start_name_node.value.as_str()))
                         {
                             completion_items.push(lsp_types::CompletionItem {
-                                label: name.clone(),
+                                label: start_name_node.value.clone(),
                                 kind: Some(lsp_types::CompletionItemKind::FUNCTION),
                                 documentation: Some(lsp_types::Documentation::MarkupContent(
                                     lsp_types::MarkupContent {
@@ -2235,9 +2419,12 @@ fn respond_to_completion(
                                         value: present_variable_declaration_info_markdown(
                                             &module_origin_lookup,
                                             module_origin,
-                                            name,
-                                            origin_module_declaration.documentation.as_ref(),
-                                            maybe_signature.as_ref(),
+                                            &start_name_node.value,
+                                            origin_module_declaration_documentation,
+                                            maybe_signature
+                                                .as_ref()
+                                                .and_then(|signature| signature.type_.as_ref())
+                                                .map(|node| &node.value),
                                         ),
                                     },
                                 )),
@@ -2262,9 +2449,10 @@ fn respond_to_completion(
                 &completion_project_module
                     .module_syntax
                     .header
-                    .value
-                    .module_name
-                    .value
+                    .as_ref()
+                    .and_then(|header| header.module_name.as_ref())
+                    .map(|node| node.value.as_str())
+                    .unwrap_or("")
             } else {
                 module_origin
             };
@@ -2273,57 +2461,83 @@ fn respond_to_completion(
                 completion_project_module.project,
                 module_origin,
             )?;
-            let origin_module_syntax = origin_module_state.syntax.as_ref()?;
             let module_origin_lookup: ModuleOriginLookup = elm_syntax_module_create_origin_lookup(
                 state,
                 completion_project_module.project,
-                origin_module_syntax,
+                &origin_module_state.syntax,
             );
-            let type_exposes_from_origin_module_or_none_if_all = if module_origin
-                == &completion_project_module
-                    .module_syntax
-                    .header
-                    .value
-                    .module_name
-                    .value
-            {
-                None
-            } else {
-                match &origin_module_syntax.header.value.exposing.value {
-                    ElmSyntaxExposingSpecific::All(_) => None,
-                    ElmSyntaxExposingSpecific::Explicit(exposes) => Some(
-                        exposes
-                            .iter()
-                            .filter_map(|expose_node| match &expose_node.value {
-                                ElmSyntaxExpose::ChoiceTypeIncludingVariants {
-                                    name: open_choice_type_name,
-                                    open_range: _,
-                                } => Some(&open_choice_type_name.value),
-                                ElmSyntaxExpose::Type(type_name) => Some(type_name),
-                                ElmSyntaxExpose::Operator(_) => None,
-                                ElmSyntaxExpose::Variable(_) => None,
-                            })
-                            .collect::<std::collections::HashSet<_>>(),
-                    ),
-                }
-            };
+            let type_exposes_from_origin_module_or_none_if_all = completion_project_module
+                .module_syntax
+                .header
+                .as_ref()
+                .and_then(|completion_module_header| {
+                    if Some(module_origin)
+                        == completion_module_header
+                            .module_name
+                            .as_ref()
+                            .map(|node| node.value.as_str())
+                    {
+                        None
+                    } else {
+                        match &completion_module_header
+                            .exposing
+                            .as_ref()
+                            .and_then(|node| node.specific.as_ref())
+                            .map(|node| &node.value)
+                        {
+                            None | Some(ElmSyntaxExposingSpecific::All(_)) => None,
+                            Some(ElmSyntaxExposingSpecific::Explicit(exposes)) => Some(
+                                exposes
+                                    .iter()
+                                    .filter_map(|expose_node| match &expose_node.value {
+                                        ElmSyntaxExpose::ChoiceTypeIncludingVariants {
+                                            name: open_choice_type_name,
+                                            open_range: _,
+                                        } => Some(open_choice_type_name.value.as_str()),
+                                        ElmSyntaxExpose::Type(type_name) => {
+                                            Some(type_name.as_str())
+                                        }
+                                        ElmSyntaxExpose::Operator(_) => None,
+                                        ElmSyntaxExpose::Variable(_) => None,
+                                    })
+                                    .collect::<std::collections::HashSet<&str>>(),
+                            ),
+                        }
+                    }
+                });
 
-            let mut completion_items = Vec::new();
-            for origin_module_declaration in origin_module_syntax.declarations.iter() {
-                match &origin_module_declaration.declaration.value {
+            let mut completion_items: Vec<lsp_types::CompletionItem> = Vec::new();
+            for (origin_module_declaration_node, origin_module_declaration_documentation) in
+                origin_module_state.syntax.declarations.iter().filter_map(
+                    |documented_declaration| {
+                        documented_declaration
+                            .declaration
+                            .as_ref()
+                            .map(|declaration_node| {
+                                (
+                                    declaration_node,
+                                    documented_declaration.documentation.as_ref(),
+                                )
+                            })
+                    },
+                )
+            {
+                match &origin_module_declaration_node.value {
                     ElmSyntaxDeclaration::ChoiceType {
-                        name,
+                        name: maybe_name,
                         parameters,
                         equals_key_symbol_range: _,
-                        variant0,
+                        variant0_name: maybe_variant0_name,
+                        variant0_values,
                         variant1_up,
                     } => {
-                        if type_exposes_from_origin_module_or_none_if_all
-                            .as_ref()
-                            .is_none_or(|expose| expose.contains(&name.value))
+                        if let Some(name_node) = maybe_name.as_ref()
+                            && type_exposes_from_origin_module_or_none_if_all
+                                .as_ref()
+                                .is_none_or(|expose| expose.contains(name_node.value.as_str()))
                         {
                             completion_items.push(lsp_types::CompletionItem {
-                                label: name.value.clone(),
+                                label: name_node.value.clone(),
                                 kind: Some(lsp_types::CompletionItemKind::ENUM),
                                 documentation: Some(lsp_types::Documentation::MarkupContent(
                                     lsp_types::MarkupContent {
@@ -2331,11 +2545,14 @@ fn respond_to_completion(
                                         value: present_choice_type_declaration_info_markdown(
                                             &module_origin_lookup,
                                             module_origin,
-                                            &name.value,
-                                            origin_module_declaration.documentation.as_ref(),
+                                            &name_node.value,
+                                            origin_module_declaration_documentation,
                                             parameters,
-                                            variant0,
-                                            variant1_up,
+                                            maybe_variant0_name
+                                                .as_ref()
+                                                .map(|node| node.value.as_str()),
+                                            &variant0_values,
+                                            &variant1_up,
                                         ),
                                     },
                                 )),
@@ -2345,17 +2562,18 @@ fn respond_to_completion(
                     }
                     ElmSyntaxDeclaration::TypeAlias {
                         alias_keyword_range: _,
-                        name,
+                        name: maybe_name,
                         parameters,
                         equals_key_symbol_range: _,
                         type_,
                     } => {
-                        if type_exposes_from_origin_module_or_none_if_all
-                            .as_ref()
-                            .is_none_or(|expose| expose.contains(&name.value))
+                        if let Some(name_node) = maybe_name.as_ref()
+                            && type_exposes_from_origin_module_or_none_if_all
+                                .as_ref()
+                                .is_none_or(|expose| expose.contains(name_node.value.as_str()))
                         {
                             completion_items.push(lsp_types::CompletionItem {
-                                label: name.value.clone(),
+                                label: name_node.value.clone(),
                                 kind: Some(lsp_types::CompletionItemKind::STRUCT),
                                 documentation: Some(lsp_types::Documentation::MarkupContent(
                                     lsp_types::MarkupContent {
@@ -2363,10 +2581,10 @@ fn respond_to_completion(
                                         value: present_type_alias_declaration_info_markdown(
                                             &module_origin_lookup,
                                             module_origin,
-                                            &name.value,
-                                            origin_module_declaration.documentation.as_ref(),
+                                            &name_node.value,
+                                            origin_module_declaration_documentation,
                                             parameters,
-                                            &type_.value,
+                                            type_.as_ref().map(|node| &node.value),
                                         ),
                                     },
                                 )),
@@ -2375,7 +2593,7 @@ fn respond_to_completion(
                         }
                     }
                     ElmSyntaxDeclaration::Port { .. } => {}
-                    ElmSyntaxDeclaration::ValueOrFunction { .. } => {}
+                    ElmSyntaxDeclaration::Variable { .. } => {}
                     ElmSyntaxDeclaration::Operator { .. } => {}
                 }
             }
@@ -2399,19 +2617,14 @@ fn respond_to_completion(
 fn state_update_source_at_path(
     state: &mut State,
     changed_path: std::path::PathBuf,
-    changed_source: &str,
+    changed_source: String,
 ) {
     'updating_module: for project_state in state.projects.values_mut() {
         if project_state.modules.contains_key(&changed_path) {
-            let parse_allocator: bumpalo::Bump = bumpalo::Bump::new();
             project_state.modules.insert(
                 changed_path,
                 ModuleState {
-                    syntax: elm::elm_parser_lenient_run(
-                        elm::elm_parser_lenient_module_(&parse_allocator),
-                        elm::StringString::One(changed_source),
-                    )
-                    .map(elm_syntax_module_to_persistent),
+                    syntax: parse_elm_syntax_module(changed_source),
                 },
             );
             break 'updating_module;
@@ -2704,8 +2917,8 @@ struct ElmQualifiedName {
 }
 #[derive(Clone, Debug, PartialEq)]
 struct ElmSyntaxTypeField {
-    name: Option<ElmSyntaxNode<String>>,
-    colon_key_symbol_range: lsp_types::Range,
+    name: ElmSyntaxNode<String>,
+    colon_key_symbol_range: Option<lsp_types::Range>,
     value: Option<ElmSyntaxNode<ElmSyntaxType>>,
 }
 
@@ -2780,18 +2993,22 @@ struct EffectModuleHeaderEntry {
 enum ElmSyntaxLetDeclaration {
     Destructuring {
         pattern: ElmSyntaxNode<ElmSyntaxPattern>,
-        equals_key_symbol_range: lsp_types::Range,
-        expression: ElmSyntaxNode<ElmSyntaxExpression>,
+        equals_key_symbol_range: Option<lsp_types::Range>,
+        expression: Option<ElmSyntaxNode<ElmSyntaxExpression>>,
     },
-    ValueOrFunctionDeclaration {
-        name: String,
-        signature:
-            Option<elm::GeneratedNameType0<ElmSyntaxNode<String>, ElmSyntaxNode<ElmSyntaxType>>>,
-        implementation_name_range: lsp_types::Range,
+    VariableDeclaration {
+        start_name: ElmSyntaxNode<String>,
+        signature: Option<ElmSyntaxVariableDeclarationSignature>,
         parameters: Vec<ElmSyntaxNode<ElmSyntaxPattern>>,
-        equals_key_symbol_range: lsp_types::Range,
-        result: ElmSyntaxNode<ElmSyntaxExpression>,
+        equals_key_symbol_range: Option<lsp_types::Range>,
+        result: Option<ElmSyntaxNode<ElmSyntaxExpression>>,
     },
+}
+#[derive(Clone, Debug, PartialEq)]
+struct ElmSyntaxVariableDeclarationSignature {
+    colon_key_symbol_range: lsp_types::Range,
+    type_: Option<ElmSyntaxNode<ElmSyntaxType>>,
+    implementation_name_range: Option<lsp_types::Range>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -2804,34 +3021,33 @@ enum ElmSyntaxExpression {
     },
     CaseOf {
         matched: Option<ElmSyntaxNode<Box<ElmSyntaxExpression>>>,
-        of_keyword_range: lsp_types::Range,
-        cases: Vec<
-            elm::GeneratedArrowKeySymbolRangePatternResult<
-                lsp_types::Range,
-                ElmSyntaxNode<ElmSyntaxPattern>,
-                ElmSyntaxNode<ElmSyntaxExpression>,
-            >,
-        >,
+        of_keyword_range: Option<lsp_types::Range>,
+        cases: Vec<ElmSyntaxExpressionCase>,
     },
     Char(Option<char>),
-    Float(f64),
+    Float(Option<f64>),
     IfThenElse {
         condition: Option<ElmSyntaxNode<Box<ElmSyntaxExpression>>>,
-        then_keyword_range: lsp_types::Range,
+        then_keyword_range: Option<lsp_types::Range>,
         on_true: Option<ElmSyntaxNode<Box<ElmSyntaxExpression>>>,
-        else_keyword_range: lsp_types::Range,
+        else_keyword_range: Option<lsp_types::Range>,
         on_false: Option<ElmSyntaxNode<Box<ElmSyntaxExpression>>>,
     },
     /// elm-syntax for example uses a pratt parser
     /// to produce the actual, semantically correct tree as you would evaluate it.
-    /// However, such a tree is pretty much irrelevant
+    /// However, such a tree is irrelevant
     /// for the existing functionality of the language server,
-    /// so we instead simply parse it "left to right". For example:
+    /// so we instead simply parse it "left, grouping right". For example:
     ///
     ///     3 + 4 * 5 - 6
     ///
-    /// in elm-syntax: Op (Op 3 "+" (Op 4 "*" 5)) "-" 6
-    /// here:          Op (Op (Op 3 "+" 4) "*" 5) "-" 6
+    /// in elm-syntax:
+    ///
+    ///     Op (Op 3 "+" (Op 4 "*" 5)) "-" 6
+    ///
+    /// here:
+    ///
+    ///     Op 3 "+" (Op 4 "*" (Op 5 "-" 6))
     InfixOperationIgnoringPrecedence {
         left: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
         operator: ElmSyntaxNode<&'static str>,
@@ -2843,30 +3059,33 @@ enum ElmSyntaxExpression {
     },
     Lambda {
         parameters: Vec<ElmSyntaxNode<ElmSyntaxPattern>>,
-        arrow_key_symbol_range: lsp_types::Range,
-        result: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
+        arrow_key_symbol_range: Option<lsp_types::Range>,
+        result: Option<ElmSyntaxNode<Box<ElmSyntaxExpression>>>,
     },
     LetIn {
         declarations: Vec<ElmSyntaxNode<ElmSyntaxLetDeclaration>>,
-        in_keyword_range: lsp_types::Range,
+        in_keyword_range: Option<lsp_types::Range>,
         result: Option<ElmSyntaxNode<Box<ElmSyntaxExpression>>>,
     },
     List(Vec<ElmSyntaxNode<ElmSyntaxExpression>>),
     Negation(Option<ElmSyntaxNode<Box<ElmSyntaxExpression>>>),
-    OperatorFunction(Option<String>),
+    OperatorFunction(ElmSyntaxNode<&'static str>),
     Parenthesized(ElmSyntaxNode<Box<ElmSyntaxExpression>>),
-    Record(Vec<ElmSyntaxField>),
+    Record(Vec<ElmSyntaxExpressionField>),
     RecordAccess {
         record: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
         field: Option<ElmSyntaxNode<String>>,
     },
     RecordAccessFunction(Option<String>),
     RecordUpdate {
-        record_variable: ElmSyntaxNode<String>,
+        record_variable: Option<ElmSyntaxNode<String>>,
         bar_key_symbol_range: lsp_types::Range,
-        fields: Vec<ElmSyntaxField>,
+        fields: Vec<ElmSyntaxExpressionField>,
     },
-    Reference(elm::GeneratedNameQualification<String, String>),
+    Reference {
+        qualification: String,
+        name: String,
+    },
     String {
         content: String,
         quoting_style: elm::ElmSyntaxStringQuotingStyle,
@@ -2882,9 +3101,15 @@ enum ElmSyntaxExpression {
     },
 }
 #[derive(Clone, Debug, PartialEq)]
-struct ElmSyntaxField {
-    name: Option<ElmSyntaxNode<String>>,
-    equals_key_symbol_range: lsp_types::Range,
+struct ElmSyntaxExpressionCase {
+    arrow_key_symbol_range: Option<lsp_types::Range>,
+    pattern: ElmSyntaxNode<ElmSyntaxPattern>,
+    result: Option<ElmSyntaxNode<ElmSyntaxExpression>>,
+}
+#[derive(Clone, Debug, PartialEq)]
+struct ElmSyntaxExpressionField {
+    name: ElmSyntaxNode<String>,
+    equals_key_symbol_range: Option<lsp_types::Range>,
     value: Option<ElmSyntaxNode<ElmSyntaxExpression>>,
 }
 
@@ -2914,45 +3139,44 @@ enum ElmSyntaxExpose {
 #[derive(Clone, Debug, PartialEq)]
 enum ElmSyntaxDeclaration {
     ChoiceType {
-        name: ElmSyntaxNode<String>,
+        name: Option<ElmSyntaxNode<String>>,
         parameters: Vec<ElmSyntaxNode<String>>,
-        equals_key_symbol_range: lsp_types::Range,
-        variant0:
-            elm::GeneratedNameValues<ElmSyntaxNode<String>, Vec<ElmSyntaxNode<ElmSyntaxType>>>,
-        variant1_up: Vec<
-            elm::GeneratedNameOrKeySymbolRangeValues<
-                ElmSyntaxNode<String>,
-                lsp_types::Range,
-                Vec<ElmSyntaxNode<ElmSyntaxType>>,
-            >,
-        >,
+        equals_key_symbol_range: Option<lsp_types::Range>,
+        variant0_name: Option<ElmSyntaxNode<String>>,
+        variant0_values: Vec<ElmSyntaxNode<ElmSyntaxType>>,
+        variant1_up: Vec<ElmSyntaxChoiceTypeDeclarationTailingVariant>,
     },
     Operator {
-        direction: ElmSyntaxNode<elm::ElmSyntaxInfixDirection>,
-        operator: ElmSyntaxNode<String>,
-        function: ElmSyntaxNode<String>,
-        precedence: ElmSyntaxNode<i64>,
+        direction: Option<ElmSyntaxNode<elm::ElmSyntaxInfixDirection>>,
+        precedence: Option<ElmSyntaxNode<i64>>,
+        operator: Option<ElmSyntaxNode<String>>,
+        function: Option<ElmSyntaxNode<String>>,
     },
     Port {
-        name: ElmSyntaxNode<String>,
-        type_: ElmSyntaxNode<ElmSyntaxType>,
+        name: Option<ElmSyntaxNode<String>>,
+        colon_key_symbol_range: Option<lsp_types::Range>,
+        type_: Option<ElmSyntaxNode<ElmSyntaxType>>,
     },
     TypeAlias {
         alias_keyword_range: lsp_types::Range,
-        name: ElmSyntaxNode<String>,
+        name: Option<ElmSyntaxNode<String>>,
         parameters: Vec<ElmSyntaxNode<String>>,
-        equals_key_symbol_range: lsp_types::Range,
-        type_: ElmSyntaxNode<ElmSyntaxType>,
+        equals_key_symbol_range: Option<lsp_types::Range>,
+        type_: Option<ElmSyntaxNode<ElmSyntaxType>>,
     },
-    ValueOrFunction {
-        name: String,
-        signature:
-            Option<elm::GeneratedNameType0<ElmSyntaxNode<String>, ElmSyntaxNode<ElmSyntaxType>>>,
-        implementation_name_range: lsp_types::Range,
+    Variable {
+        start_name: ElmSyntaxNode<String>,
+        signature: Option<ElmSyntaxVariableDeclarationSignature>,
         parameters: Vec<ElmSyntaxNode<ElmSyntaxPattern>>,
-        equals_key_symbol_range: lsp_types::Range,
-        result: ElmSyntaxNode<ElmSyntaxExpression>,
+        equals_key_symbol_range: Option<lsp_types::Range>,
+        result: Option<ElmSyntaxNode<ElmSyntaxExpression>>,
     },
+}
+#[derive(Clone, Debug, PartialEq)]
+struct ElmSyntaxChoiceTypeDeclarationTailingVariant {
+    or_key_symbol_range: lsp_types::Range,
+    name: Option<ElmSyntaxNode<String>>,
+    values: Vec<ElmSyntaxNode<ElmSyntaxType>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -2997,14 +3221,16 @@ struct ElmSyntaxModuleHeader {
 #[derive(Clone, Debug, PartialEq)]
 struct ElmSyntaxModule {
     header: Option<ElmSyntaxModuleHeader>,
+    documentation: Option<ElmSyntaxNode<String>>,
     imports: Vec<ElmSyntaxNode<ElmSyntaxImport>>,
-    comments: Vec<ElmSyntaxNode<String>>,
-    declarations: Vec<
-        elm::GeneratedDeclarationDocumentation<
-            ElmSyntaxNode<ElmSyntaxDeclaration>,
-            Option<ElmSyntaxNode<String>>,
-        >,
-    >,
+    comments: Vec<ElmSyntaxNode<ElmSyntaxComment>>,
+    declarations: Vec<ElmSyntaxDocumentedDeclaration>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ElmSyntaxDocumentedDeclaration {
+    documentation: Option<ElmSyntaxNode<String>>,
+    declaration: Option<ElmSyntaxNode<ElmSyntaxDeclaration>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -3179,64 +3405,84 @@ fn elm_syntax_module_create_origin_lookup<'a>(
         None => "",
         Some(module_header) => &module_header.value,
     };
-    for documented_declaration in elm_syntax_module.declarations.iter() {
-        match &documented_declaration.declaration.value {
+    for declaration_node in elm_syntax_module
+        .declarations
+        .iter()
+        .filter_map(|documented_declaration| documented_declaration.declaration.as_ref())
+    {
+        match &declaration_node.value {
             ElmSyntaxDeclaration::ChoiceType {
-                name,
+                name: maybe_name,
                 parameters: _,
                 equals_key_symbol_range: _,
-                variant0: variant0,
+                variant0_name: maybe_variant0_name,
+                variant0_values: _,
                 variant1_up: variant1_up,
             } => {
-                module_origin_lookup
-                    .unqualified
-                    .insert(&name.value, self_module_name);
-                module_origin_lookup
-                    .unqualified
-                    .insert(&variant0.name.value, self_module_name);
-                for variant in variant1_up.iter() {
+                if let Some(name_node) = maybe_name {
                     module_origin_lookup
                         .unqualified
-                        .insert(&variant.name.value, self_module_name);
+                        .insert(&name_node.value, self_module_name);
+                }
+                if let Some(variant0_name_node) = maybe_variant0_name {
+                    module_origin_lookup
+                        .unqualified
+                        .insert(&variant0_name_node.value, self_module_name);
+                }
+                for variant in variant1_up.iter() {
+                    if let Some(variant_name_node) = variant.name.as_ref() {
+                        module_origin_lookup
+                            .unqualified
+                            .insert(&variant_name_node.value, self_module_name);
+                    }
                 }
             }
             ElmSyntaxDeclaration::Operator {
                 direction: _,
-                operator,
+                operator: maybe_operator,
                 function: _,
                 precedence: _,
             } => {
-                module_origin_lookup
-                    .unqualified
-                    .insert(&operator.value, self_module_name);
+                if let Some(operator_node) = maybe_operator {
+                    module_origin_lookup
+                        .unqualified
+                        .insert(&operator_node.value, self_module_name);
+                }
             }
-            ElmSyntaxDeclaration::Port { name, type_: _ } => {
-                module_origin_lookup
-                    .unqualified
-                    .insert(&name.value, self_module_name);
+            ElmSyntaxDeclaration::Port {
+                name: maybe_name,
+                colon_key_symbol_range: _,
+                type_: _,
+            } => {
+                if let Some(name_node) = maybe_name {
+                    module_origin_lookup
+                        .unqualified
+                        .insert(&name_node.value, self_module_name);
+                }
             }
             ElmSyntaxDeclaration::TypeAlias {
                 alias_keyword_range: _,
                 equals_key_symbol_range: _,
-                name,
+                name: maybe_name,
                 parameters: _,
                 type_: _,
             } => {
-                module_origin_lookup
-                    .unqualified
-                    .insert(&name.value, self_module_name);
+                if let Some(name_node) = maybe_name {
+                    module_origin_lookup
+                        .unqualified
+                        .insert(&name_node.value, self_module_name);
+                }
             }
-            ElmSyntaxDeclaration::ValueOrFunction {
-                name,
+            ElmSyntaxDeclaration::Variable {
+                start_name: start_name_node,
                 signature: _,
-                implementation_name_range: _,
                 parameters: _,
                 equals_key_symbol_range: _,
                 result: _,
             } => {
                 module_origin_lookup
                     .unqualified
-                    .insert(name, self_module_name);
+                    .insert(&start_name_node.value, self_module_name);
             }
         }
     }
@@ -3259,44 +3505,39 @@ fn elm_syntax_module_create_origin_lookup<'a>(
             .remove(allowed_qualification)
         {
             Some(module_origin_for_existing_qualification) => {
-                let module_origin_for_existing_qualification_maybe_syntax: Option<
-                    &ElmSyntaxModule,
-                > = project_state_get_module_with_name(
-                    state,
-                    project_state,
-                    &module_origin_for_existing_qualification,
-                )
-                .and_then(|(_, imported_module_state)| imported_module_state.syntax.as_ref());
-                for imported_module_expose in module_origin_for_existing_qualification_maybe_syntax
-                    .map(elm_syntax_module_exposed_symbols)
-                    .into_iter()
-                    .flatten()
+                if let Some((_, origin_module_state_for_existing_qualification)) =
+                    project_state_get_module_with_name(
+                        state,
+                        project_state,
+                        &module_origin_for_existing_qualification,
+                    )
                 {
-                    module_origin_lookup.ambiguously_qualified.insert(
-                        ElmQualified {
-                            qualification: allowed_qualification,
-                            name: imported_module_expose,
-                        },
-                        module_origin_for_existing_qualification,
-                    );
+                    for imported_module_expose in elm_syntax_module_exposed_symbols(
+                        &origin_module_state_for_existing_qualification.syntax,
+                    ) {
+                        module_origin_lookup.ambiguously_qualified.insert(
+                            ElmQualified {
+                                qualification: allowed_qualification,
+                                name: imported_module_expose,
+                            },
+                            module_origin_for_existing_qualification,
+                        );
+                    }
                 }
-                let imported_module_maybe_syntax: Option<&ElmSyntaxModule> =
+                if let Some((_, imported_module_state)) =
                     project_state_get_module_with_name(state, project_state, import_module_name)
-                        .and_then(|(_, imported_module_state)| {
-                            imported_module_state.syntax.as_ref()
-                        });
-                for imported_module_expose in imported_module_maybe_syntax
-                    .map(elm_syntax_module_exposed_symbols)
-                    .into_iter()
-                    .flatten()
                 {
-                    module_origin_lookup.ambiguously_qualified.insert(
-                        ElmQualified {
-                            qualification: allowed_qualification,
-                            name: imported_module_expose,
-                        },
-                        import_module_name,
-                    );
+                    for imported_module_expose in
+                        elm_syntax_module_exposed_symbols(&imported_module_state.syntax)
+                    {
+                        module_origin_lookup.ambiguously_qualified.insert(
+                            ElmQualified {
+                                qualification: allowed_qualification,
+                                name: imported_module_expose,
+                            },
+                            import_module_name,
+                        );
+                    }
                 }
             }
             None => {
@@ -3329,65 +3570,72 @@ fn elm_syntax_module_create_origin_lookup<'a>(
                                     module_origin_lookup
                                         .unqualified
                                         .insert(&choice_type_expose_name.value, import_module_name);
-                                    let imported_module_maybe_syntax: Option<&ElmSyntaxModule> =
+                                    if let Some((_, imported_module_syntax)) =
                                         project_state_get_module_with_name(
                                             state,
                                             project_state,
                                             import_module_name,
                                         )
-                                        .and_then(
-                                            |(_, imported_module_state)| {
-                                                imported_module_state.syntax.as_ref()
-                                            },
-                                        );
-                                    match imported_module_maybe_syntax {
-                                        None => {}
-                                        Some(imported_module_syntax) => {
-                                            'until_origin_choice_type_declaration_found: for documented_declaration in
-                                                imported_module_syntax.declarations.iter()
+                                    {
+                                        'until_origin_choice_type_declaration_found: for documented_declaration in
+                                            imported_module_syntax.syntax.declarations.iter()
+                                        {
+                                            match &documented_declaration
+                                                .declaration
+                                                .as_ref()
+                                                .map(|node| &node.value)
                                             {
-                                                match &documented_declaration.declaration.value {
-                                                    ElmSyntaxDeclaration::ChoiceType {
-                                                        name: imported_module_choice_type_name,
-                                                        parameters: _,
-                                                        equals_key_symbol_range: _,
-                                                        variant0:
-                                                            imported_module_choice_type_variant0,
-                                                        variant1_up:
-                                                            imported_module_choice_type_variant1_up,
-                                                    } => {
-                                                        if choice_type_expose_name
-                                                            == imported_module_choice_type_name
-                                                        {
+                                                Some(ElmSyntaxDeclaration::ChoiceType {
+                                                    name: maybe_imported_module_choice_type_name,
+                                                    parameters: _,
+                                                    equals_key_symbol_range: _,
+                                                    variant0_name:
+                                                        maybe_imported_module_choice_type_variant0_name,
+                                                    variant0_values: _,
+                                                    variant1_up:
+                                                        imported_module_choice_type_variant1_up,
+                                                }) => {
+                                                    if Some(choice_type_expose_name.value.as_str())
+                                                        == maybe_imported_module_choice_type_name
+                                                            .as_ref()
+                                                            .map(|node| node.value.as_str())
+                                                    {
+                                                        if let Some(imported_module_choice_type_variant0_name_node) = maybe_imported_module_choice_type_variant0_name.as_ref() {
                                                             module_origin_lookup.unqualified.insert(
-                                                            &imported_module_choice_type_variant0
-                                                                .name
-                                                                .value,
-                                                            import_module_name,
-                                                        );
-                                                            for imported_module_choice_type_variant in
-                                                            imported_module_choice_type_variant1_up
-                                                        {
-                                                            module_origin_lookup
-                                                            .unqualified
-                                                            .insert(
-                                                                &imported_module_choice_type_variant.name.value,
+                                                                &imported_module_choice_type_variant0_name_node.value,
                                                                 import_module_name,
                                                             );
                                                         }
-                                                            break 'until_origin_choice_type_declaration_found;
+                                                        for imported_module_choice_type_variant in
+                                                            imported_module_choice_type_variant1_up
+                                                        {
+                                                            if let Some(
+                                                                imported_module_choice_type_variant_name_node,
+                                                            ) =
+                                                                imported_module_choice_type_variant
+                                                                    .name
+                                                                    .as_ref()
+                                                            {
+                                                                module_origin_lookup.unqualified.insert(
+                                                                    &imported_module_choice_type_variant_name_node.value,
+                                                                    import_module_name,
+                                                                );
+                                                            }
                                                         }
+                                                        break 'until_origin_choice_type_declaration_found;
                                                     }
-                                                    _ => {}
                                                 }
+                                                _ => {}
                                             }
                                         }
                                     }
                                 }
                                 ElmSyntaxExpose::Operator(symbol) => {
-                                    module_origin_lookup
-                                        .unqualified
-                                        .insert(symbol, import_module_name);
+                                    if let Some(operator_symbol_node) = symbol {
+                                        module_origin_lookup
+                                            .unqualified
+                                            .insert(operator_symbol_node.value, import_module_name);
+                                    }
                                 }
                                 ElmSyntaxExpose::Type(name) => {
                                     module_origin_lookup
@@ -3420,53 +3668,75 @@ fn elm_syntax_module_exposed_symbols<'a>(elm_syntax_module: &'a ElmSyntaxModule)
         .map(|node| &node.value)
     {
         None | Some(ElmSyntaxExposingSpecific::All(_)) => {
-            for documented_declaration in elm_syntax_module.declarations.iter() {
-                match &documented_declaration.declaration.value {
+            for declaration_node in elm_syntax_module
+                .declarations
+                .iter()
+                .filter_map(|documented_declaration| documented_declaration.declaration.as_ref())
+            {
+                match &declaration_node.value {
                     ElmSyntaxDeclaration::ChoiceType {
-                        name: exposed_choice_type_name,
+                        name: maybe_exposed_choice_type_name,
                         parameters: _,
                         equals_key_symbol_range: _,
-                        variant0: exposed_choice_type_variant0,
+                        variant0_name: maybe_exposed_choice_type_variant0_name,
+                        variant0_values: _,
                         variant1_up: exposed_choice_type_variant1_up,
                     } => {
-                        exposed_symbols.push(&exposed_choice_type_name.value);
-                        exposed_symbols.push(&exposed_choice_type_variant0.name.value);
+                        if let Some(exposed_choice_type_name_node) = maybe_exposed_choice_type_name
+                        {
+                            exposed_symbols.push(&exposed_choice_type_name_node.value);
+                        }
+                        if let Some(exposed_choice_type_variant0_name_node) =
+                            maybe_exposed_choice_type_variant0_name
+                        {
+                            exposed_symbols.push(&exposed_choice_type_variant0_name_node.value);
+                        }
                         for exposed_choice_type_variant in exposed_choice_type_variant1_up {
-                            exposed_symbols.push(&exposed_choice_type_variant.name.value);
+                            if let Some(exposed_choice_type_variant_name_node) =
+                                &exposed_choice_type_variant.name
+                            {
+                                exposed_symbols.push(&exposed_choice_type_variant_name_node.value);
+                            }
                         }
                     }
                     ElmSyntaxDeclaration::Port {
-                        name: exposed_port_name,
+                        name: maybe_exposed_port_name,
+                        colon_key_symbol_range: _,
                         type_: _,
                     } => {
-                        exposed_symbols.push(&exposed_port_name.value);
+                        if let Some(exposed_port_name_node) = maybe_exposed_port_name {
+                            exposed_symbols.push(&exposed_port_name_node.value);
+                        }
                     }
                     ElmSyntaxDeclaration::TypeAlias {
                         alias_keyword_range: _,
-                        name: exposed_type_alias_name,
+                        name: maybe_exposed_type_alias_name,
                         parameters: _,
                         equals_key_symbol_range: _,
                         type_: _,
                     } => {
-                        exposed_symbols.push(&exposed_type_alias_name.value);
+                        if let Some(exposed_type_alias_name_node) = maybe_exposed_type_alias_name {
+                            exposed_symbols.push(&exposed_type_alias_name_node.value);
+                        }
                     }
                     ElmSyntaxDeclaration::Operator {
                         direction: _,
-                        operator: exposed_operator,
+                        operator: maybe_exposed_operator,
                         function: _,
                         precedence: _,
                     } => {
-                        exposed_symbols.push(&exposed_operator.value);
+                        if let Some(exposed_operator_node) = maybe_exposed_operator {
+                            exposed_symbols.push(&exposed_operator_node.value);
+                        }
                     }
-                    ElmSyntaxDeclaration::ValueOrFunction {
-                        name: exposed_variable_name,
+                    ElmSyntaxDeclaration::Variable {
+                        start_name: exposed_variable_name_node,
                         signature: _,
-                        implementation_name_range: _,
                         parameters: _,
                         equals_key_symbol_range: _,
                         result: _,
                     } => {
-                        exposed_symbols.push(exposed_variable_name);
+                        exposed_symbols.push(&exposed_variable_name_node.value);
                     }
                 }
             }
@@ -3479,27 +3749,42 @@ fn elm_syntax_module_exposed_symbols<'a>(elm_syntax_module: &'a ElmSyntaxModule)
                         open_range: _,
                     } => {
                         exposed_symbols.push(&choice_type_expose_name.value);
-                        'until_origin_choice_type_declaration_found: for declaration in
-                            elm_syntax_module.declarations.iter()
+                        'until_origin_choice_type_declaration_found: for declaration_node in
+                            elm_syntax_module.declarations.iter().filter_map(
+                                |documented_declaration| {
+                                    documented_declaration.declaration.as_ref()
+                                },
+                            )
                         {
-                            match &declaration.declaration.value {
+                            match &declaration_node.value {
                                 ElmSyntaxDeclaration::ChoiceType {
-                                    name: exposed_choice_type_name,
+                                    name: Some(exposed_choice_type_name_node),
                                     parameters: _,
                                     equals_key_symbol_range: _,
-                                    variant0: exposed_choice_type_variant0,
+                                    variant0_name: maybe_exposed_choice_type_variant0_name,
+                                    variant0_values: _,
                                     variant1_up: exposed_choice_type_variant1_up,
                                 } => {
                                     if &choice_type_expose_name.value
-                                        == &exposed_choice_type_name.value
+                                        == &exposed_choice_type_name_node.value
                                     {
-                                        exposed_symbols
-                                            .push(&exposed_choice_type_variant0.name.value);
+                                        if let Some(exposed_choice_type_variant0_name_node) =
+                                            maybe_exposed_choice_type_variant0_name
+                                        {
+                                            exposed_symbols.push(
+                                                &exposed_choice_type_variant0_name_node.value,
+                                            );
+                                        }
                                         for exposed_choice_type_variant in
                                             exposed_choice_type_variant1_up
                                         {
-                                            exposed_symbols
-                                                .push(&exposed_choice_type_variant.name.value);
+                                            if let Some(exposed_choice_type_variant_name_node) =
+                                                &exposed_choice_type_variant.name
+                                            {
+                                                exposed_symbols.push(
+                                                    &exposed_choice_type_variant_name_node.value,
+                                                );
+                                            }
                                         }
                                         break 'until_origin_choice_type_declaration_found;
                                     }
@@ -3508,8 +3793,10 @@ fn elm_syntax_module_exposed_symbols<'a>(elm_syntax_module: &'a ElmSyntaxModule)
                             }
                         }
                     }
-                    ElmSyntaxExpose::Operator(symbol) => {
-                        exposed_symbols.push(symbol);
+                    ElmSyntaxExpose::Operator(maybe_symbol) => {
+                        if let Some(symbol_node) = maybe_symbol {
+                            exposed_symbols.push(&symbol_node.value);
+                        }
                     }
                     ElmSyntaxExpose::Type(name) => {
                         exposed_symbols.push(name);
@@ -3562,11 +3849,17 @@ fn elm_syntax_type_to_single_line_string_into(
         ElmSyntaxType::Function {
             input,
             arrow_key_symbol_range: _,
-            output,
+            output: maybe_output,
         } => {
             elm_syntax_type_to_single_line_string_into(so_far, module_origin_lookup, &input.value);
             so_far.push_str(" -> ");
-            elm_syntax_type_to_single_line_string_into(so_far, module_origin_lookup, &output.value)
+            if let Some(output_node) = maybe_output {
+                elm_syntax_type_to_single_line_string_into(
+                    so_far,
+                    module_origin_lookup,
+                    &output_node.value,
+                )
+            }
         }
         ElmSyntaxType::Parenthesized(in_parens) => {
             so_far.push('(');
@@ -3585,71 +3878,104 @@ fn elm_syntax_type_to_single_line_string_into(
                     so_far.push_str("{ ");
                     so_far.push_str(&field0.name.value);
                     so_far.push_str(" : ");
-                    elm_syntax_type_to_single_line_string_into(
-                        so_far,
-                        module_origin_lookup,
-                        &field0.value.value,
-                    );
+                    if let Some(field0_value_node) = &field0.value {
+                        elm_syntax_type_to_single_line_string_into(
+                            so_far,
+                            module_origin_lookup,
+                            &field0_value_node.value,
+                        );
+                    }
                     for field in fields_iterator {
                         so_far.push_str(", ");
                         so_far.push_str(&field.name.value);
                         so_far.push_str(" : ");
-                        elm_syntax_type_to_single_line_string_into(
-                            so_far,
-                            module_origin_lookup,
-                            &field.value.value,
-                        );
+                        if let Some(field_value_node) = &field.value {
+                            elm_syntax_type_to_single_line_string_into(
+                                so_far,
+                                module_origin_lookup,
+                                &field_value_node.value,
+                            );
+                        }
                     }
                     so_far.push_str(" }")
                 }
             }
         }
         ElmSyntaxType::RecordExtension {
-            record_variable,
+            record_variable: maybe_record_variable,
             bar_key_symbol_range: _,
-            field0,
-            field1_up,
+            fields,
         } => {
             so_far.push_str("{ ");
-            so_far.push_str(&record_variable.value);
+            if let Some(record_variable_node) = maybe_record_variable {
+                so_far.push_str(&record_variable_node.value);
+            }
             so_far.push_str(" | ");
-            so_far.push_str(&field0.name.value);
-            so_far.push_str(" : ");
-            elm_syntax_type_to_single_line_string_into(
-                so_far,
-                module_origin_lookup,
-                &field0.value.value,
-            );
-            for field in field1_up {
+            for field in fields {
                 so_far.push_str(", ");
                 so_far.push_str(&field.name.value);
                 so_far.push_str(" : ");
-                elm_syntax_type_to_single_line_string_into(
-                    so_far,
-                    module_origin_lookup,
-                    &field.value.value,
-                );
+                if let Some(field_name_node) = &field.value {
+                    elm_syntax_type_to_single_line_string_into(
+                        so_far,
+                        module_origin_lookup,
+                        &field_name_node.value,
+                    );
+                }
             }
             so_far.push_str(" }")
         }
         ElmSyntaxType::Triple {
-            part0,
-            part1,
-            part2,
+            part0: maybe_part0,
+            part1: maybe_part1,
+            part2: maybe_part2,
         } => {
             so_far.push_str("( ");
-            elm_syntax_type_to_single_line_string_into(so_far, module_origin_lookup, &part0.value);
+            if let Some(part0_node) = maybe_part0 {
+                elm_syntax_type_to_single_line_string_into(
+                    so_far,
+                    module_origin_lookup,
+                    &part0_node.value,
+                );
+            }
             so_far.push_str(", ");
-            elm_syntax_type_to_single_line_string_into(so_far, module_origin_lookup, &part1.value);
+            if let Some(part1_node) = maybe_part1 {
+                elm_syntax_type_to_single_line_string_into(
+                    so_far,
+                    module_origin_lookup,
+                    &part1_node.value,
+                );
+            }
             so_far.push_str(", ");
-            elm_syntax_type_to_single_line_string_into(so_far, module_origin_lookup, &part2.value);
+            if let Some(part2_node) = maybe_part2 {
+                elm_syntax_type_to_single_line_string_into(
+                    so_far,
+                    module_origin_lookup,
+                    &part2_node.value,
+                );
+            }
             so_far.push_str(" )");
         }
-        ElmSyntaxType::Tuple { part0, part1 } => {
+        ElmSyntaxType::Tuple {
+            part0: maybe_part0,
+            part1: maybe_part1,
+        } => {
             so_far.push_str("( ");
-            elm_syntax_type_to_single_line_string_into(so_far, module_origin_lookup, &part0.value);
+            if let Some(part0_node) = maybe_part0 {
+                elm_syntax_type_to_single_line_string_into(
+                    so_far,
+                    module_origin_lookup,
+                    &part0_node.value,
+                );
+            }
             so_far.push_str(", ");
-            elm_syntax_type_to_single_line_string_into(so_far, module_origin_lookup, &part1.value);
+            if let Some(part1_node) = maybe_part1 {
+                elm_syntax_type_to_single_line_string_into(
+                    so_far,
+                    module_origin_lookup,
+                    &part1_node.value,
+                );
+            }
             so_far.push_str(" )");
         }
         ElmSyntaxType::Unit => so_far.push_str("()"),
@@ -3690,40 +4016,74 @@ fn elm_syntax_module_find_reference_at_position<'a>(
     elm_syntax_module: &'a ElmSyntaxModule,
     position: lsp_types::Position,
 ) -> Option<ElmSyntaxNode<ElmSyntaxSymbol<'a>>> {
-    if lsp_range_includes_position(elm_syntax_module.header.value.module_name.range, position) {
-        Some(ElmSyntaxNode {
-            value: ElmSyntaxSymbol::ModuleName(&elm_syntax_module.header.value.module_name.value),
-            range: elm_syntax_module.header.value.module_name.range,
-        })
-    } else {
-        elm_syntax_exposing_from_module_find_reference_at_position(
-            elm_syntax_node_as_ref(&elm_syntax_module.header.value.exposing),
-            &elm_syntax_module.header.value.module_name.value,
-            position,
-        )
-        .or_else(|| {
-            elm_syntax_module.imports.iter().find_map(|import_node| {
-                elm_syntax_import_find_reference_at_position(
-                    elm_syntax_node_as_ref(import_node),
-                    position,
-                )
-            })
+    elm_syntax_module
+        .header
+        .as_ref()
+        .and_then(|module_header| {
+            elm_syntax_module_header_find_reference_at_position(module_header, position)
         })
         .or_else(|| {
-            let module_origin_lookup: ModuleOriginLookup =
-                elm_syntax_module_create_origin_lookup(state, project_state, elm_syntax_module);
             elm_syntax_module
-                .declarations
+                .imports
                 .iter()
-                .find_map(move |documented_declaration| {
-                    elm_syntax_declaration_find_reference_at_position(
-                        &elm_syntax_module.header.value.module_name.value,
-                        &module_origin_lookup,
-                        elm_syntax_node_as_ref(&documented_declaration.declaration),
+                .find_map(|import_node| {
+                    elm_syntax_import_find_reference_at_position(
+                        elm_syntax_node_as_ref(import_node),
                         position,
                     )
                 })
+                .or_else(|| {
+                    let module_origin_lookup: ModuleOriginLookup =
+                        elm_syntax_module_create_origin_lookup(
+                            state,
+                            project_state,
+                            elm_syntax_module,
+                        );
+                    let module_origin = elm_syntax_module
+                        .header
+                        .as_ref()
+                        .and_then(|header| header.module_name.as_ref())
+                        .map(|node| node.value.as_str())
+                        .unwrap_or("");
+                    elm_syntax_module
+                        .declarations
+                        .iter()
+                        .find_map(move |documented_declaration| {
+                            let declaration_node = documented_declaration.declaration.as_ref()?;
+                            elm_syntax_declaration_find_reference_at_position(
+                                module_origin,
+                                &module_origin_lookup,
+                                elm_syntax_node_as_ref(declaration_node),
+                                position,
+                            )
+                        })
+                })
         })
+}
+fn elm_syntax_module_header_find_reference_at_position<'a>(
+    elm_syntax_module_header: &'a ElmSyntaxModuleHeader,
+    position: lsp_types::Position,
+) -> Option<ElmSyntaxNode<ElmSyntaxSymbol<'a>>> {
+    if let Some(module_name_node) = &elm_syntax_module_header.module_name
+        && lsp_range_includes_position(module_name_node.range, position)
+    {
+        Some(ElmSyntaxNode {
+            value: ElmSyntaxSymbol::ModuleName(&module_name_node.value),
+            range: module_name_node.range,
+        })
+    } else {
+        let exposing: &ElmSyntaxExposing = elm_syntax_module_header.exposing.as_ref()?;
+        let exposing_specific_node: &ElmSyntaxNode<ElmSyntaxExposingSpecific> =
+            exposing.specific.as_ref()?;
+        elm_syntax_exposing_specific_from_module_find_reference_at_position(
+            elm_syntax_node_as_ref(exposing_specific_node),
+            &elm_syntax_module_header
+                .module_name
+                .as_ref()
+                .map(|node| node.value.as_str())
+                .unwrap_or(""),
+            position,
+        )
     }
 }
 
@@ -3732,93 +4092,95 @@ fn elm_syntax_import_find_reference_at_position<'a>(
     position: lsp_types::Position,
 ) -> Option<ElmSyntaxNode<ElmSyntaxSymbol<'a>>> {
     if !lsp_range_includes_position(elm_syntax_import_node.range, position) {
-        None
-    } else if lsp_range_includes_position(elm_syntax_import_node.value.module_name.range, position)
-    {
+        return None;
+    }
+    let module_name_node = elm_syntax_import_node.value.module_name.as_ref()?;
+    if lsp_range_includes_position(module_name_node.range, position) {
         Some(ElmSyntaxNode {
-            value: ElmSyntaxSymbol::ModuleName(&elm_syntax_import_node.value.module_name.value),
-            range: elm_syntax_import_node.value.module_name.range,
+            value: ElmSyntaxSymbol::ModuleName(&module_name_node.value),
+            range: module_name_node.range,
         })
-    } else if let Some(ref import_alias) = elm_syntax_import_node.value.alias
-        && lsp_range_includes_position(import_alias.name.range, position)
+    } else if let Some(import_alias) = &elm_syntax_import_node.value.alias
+        && let Some(import_alias_name_node) = &import_alias.name
+        && lsp_range_includes_position(import_alias_name_node.range, position)
     {
         Some(ElmSyntaxNode {
             value: ElmSyntaxSymbol::ImportAlias {
-                module_origin: &elm_syntax_import_node.value.module_name.value,
-                alias_name: &import_alias.name.value,
+                module_origin: &module_name_node.value,
+                alias_name: &import_alias_name_node.value,
             },
-            range: elm_syntax_import_node.value.module_name.range,
+            range: module_name_node.range,
         })
     } else {
         elm_syntax_import_node
             .value
             .exposing
             .as_ref()
-            .and_then(|exposing_node| {
-                elm_syntax_exposing_from_module_find_reference_at_position(
-                    elm_syntax_node_as_ref(exposing_node),
-                    &elm_syntax_import_node.value.module_name.value,
+            .and_then(|exposing| {
+                let exposing_specific = exposing.specific.as_ref()?;
+                elm_syntax_exposing_specific_from_module_find_reference_at_position(
+                    elm_syntax_node_as_ref(exposing_specific),
+                    &module_name_node.value.as_str(),
                     position,
                 )
             })
     }
 }
 
-fn elm_syntax_exposing_from_module_find_reference_at_position<'a>(
-    elm_syntax_exposing_node: ElmSyntaxNode<&'a ElmSyntaxExposingSpecific>,
+fn elm_syntax_exposing_specific_from_module_find_reference_at_position<'a>(
+    elm_syntax_exposing_specific_node: ElmSyntaxNode<&'a ElmSyntaxExposingSpecific>,
     module_name: &'a str,
     position: lsp_types::Position,
 ) -> Option<ElmSyntaxNode<ElmSyntaxSymbol<'a>>> {
-    if !lsp_range_includes_position(elm_syntax_exposing_node.range, position) {
-        None
-    } else {
-        match elm_syntax_exposing_node.value {
-            ElmSyntaxExposingSpecific::All(_) => None,
-            ElmSyntaxExposingSpecific::Explicit(exposes) => {
-                exposes.iter().find_map(|expose_node| {
-                    if lsp_range_includes_position(expose_node.range, position) {
-                        Some(match &expose_node.value {
-                            ElmSyntaxExpose::ChoiceTypeIncludingVariants {
-                                name,
-                                open_range: _,
-                            } => ElmSyntaxNode {
-                                value: ElmSyntaxSymbol::Type {
-                                    module_origin: module_name,
-                                    name: &name.value,
-                                },
-                                range: expose_node.range,
+    if !lsp_range_includes_position(elm_syntax_exposing_specific_node.range, position) {
+        return None;
+    }
+    match elm_syntax_exposing_specific_node.value {
+        ElmSyntaxExposingSpecific::All(_) => None,
+        ElmSyntaxExposingSpecific::Explicit(exposes) => exposes.iter().find_map(|expose_node| {
+            if lsp_range_includes_position(expose_node.range, position) {
+                match &expose_node.value {
+                    ElmSyntaxExpose::ChoiceTypeIncludingVariants {
+                        name,
+                        open_range: _,
+                    } => Some(ElmSyntaxNode {
+                        value: ElmSyntaxSymbol::Type {
+                            module_origin: module_name,
+                            name: &name.value,
+                        },
+                        range: expose_node.range,
+                    }),
+                    ElmSyntaxExpose::Operator(maybe_symbol) => {
+                        maybe_symbol.as_ref().map(|symbol_node| ElmSyntaxNode {
+                            value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
+                                module_origin: module_name,
+                                name: symbol_node.value,
                             },
-                            ElmSyntaxExpose::Operator(symbol) => ElmSyntaxNode {
-                                value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
-                                    module_origin: module_name,
-                                    name: symbol,
-                                },
-                                range: lsp_types::Range {
-                                    start: lsp_position_add_characters(expose_node.range.start, 1),
-                                    end: lsp_position_add_characters(expose_node.range.end, -1),
-                                },
-                            },
-                            ElmSyntaxExpose::Type(name) => ElmSyntaxNode {
-                                value: ElmSyntaxSymbol::Type {
-                                    module_origin: module_name,
-                                    name: name,
-                                },
-                                range: expose_node.range,
-                            },
-                            ElmSyntaxExpose::Variable(name) => ElmSyntaxNode {
-                                value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
-                                    module_origin: module_name,
-                                    name: name,
-                                },
-                                range: expose_node.range,
+                            range: lsp_types::Range {
+                                start: lsp_position_add_characters(expose_node.range.start, 1),
+                                end: lsp_position_add_characters(expose_node.range.end, -1),
                             },
                         })
-                    } else {
-                        None
                     }
-                })
+                    ElmSyntaxExpose::Type(name) => Some(ElmSyntaxNode {
+                        value: ElmSyntaxSymbol::Type {
+                            module_origin: module_name,
+                            name: name,
+                        },
+                        range: expose_node.range,
+                    }),
+                    ElmSyntaxExpose::Variable(name) => Some(ElmSyntaxNode {
+                        value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
+                            module_origin: module_name,
+                            name: name,
+                        },
+                        range: expose_node.range,
+                    }),
+                }
+            } else {
+                None
             }
-        }
+        }),
     }
 }
 
@@ -3833,27 +4195,32 @@ fn elm_syntax_declaration_find_reference_at_position<'a>(
     } else {
         match elm_syntax_declaration_node.value {
             ElmSyntaxDeclaration::ChoiceType {
-                name: name,
+                name: maybe_name,
                 parameters: parameters,
                 equals_key_symbol_range: _,
-                variant0,
+                variant0_name: maybe_variant0_name,
+                variant0_values,
                 variant1_up,
             } => {
-                if lsp_range_includes_position(name.range, position) {
+                if let Some(name_node) = maybe_name
+                    && lsp_range_includes_position(name_node.range, position)
+                {
                     Some(ElmSyntaxNode {
                         value: ElmSyntaxSymbol::Type {
                             module_origin: origin_module,
-                            name: &name.value,
+                            name: &name_node.value,
                         },
-                        range: name.range,
+                        range: name_node.range,
                     })
-                } else if lsp_range_includes_position(variant0.name.range, position) {
+                } else if let Some(variant0_name_node) = maybe_variant0_name
+                    && lsp_range_includes_position(variant0_name_node.range, position)
+                {
                     Some(ElmSyntaxNode {
                         value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
                             module_origin: origin_module,
-                            name: &variant0.name.value,
+                            name: &variant0_name_node.value,
                         },
-                        range: variant0.name.range,
+                        range: variant0_name_node.range,
                     })
                 } else {
                     parameters
@@ -3872,7 +4239,7 @@ fn elm_syntax_declaration_find_reference_at_position<'a>(
                             }
                         })
                         .or_else(|| {
-                            variant0.values.iter().find_map(|variant_value| {
+                            variant0_values.iter().find_map(|variant_value| {
                                 elm_syntax_type_find_reference_at_position(
                                     module_origin_lookup,
                                     elm_syntax_declaration_node.value,
@@ -3883,13 +4250,18 @@ fn elm_syntax_declaration_find_reference_at_position<'a>(
                         })
                         .or_else(|| {
                             variant1_up.iter().find_map(|variant| {
-                                if lsp_range_includes_position(variant.name.range, position) {
+                                if let Some(variant_name_node) = variant.name
+                                    && lsp_range_includes_position(
+                                        variant_name_node.range,
+                                        position,
+                                    )
+                                {
                                     Some(ElmSyntaxNode {
                                         value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
                                             module_origin: origin_module,
-                                            name: &variant.name.value,
+                                            name: &variant_name_node.value,
                                         },
-                                        range: variant.name.range,
+                                        range: variant_name_node.range,
                                     })
                                 } else {
                                     variant.values.iter().find_map(|variant_value| {
@@ -3907,62 +4279,76 @@ fn elm_syntax_declaration_find_reference_at_position<'a>(
             }
             ElmSyntaxDeclaration::Operator {
                 direction: _,
-                operator: operator,
-                function,
+                operator: maybe_operator,
+                function: maybe_function,
                 precedence: _,
             } => {
-                if lsp_range_includes_position(operator.range, position) {
+                if let Some(operator_node) = maybe_operator
+                    && lsp_range_includes_position(operator_node.range, position)
+                {
                     Some(ElmSyntaxNode {
                         value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
                             module_origin: origin_module,
-                            name: &operator.value,
+                            name: &operator_node.value,
                         },
-                        range: operator.range,
+                        range: operator_node.range,
                     })
-                } else if lsp_range_includes_position(function.range, position) {
+                } else if let Some(function_node) = maybe_function
+                    && lsp_range_includes_position(function_node.range, position)
+                {
                     Some(ElmSyntaxNode {
                         value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
                             module_origin: origin_module,
-                            name: &function.value,
+                            name: &function_node.value,
                         },
-                        range: function.range,
+                        range: function_node.range,
                     })
                 } else {
                     None
                 }
             }
-            ElmSyntaxDeclaration::Port { name: name, type_ } => {
-                if lsp_range_includes_position(name.range, position) {
+            ElmSyntaxDeclaration::Port {
+                name: maybe_name,
+                colon_key_symbol_range: _,
+                type_: maybe_type,
+            } => {
+                if let Some(name_node) = maybe_name
+                    && lsp_range_includes_position(name_node.range, position)
+                {
                     Some(ElmSyntaxNode {
                         value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
                             module_origin: origin_module,
-                            name: &name.value,
+                            name: &name_node.value,
                         },
-                        range: name.range,
+                        range: name_node.range,
                     })
                 } else {
-                    elm_syntax_type_find_reference_at_position(
-                        module_origin_lookup,
-                        elm_syntax_declaration_node.value,
-                        elm_syntax_node_as_ref(type_),
-                        position,
-                    )
+                    maybe_type.as_ref().and_then(|type_node| {
+                        elm_syntax_type_find_reference_at_position(
+                            module_origin_lookup,
+                            elm_syntax_declaration_node.value,
+                            elm_syntax_node_as_ref(type_node),
+                            position,
+                        )
+                    })
                 }
             }
             ElmSyntaxDeclaration::TypeAlias {
                 alias_keyword_range: _,
-                name: name,
+                name: maybe_name,
                 parameters,
                 equals_key_symbol_range: _,
-                type_,
+                type_: maybe_type,
             } => {
-                if lsp_range_includes_position(name.range, position) {
+                if let Some(name_node) = maybe_name
+                    && lsp_range_includes_position(name_node.range, position)
+                {
                     Some(ElmSyntaxNode {
                         value: ElmSyntaxSymbol::Type {
                             module_origin: origin_module,
-                            name: &name.value,
+                            name: &name_node.value,
                         },
-                        range: name.range,
+                        range: name_node.range,
                     })
                 } else {
                     parameters
@@ -3981,50 +4367,53 @@ fn elm_syntax_declaration_find_reference_at_position<'a>(
                             }
                         })
                         .or_else(|| {
-                            elm_syntax_type_find_reference_at_position(
-                                module_origin_lookup,
-                                elm_syntax_declaration_node.value,
-                                elm_syntax_node_as_ref(type_),
-                                position,
-                            )
+                            maybe_type.as_ref().and_then(|type_node| {
+                                elm_syntax_type_find_reference_at_position(
+                                    module_origin_lookup,
+                                    elm_syntax_declaration_node.value,
+                                    elm_syntax_node_as_ref(type_node),
+                                    position,
+                                )
+                            })
                         })
                 }
             }
-            ElmSyntaxDeclaration::ValueOrFunction {
-                name,
+            ElmSyntaxDeclaration::Variable {
+                start_name: start_name_node,
                 signature: maybe_signature,
-                implementation_name_range,
                 parameters,
                 equals_key_symbol_range: _,
                 result,
             } => {
-                if lsp_range_includes_position(*implementation_name_range, position) {
+                if lsp_range_includes_position(start_name_node.range, position) {
                     Some(ElmSyntaxNode {
                         value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
                             module_origin: origin_module,
-                            name: name,
+                            name: &start_name_node.value,
                         },
-                        range: *implementation_name_range,
+                        range: start_name_node.range,
                     })
                 } else {
                     maybe_signature
                         .as_ref()
-                        .and_then(|signature| {
-                            if lsp_range_includes_position(signature.name.range, position) {
+                        .and_then(|signature: &ElmSyntaxVariableDeclarationSignature| {
+                            if lsp_range_includes_position(start_name_node.range, position) {
                                 Some(ElmSyntaxNode {
                                     value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
                                         module_origin: origin_module,
-                                        name: name,
+                                        name: &start_name_node.value,
                                     },
-                                    range: signature.name.range,
+                                    range: start_name_node.range,
                                 })
                             } else {
-                                elm_syntax_type_find_reference_at_position(
-                                    module_origin_lookup,
-                                    elm_syntax_declaration_node.value,
-                                    elm_syntax_node_as_ref(&signature.type_1),
-                                    position,
-                                )
+                                signature.type_.as_ref().and_then(|signature_type_node| {
+                                    elm_syntax_type_find_reference_at_position(
+                                        module_origin_lookup,
+                                        elm_syntax_declaration_node.value,
+                                        elm_syntax_node_as_ref(signature_type_node),
+                                        position,
+                                    )
+                                })
                             }
                         })
                         .or_else(|| {
@@ -4848,8 +5237,8 @@ fn elm_syntax_let_declaration_find_reference_at_position<'a>(
                     position,
                 )
             }),
-            ElmSyntaxLetDeclaration::ValueOrFunctionDeclaration {
-                name,
+            ElmSyntaxLetDeclaration::VariableDeclaration {
+                start_name: name,
                 signature: maybe_signature,
                 implementation_name_range,
                 parameters,
@@ -5147,13 +5536,13 @@ fn elm_syntax_declaration_uses_of_reference_into(
                 );
             }
             for variant in variant1_up {
-                if symbol_to_collect_uses_of
-                    == (ElmDeclaredSymbol::VariableOrVariant {
-                        name: &variant.name.value,
+                if let Some(variant_name_node) = variant.name
+                    && (ElmDeclaredSymbol::VariableOrVariant {
+                        name: &variant_name_node.value,
                         module_origin: origin_module,
-                    })
+                    }) == symbol_to_collect_uses_of
                 {
-                    uses_so_far.push(variant.name.range);
+                    uses_so_far.push(variant_name_node.range);
                 }
                 for variant0_value in variant.values.iter() {
                     elm_syntax_type_uses_of_reference_into(
@@ -5217,7 +5606,7 @@ fn elm_syntax_declaration_uses_of_reference_into(
                 symbol_to_collect_uses_of,
             );
         }
-        ElmSyntaxDeclaration::ValueOrFunction {
+        ElmSyntaxDeclaration::Variable {
             name,
             signature: maybe_signature,
             implementation_name_range,
@@ -5905,8 +6294,8 @@ fn elm_syntax_let_declaration_uses_of_reference_into(
                 symbol_to_collect_uses_of,
             );
         }
-        ElmSyntaxLetDeclaration::ValueOrFunctionDeclaration {
-            name,
+        ElmSyntaxLetDeclaration::VariableDeclaration {
+            start_name: name,
             signature: maybe_signature,
             implementation_name_range,
             parameters,
@@ -6143,8 +6532,8 @@ fn elm_syntax_let_declaration_introduced_bindings_into<'a>(
         } => {
             elm_syntax_pattern_bindings_into(bindings_so_far, elm_syntax_node_as_ref(pattern));
         }
-        ElmSyntaxLetDeclaration::ValueOrFunctionDeclaration {
-            name,
+        ElmSyntaxLetDeclaration::VariableDeclaration {
+            start_name: name,
             signature,
             implementation_name_range,
             parameters: _,
@@ -6549,7 +6938,7 @@ fn elm_syntax_highlight_declaration_into(
     elm_syntax_declaration_node: ElmSyntaxNode<&ElmSyntaxDeclaration>,
 ) {
     match elm_syntax_declaration_node.value {
-        ElmSyntaxDeclaration::ValueOrFunction {
+        ElmSyntaxDeclaration::Variable {
             name: _,
             signature: maybe_signature,
             implementation_name_range,
@@ -7419,8 +7808,8 @@ fn elm_syntax_highlight_let_declaration_into(
                 elm_syntax_node_as_ref(destructured_expression_node),
             );
         }
-        ElmSyntaxLetDeclaration::ValueOrFunctionDeclaration {
-            name: _,
+        ElmSyntaxLetDeclaration::VariableDeclaration {
+            start_name: _,
             signature: maybe_signature,
             implementation_name_range,
             parameters,
@@ -7471,11 +7860,20 @@ struct ParseState {
     lower_indents_stack: Vec<u16>,
     comments: Vec<ElmSyntaxNode<ElmSyntaxComment>>,
 }
+#[derive(Clone, Debug, PartialEq)]
 enum ElmSyntaxComment {
     /// --
     UntilLinebreak(String),
     /// {- ... -}
-    Block,
+    Block(String),
+}
+
+fn parse_state_push_indent(state: &mut ParseState, new_indent: u16) {
+    state.lower_indents_stack.push(state.indent);
+    state.indent = new_indent;
+}
+fn parse_state_pop_indent(state: &mut ParseState) {
+    state.indent = state.lower_indents_stack.pop().unwrap_or(0);
 }
 
 fn parse_linebreak(state: &mut ParseState) -> bool {
@@ -7551,7 +7949,7 @@ fn parse_char_symbol_as_char(state: &mut ParseState, symbol: char) -> Option<cha
     }
 }
 /// symbol cannot contain non-utf8 characters or \n
-fn parse_symbol(state: &mut ParseState, symbol: &'static str) -> bool {
+fn parse_symbol(state: &mut ParseState, symbol: &str) -> bool {
     if state.source[state.offset_utf8..].starts_with(symbol) {
         state.offset_utf8 += symbol.len();
         state.position.character += symbol.len() as u32;
@@ -7573,7 +7971,7 @@ fn parse_symbol_as_str(state: &mut ParseState, symbol: &'static str) -> Option<&
     parse_symbol_as(state, symbol, symbol)
 }
 /// symbol cannot contain non-utf8 characters or \n
-fn parse_symbol_as_range(state: &mut ParseState, symbol: &'static str) -> Option<lsp_types::Range> {
+fn parse_symbol_as_range(state: &mut ParseState, symbol: &str) -> Option<lsp_types::Range> {
     let start_position: lsp_types::Position = state.position;
     if parse_symbol(state, symbol) {
         Some(lsp_types::Range {
@@ -7609,6 +8007,16 @@ fn parse_same_line_char_if(state: &mut ParseState, char_is_valid: impl Fn(char) 
     if state.source[state.offset_utf8..].starts_with(char_is_valid) {
         state.offset_utf8 += 1;
         state.position.character += 1;
+        true
+    } else {
+        false
+    }
+}
+fn parse_unsigned_integer_base10(state: &mut ParseState) -> bool {
+    if parse_symbol(state, "0") {
+        true
+    } else if parse_same_line_char_if(state, |c| c >= '1' && c <= '9') {
+        parse_same_line_while(state, |c| c.is_ascii_digit());
         true
     } else {
         false
@@ -7653,6 +8061,7 @@ fn parse_until_including_symbol_or_excluding_end_of_line(
         }
     }
 }
+
 fn parse_elm_whitespace_and_comments(state: &mut ParseState) {
     'while_whitespace: loop {
         if let Some(next_char) = state.source[state.offset_utf8..].chars().next()
@@ -7697,7 +8106,7 @@ fn parse_elm_comment_block(state: &mut ParseState) -> bool {
     if state.source[state.offset_utf8..].starts_with("{-|") {
         return false;
     }
-    let start_offset_utf8 = state.offset_utf8;
+    let start_offset_utf8: usize = state.offset_utf8;
     let start_position: lsp_types::Position = state.position;
     if !parse_symbol(state, "{-") {
         return false;
@@ -7716,7 +8125,7 @@ fn parse_elm_comment_block(state: &mut ParseState) -> bool {
         } else if parse_any_guaranteed_non_linebreak_char(state) {
         } else {
             // end of source
-            return false;
+            break 'until_fully_unnested;
         }
     }
     state.comments.push(ElmSyntaxNode {
@@ -7724,13 +8133,46 @@ fn parse_elm_comment_block(state: &mut ParseState) -> bool {
             start: start_position,
             end: state.position,
         },
-        value: ElmSyntaxComment::UntilLinebreak(
+        value: ElmSyntaxComment::Block(
             state.source[start_offset_utf8..state.offset_utf8].to_string(),
         ),
     });
     true
 }
-fn parse_elm_lowercase(state: &mut ParseState) -> Option<String> {
+fn parse_elm_documentation_comment_block_node(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<String>> {
+    let start_offset_utf8: usize = state.offset_utf8;
+    let start_position: lsp_types::Position = state.position;
+    if !parse_symbol(state, "{-|") {
+        return None;
+    }
+    let mut nesting_level: u32 = 1;
+    'until_fully_unnested: loop {
+        if parse_linebreak(state) {
+        } else if parse_symbol(state, "{-") {
+            nesting_level += 1;
+        } else if parse_symbol(state, "-}") {
+            if nesting_level <= 1 {
+                break 'until_fully_unnested;
+            } else {
+                nesting_level -= 1;
+            }
+        } else if parse_any_guaranteed_non_linebreak_char(state) {
+        } else {
+            // end of source
+            break 'until_fully_unnested;
+        }
+    }
+    Some(ElmSyntaxNode {
+        range: lsp_types::Range {
+            start: start_position,
+            end: state.position,
+        },
+        value: state.source[start_offset_utf8..state.offset_utf8].to_string(),
+    })
+}
+fn parse_elm_lowercase_as_string(state: &mut ParseState) -> Option<String> {
     let mut chars_from_offset = state.source[state.offset_utf8..].chars();
     if let Some(first_char) = chars_from_offset.next()
         && first_char.is_lowercase()
@@ -7744,9 +8186,9 @@ fn parse_elm_lowercase(state: &mut ParseState) -> Option<String> {
         None
     }
 }
-fn parse_elm_lowercase_node(state: &mut ParseState) -> Option<ElmSyntaxNode<String>> {
+fn parse_elm_lowercase_as_node(state: &mut ParseState) -> Option<ElmSyntaxNode<String>> {
     let start_position = state.position;
-    parse_elm_lowercase(state).map(|name| ElmSyntaxNode {
+    parse_elm_lowercase_as_string(state).map(|name| ElmSyntaxNode {
         range: lsp_types::Range {
             start: start_position,
             end: state.position,
@@ -7864,7 +8306,7 @@ fn parse_elm_syntax_expose(state: &mut ParseState) -> Option<ElmSyntaxExpose> {
         parse_elm_whitespace_and_comments(state);
         parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, ")");
         Some(ElmSyntaxExpose::Operator(maybe_operator_symbol))
-    } else if let Some(variable_name) = parse_elm_lowercase(state) {
+    } else if let Some(variable_name) = parse_elm_lowercase_as_string(state) {
         Some(ElmSyntaxExpose::Variable(variable_name))
     } else if let Some(type_name_node) = parse_elm_uppercase_node(state) {
         parse_elm_whitespace_and_comments(state);
@@ -7899,29 +8341,51 @@ fn parse_elm_syntax_expose_node(state: &mut ParseState) -> Option<ElmSyntaxNode<
     })
 }
 
-fn parse_elm_syntax_import(state: &mut ParseState) -> Option<ElmSyntaxImport> {
-    if parse_symbol(state, "import") {
+fn parse_elm_syntax_import_node(state: &mut ParseState) -> Option<ElmSyntaxNode<ElmSyntaxImport>> {
+    let import_keyword_range = parse_symbol_as_range(state, "import")?;
+    parse_elm_whitespace_and_comments(state);
+    let maybe_module_name_node = parse_elm_uppercase_possibly_dot_separated_node(state);
+    parse_elm_whitespace_and_comments(state);
+    let maybe_alias = parse_symbol_as_range(state, "as").and_then(|as_keyword_range| {
         parse_elm_whitespace_and_comments(state);
-        let maybe_module_name_node = parse_elm_uppercase_possibly_dot_separated_node(state);
-        parse_elm_whitespace_and_comments(state);
-        let maybe_alias = parse_symbol_as_range(state, "as").and_then(|as_keyword_range| {
-            parse_elm_whitespace_and_comments(state);
-            let maybe_alias_name_node = parse_elm_uppercase_node(state);
-            Some(EmSyntaxImportAs {
-                as_keyword_range: as_keyword_range,
-                name: maybe_alias_name_node,
+        let maybe_alias_name_node = parse_elm_uppercase_node(state);
+        Some(EmSyntaxImportAs {
+            as_keyword_range: as_keyword_range,
+            name: maybe_alias_name_node,
+        })
+    });
+    parse_elm_whitespace_and_comments(state);
+    let maybe_exposing = parse_elm_syntax_exposing(state);
+    let end_position: lsp_types::Position = maybe_exposing
+        .as_ref()
+        .map(|exposing| {
+            exposing
+                .specific
+                .as_ref()
+                .map(|node| node.range.end)
+                .unwrap_or(exposing.exposing_keyword_range.end)
+        })
+        .or_else(|| {
+            maybe_alias.as_ref().map(|alias| {
+                alias
+                    .name
+                    .as_ref()
+                    .map(|node| node.range.end)
+                    .unwrap_or_else(|| alias.as_keyword_range.end)
             })
-        });
-        parse_elm_whitespace_and_comments(state);
-        let maybe_exposing = parse_elm_syntax_exposing(state);
-        Some(ElmSyntaxImport {
+        })
+        .unwrap_or_else(|| import_keyword_range.end);
+    Some(ElmSyntaxNode {
+        range: lsp_types::Range {
+            start: import_keyword_range.start,
+            end: end_position,
+        },
+        value: ElmSyntaxImport {
             module_name: maybe_module_name_node,
             alias: maybe_alias,
             exposing: maybe_exposing,
-        })
-    } else {
-        None
-    }
+        },
+    })
 }
 fn parse_elm_syntax_exposing(state: &mut ParseState) -> Option<ElmSyntaxExposing> {
     let exposing_keyword_range = parse_symbol_as_range(state, "exposing")?;
@@ -8095,7 +8559,7 @@ fn parse_elm_syntax_type_not_function_node(
     parse_elm_syntax_type_construct_node(state).or_else(|| {
         let start_position: lsp_types::Position = state.position;
         parse_symbol_as(state, "()", ElmSyntaxType::Unit)
-            .or_else(|| parse_elm_lowercase(state).map(ElmSyntaxType::Variable))
+            .or_else(|| parse_elm_lowercase_as_string(state).map(ElmSyntaxType::Variable))
             .or_else(|| parse_elm_syntax_type_parenthesized_or_tuple_or_triple(state))
             .or_else(|| parse_elm_syntax_type_record_or_record_extension(state))
             .map(|type_| ElmSyntaxNode {
@@ -8121,7 +8585,7 @@ fn parse_elm_syntax_type_not_space_separated_node(
 }
 fn parse_elm_syntax_type_not_space_separated(state: &mut ParseState) -> Option<ElmSyntaxType> {
     parse_symbol_as(state, "()", ElmSyntaxType::Unit)
-        .or_else(|| parse_elm_lowercase(state).map(ElmSyntaxType::Variable))
+        .or_else(|| parse_elm_lowercase_as_string(state).map(ElmSyntaxType::Variable))
         .or_else(|| parse_elm_syntax_type_parenthesized_or_tuple_or_triple(state))
         .or_else(|| {
             parse_elm_qualified_uppercase_reference_node(state).map(|reference_node| {
@@ -8140,32 +8604,9 @@ fn parse_elm_syntax_type_record_or_record_extension(
         return None;
     }
     parse_elm_whitespace_and_comments(state);
-    let maybe_start_name: Option<ElmSyntaxNode<String>> = parse_elm_lowercase_node(state);
+    let maybe_start_name: Option<ElmSyntaxNode<String>> = parse_elm_lowercase_as_node(state);
     parse_elm_whitespace_and_comments(state);
-    if let Some(field0_colon_key_symbol_range) = parse_symbol_as_range(state, ":") {
-        parse_elm_whitespace_and_comments(state);
-        let maybe_field0_value: Option<ElmSyntaxNode<ElmSyntaxType>> =
-            parse_elm_syntax_type_space_separated_node(state);
-        let mut fields: Vec<ElmSyntaxTypeField> = vec![ElmSyntaxTypeField {
-            name: maybe_start_name,
-            colon_key_symbol_range: field0_colon_key_symbol_range,
-            value: maybe_field0_value,
-        }];
-        parse_elm_whitespace_and_comments(state);
-        'parsing_field1_up: while parse_symbol(state, ",") {
-            match parse_elm_syntax_type_field(state) {
-                None => {
-                    break 'parsing_field1_up;
-                }
-                Some(field) => {
-                    fields.push(field);
-                    parse_elm_whitespace_and_comments(state);
-                }
-            }
-        }
-        parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, "}");
-        Some(ElmSyntaxType::Record(fields))
-    } else if let Some(bar_key_symbol_range) = parse_symbol_as_range(state, "|") {
+    if let Some(bar_key_symbol_range) = parse_symbol_as_range(state, "|") {
         parse_elm_whitespace_and_comments(state);
         let mut fields: Vec<ElmSyntaxTypeField> = vec![];
         if let Some(field0) = parse_elm_syntax_type_field(state) {
@@ -8189,21 +8630,45 @@ fn parse_elm_syntax_type_record_or_record_extension(
             bar_key_symbol_range: bar_key_symbol_range,
             fields: fields,
         })
+    } else if let Some(field0_name_node) = maybe_start_name {
+        let maybe_field0_colon_key_symbol_range = parse_symbol_as_range(state, ":");
+        parse_elm_whitespace_and_comments(state);
+        let maybe_field0_value: Option<ElmSyntaxNode<ElmSyntaxType>> =
+            parse_elm_syntax_type_space_separated_node(state);
+        let mut fields: Vec<ElmSyntaxTypeField> = vec![ElmSyntaxTypeField {
+            name: field0_name_node,
+            colon_key_symbol_range: maybe_field0_colon_key_symbol_range,
+            value: maybe_field0_value,
+        }];
+        parse_elm_whitespace_and_comments(state);
+        'parsing_field1_up: while parse_symbol(state, ",") {
+            match parse_elm_syntax_type_field(state) {
+                None => {
+                    break 'parsing_field1_up;
+                }
+                Some(field) => {
+                    fields.push(field);
+                    parse_elm_whitespace_and_comments(state);
+                }
+            }
+        }
+        parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, "}");
+        Some(ElmSyntaxType::Record(fields))
     } else {
         parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, "}");
         Some(ElmSyntaxType::Record(vec![]))
     }
 }
 fn parse_elm_syntax_type_field(state: &mut ParseState) -> Option<ElmSyntaxTypeField> {
-    let maybe_name: Option<ElmSyntaxNode<String>> = parse_elm_lowercase_node(state);
+    let maybe_name: ElmSyntaxNode<String> = parse_elm_lowercase_as_node(state)?;
     parse_elm_whitespace_and_comments(state);
-    let colon_key_symbol_range: lsp_types::Range = parse_symbol_as_range(state, ":")?;
+    let maybe_colon_key_symbol_range: Option<lsp_types::Range> = parse_symbol_as_range(state, ":");
     parse_elm_whitespace_and_comments(state);
     let maybe_value: Option<ElmSyntaxNode<ElmSyntaxType>> =
         parse_elm_syntax_type_space_separated_node(state);
     Some(ElmSyntaxTypeField {
         name: maybe_name,
-        colon_key_symbol_range: colon_key_symbol_range,
+        colon_key_symbol_range: maybe_colon_key_symbol_range,
         value: maybe_value,
     })
 }
@@ -8397,7 +8862,7 @@ fn parse_elm_syntax_pattern_space_separated_node(
         None => Some(pattern_with_conses),
         Some(as_keyword_range) => {
             parse_elm_whitespace_and_comments(state);
-            let maybe_variable = parse_elm_lowercase_node(state);
+            let maybe_variable = parse_elm_lowercase_as_node(state);
             Some(ElmSyntaxNode {
                 range: lsp_types::Range {
                     start: pattern_with_conses.range.start,
@@ -8423,7 +8888,7 @@ fn parse_elm_syntax_pattern_not_as_or_cons_node(
         let start_position = state.position;
         parse_symbol_as(state, "()", ElmSyntaxPattern::Unit)
             .or_else(|| parse_symbol_as(state, "_", ElmSyntaxPattern::Ignored))
-            .or_else(|| parse_elm_lowercase(state).map(ElmSyntaxPattern::Variable))
+            .or_else(|| parse_elm_lowercase_as_string(state).map(ElmSyntaxPattern::Variable))
             .or_else(|| parse_elm_char(state).map(ElmSyntaxPattern::Char))
             .or_else(|| parse_elm_syntax_pattern_string(state))
             .or_else(|| parse_elm_syntax_pattern_parenthesized_or_tuple_or_triple(state))
@@ -8445,7 +8910,7 @@ fn parse_elm_syntax_pattern_not_space_separated(
     parse_symbol_as(state, "()", ElmSyntaxPattern::Unit)
         .or_else(|| parse_symbol_as(state, "_", ElmSyntaxPattern::Ignored))
         .or_else(|| parse_elm_syntax_pattern_parenthesized_or_tuple_or_triple(state))
-        .or_else(|| parse_elm_lowercase(state).map(ElmSyntaxPattern::Variable))
+        .or_else(|| parse_elm_lowercase_as_string(state).map(ElmSyntaxPattern::Variable))
         .or_else(|| {
             parse_elm_qualified_uppercase_reference_node(state).map(|reference_node| {
                 ElmSyntaxPattern::Variant {
@@ -8490,7 +8955,7 @@ fn parse_elm_syntax_pattern_record(state: &mut ParseState) -> Option<ElmSyntaxPa
     parse_elm_whitespace_and_comments(state);
     let mut field_names: Vec<ElmSyntaxNode<String>> = Vec::new();
     'parsing_exposes: while !parse_symbol(state, "}") {
-        match parse_elm_lowercase_node(state) {
+        match parse_elm_lowercase_as_node(state) {
             Some(field_name_node) => {
                 field_names.push(field_name_node);
                 parse_elm_whitespace_and_comments(state);
@@ -8564,13 +9029,13 @@ fn parse_elm_syntax_pattern_string(state: &mut ParseState) -> Option<ElmSyntaxPa
 }
 
 fn parse_elm_syntax_pattern_integer(state: &mut ParseState) -> Option<ElmSyntaxPattern> {
-    parse_elm_unsigned_integer_base10(state)
+    parse_elm_unsigned_integer_base10_as_i64(state)
         .map(|value| ElmSyntaxPattern::Int {
             base: elm::ElmSyntaxIntBase::IntBase10,
             value: value,
         })
         .or_else(|| {
-            parse_elm_unsigned_integer_base16(state).map(|value| ElmSyntaxPattern::Int {
+            parse_elm_unsigned_integer_base16_as_i64(state).map(|value| ElmSyntaxPattern::Int {
                 base: elm::ElmSyntaxIntBase::IntBase16,
                 value: value,
             })
@@ -8614,79 +9079,65 @@ fn parse_elm_syntax_pattern_parenthesized_or_tuple_or_triple(
         }
     }
 }
-fn parse_elm_unsigned_integer_base16(state: &mut ParseState) -> Option<Option<i64>> {
+fn parse_elm_unsigned_integer_base16_as_i64(state: &mut ParseState) -> Option<Option<i64>> {
     if !parse_symbol(state, "0x") {
         return None;
     }
     let hex_str: &str = parse_same_line_while_as_str(state, |c| c.is_ascii_hexdigit());
     Some(i64::from_str_radix(hex_str, 16).ok())
 }
-fn parse_elm_unsigned_integer_base10(state: &mut ParseState) -> Option<Option<i64>> {
-    if parse_symbol(state, "0") {
-        return Some(Some(0));
+fn parse_elm_unsigned_integer_base10_as_i64(state: &mut ParseState) -> Option<Option<i64>> {
+    let start_offset_utf8: usize = state.offset_utf8;
+    if parse_unsigned_integer_base10(state) {
+        let decimal_str: &str = &state.source[start_offset_utf8..state.offset_utf8];
+        Some(i64::from_str_radix(decimal_str, 10).ok())
+    } else {
+        None
+    }
+}
+fn parse_elm_syntax_expression_number(state: &mut ParseState) -> Option<ElmSyntaxExpression> {
+    if let Some(unsigned_int_base16) = parse_elm_unsigned_integer_base16_as_i64(state) {
+        return Some(ElmSyntaxExpression::Integer {
+            base: elm::ElmSyntaxIntBase::IntBase16,
+            value: unsigned_int_base16,
+        });
     }
     let start_offset_utf8: usize = state.offset_utf8;
-    if !parse_same_line_char_if(state, |c| c >= '1' && c <= '9') {
+    if !parse_unsigned_integer_base10(state) {
         return None;
     }
-    parse_same_line_while(state, |c| c.is_ascii_digit());
-    let decimal_str: &str = &state.source[start_offset_utf8..state.offset_utf8];
-    Some(i64::from_str_radix(decimal_str, 10).ok())
-}
-/// TODO merge with parse_elm_integer_base10 and return as enum
-fn parse_elm_float(state: &mut ParseState) -> Option<f64> {
-    let mut current_offset_utf8: usize = state.offset_utf8;
-    current_offset_utf8 += state.source[current_offset_utf8..]
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .map(char::len_utf8)
-        .sum::<usize>();
-
-    if state.source[current_offset_utf8..].starts_with('.') {
-        current_offset_utf8 += state.source[current_offset_utf8..]
-            .chars()
-            .take_while(|c| c.is_ascii_digit())
-            .map(char::len_utf8)
-            .sum::<usize>();
+    let has_decimal_point: bool = parse_symbol(state, ".");
+    if has_decimal_point {
+        parse_same_line_while(state, |c| c.is_ascii_digit());
     }
-
-    let parse_result: Result<f64, std::num::ParseFloatError> =
-        if state.source[current_offset_utf8..].starts_with(|c| c == 'e' || c == 'E') {
-            current_offset_utf8 += 1;
-            if state.source[current_offset_utf8..].starts_with('+') {
-                current_offset_utf8 += state.source[current_offset_utf8..]
-                    .chars()
-                    .take_while(|c| c.is_ascii_digit())
-                    .map(char::len_utf8)
-                    .sum::<usize>();
-                // rust's f64::from_str does not allow e+..., only e...
-                let decimal_str: String =
-                    state.source[state.offset_utf8..current_offset_utf8].replace("+", "");
-                str::parse::<f64>(&decimal_str)
+    let has_exponent_plus: Option<bool> =
+        if parse_same_line_char_if(state, |c| c == 'e' || c == 'E') {
+            if parse_symbol(state, "+") {
+                let _: bool = parse_unsigned_integer_base10(state);
+                Some(true)
             } else {
-                if state.source[current_offset_utf8..].starts_with("-") {
-                    current_offset_utf8 += 1;
-                }
-                current_offset_utf8 += state.source[current_offset_utf8..]
-                    .chars()
-                    .take_while(|c| c.is_ascii_digit())
-                    .map(char::len_utf8)
-                    .sum::<usize>();
-                let decimal_str: &str = &state.source[state.offset_utf8..current_offset_utf8];
-                str::parse::<f64>(decimal_str)
+                let _: bool = parse_symbol(state, "-");
+                let _: bool = parse_unsigned_integer_base10(state);
+                Some(false)
             }
         } else {
-            let decimal_str: &str = &state.source[state.offset_utf8..current_offset_utf8];
-            str::parse::<f64>(decimal_str)
+            None
         };
-    match parse_result {
-        Ok(parsed_f64) => {
-            state.position.character = (current_offset_utf8 - state.offset_utf8) as u32;
-            state.offset_utf8 = current_offset_utf8;
-            Some(parsed_f64)
+    let full_chomped_str: &str = &state.source[start_offset_utf8..state.offset_utf8];
+    Some(if has_decimal_point || has_exponent_plus.is_some() {
+        ElmSyntaxExpression::Float(
+            if has_exponent_plus.is_some_and(|exponent_is_plus| exponent_is_plus) {
+                str::parse::<f64>(&full_chomped_str.replace("+", "")).ok()
+            } else {
+                str::parse::<f64>(full_chomped_str).ok()
+            },
+        )
+    } else {
+        ElmSyntaxExpression::Integer {
+            base: elm::ElmSyntaxIntBase::IntBase10,
+            value: i64::from_str_radix(full_chomped_str, 10).ok(),
         }
-        Err(_) => None,
-    }
+    })
 }
 fn parse_elm_char(state: &mut ParseState) -> Option<Option<char>> {
     if !parse_symbol(state, "'") {
@@ -8774,40 +9225,47 @@ fn parse_elm_text_content_char(state: &mut ParseState) -> Option<char> {
 fn parse_elm_syntax_expression_space_separated_node(
     state: &mut ParseState,
 ) -> Option<ElmSyntaxNode<ElmSyntaxExpression>> {
-    let left_node: ElmSyntaxNode<ElmSyntaxExpression> =
-        parse_expression_not_infix_operation_node(state)?;
-    parse_elm_whitespace_and_comments(state);
-    Some(match parse_elm_operator_node(state) {
-        None => left_node,
-        Some(operator_node) => {
-            let maybe_right: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
-                parse_elm_syntax_expression_space_separated_node(state);
-            ElmSyntaxNode {
-                range: lsp_types::Range {
-                    start: left_node.range.start,
-                    end: match maybe_right {
-                        None => operator_node.range.end,
-                        Some(ref right_node) => right_node.range.end,
-                    },
-                },
-                value: ElmSyntaxExpression::InfixOperationIgnoringPrecedence {
-                    left: elm_syntax_node_box(left_node),
-                    operator: operator_node,
-                    right: maybe_right.map(elm_syntax_node_box),
-                },
-            }
+    match parse_elm_syntax_expression_call_or_not_space_separated_node(state) {
+        Some(left_node) => {
+            parse_elm_whitespace_and_comments(state);
+            Some(match parse_elm_operator_node(state) {
+                None => left_node,
+                Some(operator_node) => {
+                    let maybe_right: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
+                        parse_elm_syntax_expression_space_separated_node(state);
+                    ElmSyntaxNode {
+                        range: lsp_types::Range {
+                            start: left_node.range.start,
+                            end: match maybe_right {
+                                None => operator_node.range.end,
+                                Some(ref right_node) => right_node.range.end,
+                            },
+                        },
+                        value: ElmSyntaxExpression::InfixOperationIgnoringPrecedence {
+                            left: elm_syntax_node_box(left_node),
+                            operator: operator_node,
+                            right: maybe_right.map(elm_syntax_node_box),
+                        },
+                    }
+                }
+            })
         }
-    })
+        None => parse_elm_syntax_expression_if_then_else(state)
+            .or_else(|| parse_elm_syntax_expression_case_of(state))
+            .or_else(|| parse_elm_syntax_expression_let_in(state))
+            .or_else(|| parse_elm_syntax_expression_lambda(state)),
+    }
 }
-fn parse_expression_not_infix_operation_node(
+fn parse_elm_syntax_expression_call_or_not_space_separated_node(
     state: &mut ParseState,
 ) -> Option<ElmSyntaxNode<ElmSyntaxExpression>> {
     let called_node: ElmSyntaxNode<ElmSyntaxExpression> =
-        parse_expression_not_space_separated_node(state)?;
+        parse_elm_syntax_expression_not_space_separated_node(state)?;
     parse_elm_whitespace_and_comments(state);
     Some(
         if (state.position.character >= state.indent as u32)
-            && let Some(argument0_node) = parse_expression_not_space_separated_node(state)
+            && let Some(argument0_node) =
+                parse_elm_syntax_expression_not_space_separated_node(state)
         {
             let mut argument1_up: Vec<ElmSyntaxNode<ElmSyntaxExpression>> = Vec::new();
             let mut construct_end_position: lsp_types::Position = argument0_node.range.end;
@@ -8816,7 +9274,7 @@ fn parse_expression_not_infix_operation_node(
                 if state.position.character < state.indent as u32 {
                     break 'parsing_argument1_up;
                 }
-                match parse_expression_not_space_separated_node(state) {
+                match parse_elm_syntax_expression_not_space_separated_node(state) {
                     None => {
                         break 'parsing_argument1_up;
                     }
@@ -8842,16 +9300,25 @@ fn parse_expression_not_infix_operation_node(
         },
     )
 }
-fn parse_expression_not_space_separated_node(
+fn parse_elm_syntax_expression_not_space_separated_node(
     state: &mut ParseState,
 ) -> Option<ElmSyntaxNode<ElmSyntaxExpression>> {
     let start_position: lsp_types::Position = state.position;
     let start_expression: ElmSyntaxExpression =
         parse_symbol_as(state, "()", ElmSyntaxExpression::Unit)
-            .or_else(|| parse_elm_char(state).map(ElmSyntaxExpression::Char))
             .or_else(|| parse_elm_syntax_expression_string(state))
-            .or_else(|| parse_elm_syntax_expression_list_exact(state))
-            .or_else(|| todo!())?;
+            .or_else(|| parse_elm_syntax_expression_list(state))
+            .or_else(|| {
+                parse_elm_syntax_expression_operator_function_or_parenthesized_or_tuple_or_triple(
+                    state,
+                )
+            })
+            .or_else(|| parse_elm_syntax_expression_record_access_function(state))
+            .or_else(|| parse_elm_syntax_expression_reference(state))
+            .or_else(|| parse_elm_syntax_expression_record_or_record_update(state))
+            .or_else(|| parse_elm_syntax_expression_number(state))
+            .or_else(|| parse_elm_char(state).map(ElmSyntaxExpression::Char))
+            .or_else(|| parse_elm_syntax_expression_negation(state))?;
     let mut result_node = ElmSyntaxNode {
         range: lsp_types::Range {
             start: start_position,
@@ -8860,7 +9327,7 @@ fn parse_expression_not_space_separated_node(
         value: start_expression,
     };
     while parse_symbol(state, ".") {
-        let maybe_field_name: Option<ElmSyntaxNode<String>> = parse_elm_lowercase_node(state);
+        let maybe_field_name: Option<ElmSyntaxNode<String>> = parse_elm_lowercase_as_node(state);
         result_node = ElmSyntaxNode {
             range: lsp_types::Range {
                 start: start_position,
@@ -8873,6 +9340,509 @@ fn parse_expression_not_space_separated_node(
         }
     }
     Some(result_node)
+}
+fn parse_elm_syntax_expression_record_access_function(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxExpression> {
+    if !parse_symbol(state, ".") {
+        return None;
+    }
+    Some(ElmSyntaxExpression::RecordAccessFunction(
+        parse_elm_lowercase_as_string(state),
+    ))
+}
+fn parse_elm_syntax_expression_negation(state: &mut ParseState) -> Option<ElmSyntaxExpression> {
+    if !parse_symbol(state, "-") {
+        return None;
+    }
+    Some(ElmSyntaxExpression::Negation(
+        parse_elm_syntax_expression_not_space_separated_node(state).map(elm_syntax_node_box),
+    ))
+}
+fn parse_elm_syntax_expression_reference(state: &mut ParseState) -> Option<ElmSyntaxExpression> {
+    if parse_symbol(state, "in")
+        || parse_symbol(state, "of")
+        || parse_symbol(state, "then")
+        || parse_symbol(state, "else")
+    {
+        return None;
+    }
+    parse_elm_lowercase_as_string(state)
+        .map(|name| ElmSyntaxExpression::Reference {
+            qualification: "".to_string(),
+            name: name,
+        })
+        .or_else(|| {
+            let start_offset_utf8: usize = state.offset_utf8;
+            if !parse_same_line_char_if(state, char::is_uppercase) {
+                return None;
+            }
+            parse_same_line_while(state, |c| c.is_alphanumeric() || c == '_');
+            if parse_symbol(state, ".") {
+                loop {
+                    let after_last_dot_offset_utf8: usize = state.offset_utf8;
+                    if let Some(name) = parse_elm_lowercase_as_string(state) {
+                        return Some(ElmSyntaxExpression::Reference {
+                            qualification: state.source
+                                [start_offset_utf8..(after_last_dot_offset_utf8 - 1)]
+                                .to_string(),
+                            name: name,
+                        });
+                    } else if parse_same_line_char_if(state, char::is_uppercase) {
+                        parse_same_line_while(state, |c| c.is_alphanumeric() || c == '_');
+                        if !parse_symbol(state, ".") {
+                            return Some(ElmSyntaxExpression::Reference {
+                                qualification: state.source
+                                    [start_offset_utf8..(after_last_dot_offset_utf8 - 1)]
+                                    .to_string(),
+                                name: state.source[after_last_dot_offset_utf8..state.offset_utf8]
+                                    .to_string(),
+                            });
+                        }
+                    } else {
+                        // stopping at . and in effect having an empty name is explicitly allowed!
+                        return Some(ElmSyntaxExpression::Reference {
+                            qualification: state.source[start_offset_utf8..state.offset_utf8]
+                                .to_string(),
+                            name: "".to_string(),
+                        });
+                    }
+                }
+            } else {
+                Some(ElmSyntaxExpression::Reference {
+                    qualification: "".to_string(),
+                    name: state.source[start_offset_utf8..state.offset_utf8].to_string(),
+                })
+            }
+        })
+}
+fn parse_elm_syntax_expression_record_or_record_update(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxExpression> {
+    if !parse_symbol(state, "{") {
+        return None;
+    }
+    parse_elm_whitespace_and_comments(state);
+    let maybe_start_name: Option<ElmSyntaxNode<String>> = parse_elm_lowercase_as_node(state);
+    parse_elm_whitespace_and_comments(state);
+    if let Some(bar_key_symbol_range) = parse_symbol_as_range(state, "|") {
+        parse_elm_whitespace_and_comments(state);
+        let mut fields: Vec<ElmSyntaxExpressionField> = vec![];
+        if let Some(field0) = parse_elm_syntax_expression_field(state) {
+            fields.push(field0);
+            parse_elm_whitespace_and_comments(state);
+            'parsing_field1_up: while parse_symbol(state, ",") {
+                match parse_elm_syntax_expression_field(state) {
+                    None => {
+                        break 'parsing_field1_up;
+                    }
+                    Some(field) => {
+                        fields.push(field);
+                        parse_elm_whitespace_and_comments(state);
+                    }
+                }
+            }
+        }
+        parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, "}");
+        Some(ElmSyntaxExpression::RecordUpdate {
+            record_variable: maybe_start_name,
+            bar_key_symbol_range: bar_key_symbol_range,
+            fields: fields,
+        })
+    } else if let Some(field0_name_node) = maybe_start_name {
+        let maybe_field0_equals_key_symbol_range: Option<lsp_types::Range> =
+            parse_symbol_as_range(state, "=");
+        parse_elm_whitespace_and_comments(state);
+        let maybe_field0_value: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
+            parse_elm_syntax_expression_space_separated_node(state);
+        let mut fields: Vec<ElmSyntaxExpressionField> = vec![ElmSyntaxExpressionField {
+            name: field0_name_node,
+            equals_key_symbol_range: maybe_field0_equals_key_symbol_range,
+            value: maybe_field0_value,
+        }];
+        parse_elm_whitespace_and_comments(state);
+        'parsing_field1_up: while parse_symbol(state, ",") {
+            match parse_elm_syntax_expression_field(state) {
+                None => {
+                    break 'parsing_field1_up;
+                }
+                Some(field) => {
+                    fields.push(field);
+                    parse_elm_whitespace_and_comments(state);
+                }
+            }
+        }
+        parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, "}");
+        Some(ElmSyntaxExpression::Record(fields))
+    } else {
+        parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, "}");
+        Some(ElmSyntaxExpression::Record(vec![]))
+    }
+}
+fn parse_elm_syntax_expression_field(state: &mut ParseState) -> Option<ElmSyntaxExpressionField> {
+    let name_node: ElmSyntaxNode<String> = parse_elm_lowercase_as_node(state)?;
+    parse_elm_whitespace_and_comments(state);
+    let maybe_equals_key_symbol_range: Option<lsp_types::Range> = parse_symbol_as_range(state, "=");
+    parse_elm_whitespace_and_comments(state);
+    let maybe_value: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
+        parse_elm_syntax_expression_space_separated_node(state);
+    Some(ElmSyntaxExpressionField {
+        name: name_node,
+        equals_key_symbol_range: maybe_equals_key_symbol_range,
+        value: maybe_value,
+    })
+}
+fn parse_elm_syntax_expression_if_then_else(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<ElmSyntaxExpression>> {
+    let if_keyword_range: lsp_types::Range = parse_symbol_as_range(state, "if")?;
+    parse_elm_whitespace_and_comments(state);
+    let maybe_condition: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
+        parse_elm_syntax_expression_space_separated_node(state);
+    parse_elm_whitespace_and_comments(state);
+    Some(
+        if let Some(then_keyword_range) = parse_symbol_as_range(state, "then") {
+            parse_elm_whitespace_and_comments(state);
+            let maybe_on_true: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
+                parse_elm_syntax_expression_space_separated_node(state);
+            parse_elm_whitespace_and_comments(state);
+            if let Some(else_keyword_range) = parse_symbol_as_range(state, "else") {
+                parse_elm_whitespace_and_comments(state);
+                let maybe_on_false: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
+                    parse_elm_syntax_expression_space_separated_node(state);
+                ElmSyntaxNode {
+                    range: lsp_types::Range {
+                        start: if_keyword_range.start,
+                        end: match maybe_on_false {
+                            None => else_keyword_range.end,
+                            Some(ref on_false_node) => on_false_node.range.end,
+                        },
+                    },
+                    value: ElmSyntaxExpression::IfThenElse {
+                        condition: maybe_condition.map(elm_syntax_node_box),
+                        then_keyword_range: Some(then_keyword_range),
+                        on_true: maybe_on_true.map(elm_syntax_node_box),
+                        else_keyword_range: Some(else_keyword_range),
+                        on_false: maybe_on_false.map(elm_syntax_node_box),
+                    },
+                }
+            } else {
+                ElmSyntaxNode {
+                    range: lsp_types::Range {
+                        start: if_keyword_range.start,
+                        end: match maybe_on_true {
+                            None => then_keyword_range.end,
+                            Some(ref on_true_node) => on_true_node.range.end,
+                        },
+                    },
+                    value: ElmSyntaxExpression::IfThenElse {
+                        condition: maybe_condition.map(elm_syntax_node_box),
+                        then_keyword_range: Some(then_keyword_range),
+                        on_true: maybe_on_true.map(elm_syntax_node_box),
+                        else_keyword_range: None,
+                        on_false: None,
+                    },
+                }
+            }
+        } else {
+            ElmSyntaxNode {
+                range: lsp_types::Range {
+                    start: if_keyword_range.start,
+                    end: match maybe_condition {
+                        None => if_keyword_range.end,
+                        Some(ref condition_node) => condition_node.range.end,
+                    },
+                },
+                value: ElmSyntaxExpression::IfThenElse {
+                    condition: maybe_condition.map(elm_syntax_node_box),
+                    then_keyword_range: None,
+                    on_true: None,
+                    else_keyword_range: None,
+                    on_false: None,
+                },
+            }
+        },
+    )
+}
+fn parse_elm_syntax_expression_lambda(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<ElmSyntaxExpression>> {
+    let backslash_key_symbol_range: lsp_types::Range = parse_symbol_as_range(state, "\\")?;
+    let mut syntax_before_result_end_position: lsp_types::Position = backslash_key_symbol_range.end;
+    parse_elm_whitespace_and_comments(state);
+    let mut parameters: Vec<ElmSyntaxNode<ElmSyntaxPattern>> = Vec::new();
+    while let Some(parameter_node) = parse_elm_syntax_pattern_not_space_separated_node(state) {
+        syntax_before_result_end_position = parameter_node.range.end;
+        parameters.push(parameter_node);
+        parse_elm_whitespace_and_comments(state);
+    }
+    let maybe_arrow_key_symbol_range: Option<lsp_types::Range> = parse_symbol_as_range(state, "->");
+    let maybe_result: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
+        parse_elm_syntax_expression_space_separated_node(state);
+    Some(ElmSyntaxNode {
+        range: lsp_types::Range {
+            start: backslash_key_symbol_range.start,
+            end: match maybe_result {
+                None => syntax_before_result_end_position,
+                Some(ref result_node) => result_node.range.end,
+            },
+        },
+        value: ElmSyntaxExpression::Lambda {
+            parameters: parameters,
+            arrow_key_symbol_range: maybe_arrow_key_symbol_range,
+            result: maybe_result.map(elm_syntax_node_box),
+        },
+    })
+}
+fn parse_elm_syntax_expression_case_of(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<ElmSyntaxExpression>> {
+    let case_keyword_range: lsp_types::Range = parse_symbol_as_range(state, "case")?;
+    parse_elm_whitespace_and_comments(state);
+    let maybe_matched: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
+        parse_elm_syntax_expression_space_separated_node(state);
+    parse_elm_whitespace_and_comments(state);
+    Some(match parse_symbol_as_range(state, "of") {
+        None => ElmSyntaxNode {
+            range: lsp_types::Range {
+                start: case_keyword_range.start,
+                end: match maybe_matched {
+                    None => case_keyword_range.end,
+                    Some(ref matched_node) => matched_node.range.end,
+                },
+            },
+            value: ElmSyntaxExpression::CaseOf {
+                matched: maybe_matched.map(elm_syntax_node_box),
+                of_keyword_range: None,
+                cases: vec![],
+            },
+        },
+        Some(of_keyword_range) => {
+            parse_elm_whitespace_and_comments(state);
+            if state.position.character < state.indent as u32 {
+                ElmSyntaxNode {
+                    range: lsp_types::Range {
+                        start: case_keyword_range.start,
+                        end: of_keyword_range.end,
+                    },
+                    value: ElmSyntaxExpression::CaseOf {
+                        matched: maybe_matched.map(elm_syntax_node_box),
+                        of_keyword_range: Some(of_keyword_range),
+                        cases: vec![],
+                    },
+                }
+            } else {
+                parse_state_push_indent(state, state.position.character as u16);
+                let mut full_end_position: lsp_types::Position = of_keyword_range.end;
+                let mut cases: Vec<ElmSyntaxExpressionCase> = Vec::new();
+                while let Some(case) = parse_elm_syntax_expression_case(state) {
+                    full_end_position = case
+                        .result
+                        .as_ref()
+                        .map(|result| result.range.end)
+                        .or_else(|| case.arrow_key_symbol_range.as_ref().map(|range| range.end))
+                        .unwrap_or_else(|| case.pattern.range.end);
+                    cases.push(case);
+                    parse_elm_whitespace_and_comments(state);
+                }
+                parse_state_pop_indent(state);
+                ElmSyntaxNode {
+                    range: lsp_types::Range {
+                        start: case_keyword_range.start,
+                        end: full_end_position,
+                    },
+                    value: ElmSyntaxExpression::CaseOf {
+                        matched: maybe_matched.map(elm_syntax_node_box),
+                        of_keyword_range: Some(of_keyword_range),
+                        cases,
+                    },
+                }
+            }
+        }
+    })
+}
+fn parse_elm_syntax_expression_case(state: &mut ParseState) -> Option<ElmSyntaxExpressionCase> {
+    if state.position.character < state.indent as u32 {
+        return None;
+    }
+    let case_pattern_node: ElmSyntaxNode<ElmSyntaxPattern> =
+        parse_elm_syntax_pattern_not_space_separated_node(state)?;
+    parse_elm_whitespace_and_comments(state);
+    Some(match parse_symbol_as_range(state, "->") {
+        None => ElmSyntaxExpressionCase {
+            pattern: case_pattern_node,
+            arrow_key_symbol_range: None,
+            result: None,
+        },
+        Some(arrow_key_symbol_range) => {
+            parse_elm_whitespace_and_comments(state);
+            let maybe_result = parse_elm_syntax_expression_space_separated_node(state);
+            ElmSyntaxExpressionCase {
+                pattern: case_pattern_node,
+                arrow_key_symbol_range: Some(arrow_key_symbol_range),
+                result: maybe_result,
+            }
+        }
+    })
+}
+
+fn parse_elm_syntax_expression_let_in(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<ElmSyntaxExpression>> {
+    let let_keyword_range: lsp_types::Range = parse_symbol_as_range(state, "let")?;
+    parse_elm_whitespace_and_comments(state);
+    Some(if state.position.character < state.indent as u32 {
+        ElmSyntaxNode {
+            range: let_keyword_range,
+            value: ElmSyntaxExpression::LetIn {
+                declarations: vec![],
+                in_keyword_range: None,
+                result: None,
+            },
+        }
+    } else {
+        parse_state_push_indent(state, state.position.character as u16);
+        let mut syntax_before_in_key_symbol_end_position: lsp_types::Position =
+            let_keyword_range.end;
+        let mut declarations: Vec<ElmSyntaxNode<ElmSyntaxLetDeclaration>> = Vec::new();
+        while let Some(declaration_node) = parse_elm_syntax_let_declaration(state) {
+            syntax_before_in_key_symbol_end_position = declaration_node.range.end;
+            declarations.push(declaration_node);
+            parse_elm_whitespace_and_comments(state);
+        }
+        parse_state_pop_indent(state);
+        match parse_symbol_as_range(state, "in") {
+            None => ElmSyntaxNode {
+                range: lsp_types::Range {
+                    start: let_keyword_range.start,
+                    end: syntax_before_in_key_symbol_end_position,
+                },
+                value: ElmSyntaxExpression::LetIn {
+                    declarations: declarations,
+                    in_keyword_range: None,
+                    result: None,
+                },
+            },
+            Some(in_keyword_range) => {
+                parse_elm_whitespace_and_comments(state);
+                let maybe_result: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
+                    parse_elm_syntax_expression_space_separated_node(state);
+                ElmSyntaxNode {
+                    range: lsp_types::Range {
+                        start: let_keyword_range.start,
+                        end: match maybe_result {
+                            None => in_keyword_range.end,
+                            Some(ref result_node) => result_node.range.end,
+                        },
+                    },
+                    value: ElmSyntaxExpression::LetIn {
+                        declarations: declarations,
+                        in_keyword_range: Some(in_keyword_range),
+                        result: maybe_result.map(elm_syntax_node_box),
+                    },
+                }
+            }
+        }
+    })
+}
+fn parse_elm_syntax_let_declaration(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<ElmSyntaxLetDeclaration>> {
+    parse_elm_syntax_let_variable_declaration(state)
+        .or_else(|| parse_elm_syntax_let_destructuring(state))
+}
+fn parse_elm_syntax_let_destructuring(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<ElmSyntaxLetDeclaration>> {
+    let pattern_node: ElmSyntaxNode<ElmSyntaxPattern> =
+        parse_elm_syntax_pattern_space_separated_node(state)?;
+    parse_elm_whitespace_and_comments(state);
+    Some(match parse_symbol_as_range(state, "=") {
+        None => ElmSyntaxNode {
+            range: pattern_node.range,
+            value: ElmSyntaxLetDeclaration::Destructuring {
+                pattern: pattern_node,
+                equals_key_symbol_range: None,
+                expression: None,
+            },
+        },
+        Some(equals_key_symbol_range) => {
+            parse_elm_whitespace_and_comments(state);
+            let maybe_expression: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
+                parse_elm_syntax_expression_space_separated_node(state);
+            ElmSyntaxNode {
+                range: lsp_types::Range {
+                    start: pattern_node.range.start,
+                    end: match maybe_expression {
+                        None => equals_key_symbol_range.end,
+                        Some(ref expression_node) => expression_node.range.end,
+                    },
+                },
+                value: ElmSyntaxLetDeclaration::Destructuring {
+                    pattern: pattern_node,
+                    equals_key_symbol_range: Some(equals_key_symbol_range),
+                    expression: maybe_expression,
+                },
+            }
+        }
+    })
+}
+fn parse_elm_syntax_let_variable_declaration(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<ElmSyntaxLetDeclaration>> {
+    let start_name_node: ElmSyntaxNode<String> = parse_elm_lowercase_as_node(state)?;
+    parse_elm_whitespace_and_comments(state);
+    let maybe_signature: Option<ElmSyntaxVariableDeclarationSignature> =
+        parse_symbol_as_range(state, ":").map(|colon_key_symbol_range| {
+            parse_elm_whitespace_and_comments(state);
+            let maybe_type: Option<ElmSyntaxNode<ElmSyntaxType>> =
+                parse_elm_syntax_type_space_separated_node(state);
+            parse_elm_whitespace_and_comments(state);
+            let maybe_implementation_name_range: Option<lsp_types::Range> =
+                parse_symbol_as_range(state, &start_name_node.value);
+            parse_elm_whitespace_and_comments(state);
+            ElmSyntaxVariableDeclarationSignature {
+                colon_key_symbol_range: colon_key_symbol_range,
+                type_: maybe_type,
+                implementation_name_range: maybe_implementation_name_range,
+            }
+        });
+    let mut syntax_before_equals_key_symbol_end_location: lsp_types::Position =
+        match maybe_signature {
+            Some(ref signature) => signature
+                .implementation_name_range
+                .map(|range| range.end)
+                .or_else(|| signature.type_.as_ref().map(|node| node.range.end))
+                .unwrap_or_else(|| signature.colon_key_symbol_range.end),
+            None => start_name_node.range.end,
+        };
+    let mut parameters: Vec<ElmSyntaxNode<ElmSyntaxPattern>> = Vec::new();
+    while let Some(parameter_node) = parse_elm_syntax_pattern_not_space_separated_node(state) {
+        syntax_before_equals_key_symbol_end_location = parameter_node.range.end;
+        parameters.push(parameter_node);
+        parse_elm_whitespace_and_comments(state);
+    }
+    let maybe_equals_key_symbol_range: Option<lsp_types::Range> = parse_symbol_as_range(state, "=");
+    parse_elm_whitespace_and_comments(state);
+    let maybe_result: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
+        parse_elm_syntax_expression_space_separated_node(state);
+    Some(ElmSyntaxNode {
+        range: lsp_types::Range {
+            start: start_name_node.range.start,
+            end: maybe_result
+                .as_ref()
+                .map(|node| node.range.end)
+                .or_else(|| maybe_equals_key_symbol_range.map(|range| range.end))
+                .unwrap_or_else(|| syntax_before_equals_key_symbol_end_location),
+        },
+        value: ElmSyntaxLetDeclaration::VariableDeclaration {
+            start_name: start_name_node,
+            signature: maybe_signature,
+            parameters: parameters,
+            equals_key_symbol_range: maybe_equals_key_symbol_range,
+            result: maybe_result,
+        },
+    })
 }
 fn parse_elm_syntax_expression_string(state: &mut ParseState) -> Option<ElmSyntaxExpression> {
     parse_elm_string_triple_quoted(state)
@@ -8887,7 +9857,7 @@ fn parse_elm_syntax_expression_string(state: &mut ParseState) -> Option<ElmSynta
             })
         })
 }
-fn parse_elm_syntax_expression_list_exact(state: &mut ParseState) -> Option<ElmSyntaxExpression> {
+fn parse_elm_syntax_expression_list(state: &mut ParseState) -> Option<ElmSyntaxExpression> {
     if !parse_symbol(state, "[") {
         return None;
     }
@@ -8910,44 +9880,270 @@ fn parse_elm_syntax_expression_list_exact(state: &mut ParseState) -> Option<ElmS
     }
     Some(ElmSyntaxExpression::List(elements))
 }
-fn parse_elm_syntax_expression_parenthesized_or_tuple_or_triple(
+fn parse_elm_syntax_expression_operator_function_or_parenthesized_or_tuple_or_triple(
     state: &mut ParseState,
 ) -> Option<ElmSyntaxExpression> {
     if !parse_symbol(state, "(") {
         return None;
     }
     parse_elm_whitespace_and_comments(state);
-    let maybe_in_parens_0: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
-        parse_elm_syntax_expression_space_separated_node(state);
-    parse_elm_whitespace_and_comments(state);
-    if !parse_symbol(state, ",") {
-        parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, ")");
-        Some(match maybe_in_parens_0 {
-            None => ElmSyntaxExpression::Unit,
-            Some(in_parens) => ElmSyntaxExpression::Parenthesized(elm_syntax_node_box(in_parens)),
-        })
-    } else {
-        parse_elm_whitespace_and_comments(state);
-        let maybe_part1: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
-            parse_elm_syntax_expression_space_separated_node(state);
-        parse_elm_whitespace_and_comments(state);
-        if !parse_symbol(state, ",") {
+    Some(
+        if let Some(operator_node) = parse_elm_operator_node(state) {
             parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, ")");
-            Some(ElmSyntaxExpression::Tuple {
-                part0: maybe_in_parens_0.map(elm_syntax_node_box),
-                part1: maybe_part1.map(elm_syntax_node_box),
-            })
+            ElmSyntaxExpression::OperatorFunction(operator_node)
         } else {
-            parse_elm_whitespace_and_comments(state);
-            let maybe_part2: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
+            let maybe_in_parens_0: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
                 parse_elm_syntax_expression_space_separated_node(state);
             parse_elm_whitespace_and_comments(state);
-            parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, ")");
-            Some(ElmSyntaxExpression::Triple {
-                part0: maybe_in_parens_0.map(elm_syntax_node_box),
-                part1: maybe_part1.map(elm_syntax_node_box),
-                part2: maybe_part2.map(elm_syntax_node_box),
+            if !parse_symbol(state, ",") {
+                parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, ")");
+                match maybe_in_parens_0 {
+                    None => ElmSyntaxExpression::Unit,
+                    Some(in_parens) => {
+                        ElmSyntaxExpression::Parenthesized(elm_syntax_node_box(in_parens))
+                    }
+                }
+            } else {
+                parse_elm_whitespace_and_comments(state);
+                let maybe_part1: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
+                    parse_elm_syntax_expression_space_separated_node(state);
+                parse_elm_whitespace_and_comments(state);
+                if !parse_symbol(state, ",") {
+                    parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, ")");
+                    ElmSyntaxExpression::Tuple {
+                        part0: maybe_in_parens_0.map(elm_syntax_node_box),
+                        part1: maybe_part1.map(elm_syntax_node_box),
+                    }
+                } else {
+                    parse_elm_whitespace_and_comments(state);
+                    let maybe_part2: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
+                        parse_elm_syntax_expression_space_separated_node(state);
+                    parse_elm_whitespace_and_comments(state);
+                    parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, ")");
+                    ElmSyntaxExpression::Triple {
+                        part0: maybe_in_parens_0.map(elm_syntax_node_box),
+                        part1: maybe_part1.map(elm_syntax_node_box),
+                        part2: maybe_part2.map(elm_syntax_node_box),
+                    }
+                }
+            }
+        },
+    )
+}
+fn parse_elm_syntax_declaration(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<ElmSyntaxDeclaration>> {
+    parse_elm_syntax_declaration_choice_type_or_type_alias_node(state)
+        .or_else(|| parse_elm_syntax_declaration_port_node(state))
+        .or_else(|| parse_elm_syntax_declaration_operator_node(state))
+        .or_else(|| parse_elm_syntax_declaration_variable_node(state))
+}
+fn parse_elm_syntax_declaration_port_node(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<ElmSyntaxDeclaration>> {
+    let port_keyword_range: lsp_types::Range = parse_symbol_as_range(state, "port")?;
+    parse_elm_whitespace_and_comments(state);
+    let maybe_name: Option<ElmSyntaxNode<String>> = parse_elm_lowercase_as_node(state);
+    parse_elm_whitespace_and_comments(state);
+    let maybe_colon_key_symbol_range: Option<lsp_types::Range> = parse_symbol_as_range(state, ":");
+    parse_elm_whitespace_and_comments(state);
+    let maybe_type: Option<ElmSyntaxNode<ElmSyntaxType>> =
+        parse_elm_syntax_type_space_separated_node(state);
+    let full_end_position: lsp_types::Position = maybe_type
+        .as_ref()
+        .map(|type_node| type_node.range.end)
+        .or_else(|| maybe_colon_key_symbol_range.map(|range| range.end))
+        .or_else(|| maybe_name.as_ref().map(|node| node.range.end))
+        .unwrap_or(port_keyword_range.end);
+    Some(ElmSyntaxNode {
+        range: lsp_types::Range {
+            start: port_keyword_range.start,
+            end: full_end_position,
+        },
+        value: ElmSyntaxDeclaration::Port {
+            name: maybe_name,
+            colon_key_symbol_range: maybe_colon_key_symbol_range,
+            type_: maybe_type,
+        },
+    })
+}
+fn parse_elm_syntax_declaration_operator_node(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<ElmSyntaxDeclaration>> {
+    let infix_keyword_range: lsp_types::Range = parse_symbol_as_range(state, "infix")?;
+    parse_elm_whitespace_and_comments(state);
+    todo!()
+}
+fn parse_elm_syntax_declaration_choice_type_or_type_alias_node(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<ElmSyntaxDeclaration>> {
+    let type_keyword_range: lsp_types::Range = parse_symbol_as_range(state, "type")?;
+    parse_elm_whitespace_and_comments(state);
+    let maybe_alias_keyword_range: Option<lsp_types::Range> = parse_symbol_as_range(state, "alias");
+    parse_elm_whitespace_and_comments(state);
+    let maybe_name_node: Option<ElmSyntaxNode<String>> = parse_elm_uppercase_node(state);
+    parse_elm_whitespace_and_comments(state);
+    let mut syntax_before_equals_key_symbol_end_location: lsp_types::Position = maybe_name_node
+        .as_ref()
+        .map(|name_node| name_node.range.end)
+        .or_else(|| maybe_alias_keyword_range.map(|range| range.end))
+        .unwrap_or_else(|| type_keyword_range.end);
+    let mut parameters: Vec<ElmSyntaxNode<String>> = Vec::new();
+    while let Some(parameter_node) = parse_elm_lowercase_as_node(state) {
+        syntax_before_equals_key_symbol_end_location = parameter_node.range.end;
+        parameters.push(parameter_node);
+        parse_elm_whitespace_and_comments(state);
+    }
+    let maybe_equals_key_symbol_range: Option<lsp_types::Range> = parse_symbol_as_range(state, "=");
+    parse_elm_whitespace_and_comments(state);
+    Some(match maybe_alias_keyword_range {
+        Some(alias_keyword_range) => {
+            let maybe_type: Option<ElmSyntaxNode<ElmSyntaxType>> =
+                parse_elm_syntax_type_space_separated_node(state);
+            let full_end_location: lsp_types::Position = maybe_type
+                .as_ref()
+                .map(|type_node| type_node.range.end)
+                .or_else(|| maybe_equals_key_symbol_range.map(|range| range.end))
+                .unwrap_or(syntax_before_equals_key_symbol_end_location);
+            ElmSyntaxNode {
+                range: lsp_types::Range {
+                    start: type_keyword_range.start,
+                    end: full_end_location,
+                },
+                value: ElmSyntaxDeclaration::TypeAlias {
+                    alias_keyword_range: alias_keyword_range,
+                    name: maybe_name_node,
+                    parameters: parameters,
+                    equals_key_symbol_range: maybe_equals_key_symbol_range,
+                    type_: maybe_type,
+                },
+            }
+        }
+        None => {
+            todo!()
+        }
+    })
+}
+fn parse_elm_syntax_declaration_variable_node(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<ElmSyntaxDeclaration>> {
+    let start_name_node: ElmSyntaxNode<String> = parse_elm_lowercase_as_node(state)?;
+    parse_elm_whitespace_and_comments(state);
+    let maybe_signature: Option<ElmSyntaxVariableDeclarationSignature> =
+        parse_symbol_as_range(state, ":").map(|colon_key_symbol_range| {
+            parse_elm_whitespace_and_comments(state);
+            let maybe_type: Option<ElmSyntaxNode<ElmSyntaxType>> =
+                parse_elm_syntax_type_space_separated_node(state);
+            parse_elm_whitespace_and_comments(state);
+            let maybe_implementation_name_range: Option<lsp_types::Range> =
+                parse_symbol_as_range(state, &start_name_node.value);
+            parse_elm_whitespace_and_comments(state);
+            ElmSyntaxVariableDeclarationSignature {
+                colon_key_symbol_range: colon_key_symbol_range,
+                type_: maybe_type,
+                implementation_name_range: maybe_implementation_name_range,
+            }
+        });
+    let mut syntax_before_equals_key_symbol_end_location: lsp_types::Position =
+        match maybe_signature {
+            Some(ref signature) => signature
+                .implementation_name_range
+                .map(|range| range.end)
+                .or_else(|| signature.type_.as_ref().map(|node| node.range.end))
+                .unwrap_or_else(|| signature.colon_key_symbol_range.end),
+            None => start_name_node.range.end,
+        };
+    let mut parameters: Vec<ElmSyntaxNode<ElmSyntaxPattern>> = Vec::new();
+    while let Some(parameter_node) = parse_elm_syntax_pattern_not_space_separated_node(state) {
+        syntax_before_equals_key_symbol_end_location = parameter_node.range.end;
+        parameters.push(parameter_node);
+        parse_elm_whitespace_and_comments(state);
+    }
+    let maybe_equals_key_symbol_range: Option<lsp_types::Range> = parse_symbol_as_range(state, "=");
+    parse_elm_whitespace_and_comments(state);
+    let maybe_result: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
+        parse_elm_syntax_expression_space_separated_node(state);
+    Some(ElmSyntaxNode {
+        range: lsp_types::Range {
+            start: start_name_node.range.start,
+            end: maybe_result
+                .as_ref()
+                .map(|node| node.range.end)
+                .or_else(|| maybe_equals_key_symbol_range.map(|range| range.end))
+                .unwrap_or_else(|| syntax_before_equals_key_symbol_end_location),
+        },
+        value: ElmSyntaxDeclaration::Variable {
+            start_name: start_name_node,
+            signature: maybe_signature,
+            parameters: parameters,
+            equals_key_symbol_range: maybe_equals_key_symbol_range,
+            result: maybe_result,
+        },
+    })
+}
+fn parse_elm_syntax_documented_declaration(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxDocumentedDeclaration> {
+    match parse_elm_documentation_comment_block_node(state) {
+        None => parse_elm_syntax_declaration_variable_node(state).map(|declaration_node| {
+            ElmSyntaxDocumentedDeclaration {
+                documentation: None,
+                declaration: Some(declaration_node),
+            }
+        }),
+        Some(documentation_node) => {
+            parse_elm_whitespace_and_comments(state);
+            let maybe_declaration: Option<ElmSyntaxNode<ElmSyntaxDeclaration>> =
+                parse_elm_syntax_declaration_variable_node(state);
+            Some(ElmSyntaxDocumentedDeclaration {
+                documentation: Some(documentation_node),
+                declaration: maybe_declaration,
             })
         }
+    }
+}
+fn parse_elm_syntax_module(module_source: String) -> ElmSyntaxModule {
+    let mut state: ParseState = ParseState {
+        source: module_source,
+        offset_utf8: 0,
+        position: lsp_types::Position {
+            line: 0,
+            character: 0,
+        },
+        indent: 0,
+        lower_indents_stack: vec![],
+        comments: vec![],
+    };
+    parse_elm_whitespace_and_comments(&mut state);
+    let maybe_header: Option<ElmSyntaxModuleHeader> = parse_elm_syntax_module_header(&mut state);
+    parse_elm_whitespace_and_comments(&mut state);
+    let maybe_module_documentation: Option<ElmSyntaxNode<String>> =
+        parse_elm_documentation_comment_block_node(&mut state);
+    parse_elm_whitespace_and_comments(&mut state);
+    let mut imports: Vec<ElmSyntaxNode<ElmSyntaxImport>> = Vec::new();
+    while let Some(import_node) = parse_elm_syntax_import_node(&mut state) {
+        imports.push(import_node);
+        parse_elm_whitespace_and_comments(&mut state);
+    }
+    let mut declarations: Vec<ElmSyntaxDocumentedDeclaration> = Vec::new();
+    'parsing_declarations: loop {
+        match parse_elm_syntax_documented_declaration(&mut state) {
+            Some(documented_declaration) => {
+                declarations.push(documented_declaration);
+                parse_elm_whitespace_and_comments(&mut state);
+            }
+            None => {
+                if !parse_any_char(&mut state) {
+                    break 'parsing_declarations;
+                }
+            }
+        }
+    }
+    ElmSyntaxModule {
+        header: maybe_header,
+        documentation: maybe_module_documentation,
+        comments: state.comments,
+        imports: imports,
+        declarations: declarations,
     }
 }
