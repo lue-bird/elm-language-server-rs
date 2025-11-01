@@ -8718,7 +8718,7 @@ fn parse_elm_syntax_import_node(state: &mut ParseState) -> Option<ElmSyntaxNode<
                 .specific
                 .as_ref()
                 .map(|node| node.range.end)
-                .unwrap_or(exposing.exposing_keyword_range.end)
+                .unwrap_or_else(|| exposing.exposing_keyword_range.end)
         })
         .or_else(|| {
             maybe_alias.as_ref().map(|alias| {
@@ -10309,7 +10309,7 @@ fn parse_elm_syntax_declaration_port_node(
         .map(|type_node| type_node.range.end)
         .or_else(|| maybe_colon_key_symbol_range.map(|range| range.end))
         .or_else(|| maybe_name.as_ref().map(|node| node.range.end))
-        .unwrap_or(port_keyword_range.end);
+        .unwrap_or_else(|| port_keyword_range.end);
     Some(ElmSyntaxNode {
         range: lsp_types::Range {
             start: port_keyword_range.start,
@@ -10432,8 +10432,89 @@ fn parse_elm_syntax_declaration_choice_type_or_type_alias_node(
             }
         }
         None => {
-            todo!()
+            let maybe_variant0_name: Option<ElmSyntaxNode<String>> =
+                parse_elm_uppercase_node(state);
+            let mut variant0_values: Vec<ElmSyntaxNode<ElmSyntaxType>> = Vec::new();
+            let mut full_end_position: lsp_types::Position = maybe_variant0_name
+                .as_ref()
+                .map(|node| node.range.end)
+                .or_else(|| maybe_equals_key_symbol_range.map(|range| range.end))
+                .unwrap_or(syntax_before_equals_key_symbol_end_location);
+            'parsing_arguments: loop {
+                parse_elm_whitespace_and_comments(state);
+                if state.position.character < state.indent as u32 {
+                    break 'parsing_arguments;
+                }
+                match parse_elm_syntax_type_not_space_separated_node(state) {
+                    None => {
+                        break 'parsing_arguments;
+                    }
+                    Some(argument_node) => {
+                        full_end_position = argument_node.range.end;
+                        variant0_values.push(argument_node);
+                    }
+                }
+            }
+            parse_elm_whitespace_and_comments(state);
+            let mut variant1_up: Vec<ElmSyntaxChoiceTypeDeclarationTailingVariant> = Vec::new();
+            while let Some(variant_node) =
+                parse_elm_syntax_choice_type_declaration_trailing_variant_node(state)
+            {
+                variant1_up.push(variant_node.value);
+                full_end_position = variant_node.range.end;
+            }
+            ElmSyntaxNode {
+                range: lsp_types::Range {
+                    start: type_keyword_range.start,
+                    end: full_end_position,
+                },
+                value: ElmSyntaxDeclaration::ChoiceType {
+                    name: maybe_name_node,
+                    parameters: parameters,
+                    equals_key_symbol_range: maybe_equals_key_symbol_range,
+                    variant0_name: maybe_variant0_name,
+                    variant0_values: variant0_values,
+                    variant1_up: variant1_up,
+                },
+            }
         }
+    })
+}
+fn parse_elm_syntax_choice_type_declaration_trailing_variant_node(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<ElmSyntaxChoiceTypeDeclarationTailingVariant>> {
+    let or_key_symbol_range: lsp_types::Range = parse_symbol_as_range(state, "|")?;
+    let maybe_name: Option<ElmSyntaxNode<String>> = parse_elm_uppercase_node(state);
+    let mut values: Vec<ElmSyntaxNode<ElmSyntaxType>> = Vec::new();
+    let mut full_end_position: lsp_types::Position = maybe_name
+        .as_ref()
+        .map(|node| node.range.end)
+        .unwrap_or_else(|| or_key_symbol_range.end);
+    'parsing_arguments: loop {
+        parse_elm_whitespace_and_comments(state);
+        if state.position.character < state.indent as u32 {
+            break 'parsing_arguments;
+        }
+        match parse_elm_syntax_type_not_space_separated_node(state) {
+            None => {
+                break 'parsing_arguments;
+            }
+            Some(argument_node) => {
+                full_end_position = argument_node.range.end;
+                values.push(argument_node);
+            }
+        }
+    }
+    Some(ElmSyntaxNode {
+        range: lsp_types::Range {
+            start: or_key_symbol_range.start,
+            end: full_end_position,
+        },
+        value: ElmSyntaxChoiceTypeDeclarationTailingVariant {
+            or_key_symbol_range: or_key_symbol_range,
+            name: maybe_name,
+            values: values,
+        },
     })
 }
 fn parse_elm_syntax_declaration_variable_node(
