@@ -1,8 +1,6 @@
 #![allow(non_shorthand_field_patterns)]
 #![allow(non_upper_case_globals)]
 
-mod elm;
-
 struct State {
     projects: std::collections::HashMap<
         /* path to directory containing elm.json */ std::path::PathBuf,
@@ -313,84 +311,57 @@ fn initialize_state_for_project_into(
     elm_home_path: &std::path::PathBuf,
     project_path: std::path::PathBuf,
 ) {
-    let allocator: bumpalo::Bump = bumpalo::Bump::new();
-    let elm_json_path = std::path::Path::join(&project_path, "elm.json");
-    let maybe_elm_json = std::fs::read_to_string(&elm_json_path)
+    let elm_json_path: std::path::PathBuf = std::path::Path::join(&project_path, "elm.json");
+    let maybe_elm_json_value: Option<serde_json::Value> = std::fs::read_to_string(&elm_json_path)
         .ok()
         .and_then(|elm_json_source| {
-            elm::json_decode_decode_string(
-                &allocator,
-                elm::elm_project_decoder(&allocator),
-                elm::StringString::One(allocator.alloc(elm_json_source)),
-            )
-            .map_err(|json_decode_error| {
-                let mut error_description = String::new();
-                elm::json_decode_error_to_string_help(
-                    &json_decode_error,
-                    String::new(),
-                    &mut error_description,
-                    0,
-                );
-                eprintln!("I don't understand this elm.json: {}", error_description)
-            })
-            .ok()
+            serde_json::from_str(&elm_json_source)
+                .map_err(|json_parse_error: serde_json::Error| {
+                    eprintln!(
+                        "I couldn't read this elm.json as JSON: {}",
+                        json_parse_error
+                    )
+                })
+                .ok()
+        });
+    let maybe_elm_json: Option<ElmJson> =
+        maybe_elm_json_value.as_ref().and_then(|elm_json_value| {
+            parse_elm_json(elm_json_value)
+                .map_err(|json_decode_error| {
+                    eprintln!("I couldn't understand this elm.json: {}", json_decode_error)
+                })
+                .ok()
         });
     if maybe_elm_json.is_none() {
         eprintln!(
             "no valid elm.json found. Now looking for elm module files across the workspace and elm/core 1.0.5"
         );
     }
-    let elm_json_source_directories = match maybe_elm_json {
+    let elm_json_source_directories: Vec<std::path::PathBuf> = match &maybe_elm_json {
         None => {
             vec![project_path.clone()]
         }
-        Some(elm::ElmProjectProject::Application(application_elm_json)) => application_elm_json
-            .dirs
+        Some(ElmJson::Application {
+            source_directories,
+            direct_dependencies: _,
+        }) => source_directories
             .into_iter()
             .map(|elm_string| std::path::Path::join(&project_path, elm_string.to_string()))
             .collect::<Vec<_>>(),
-        Some(elm::ElmProjectProject::Package(_)) => {
+        Some(ElmJson::Package { .. }) => {
             vec![std::path::Path::join(&project_path, "src")]
         }
     };
-    let direct_dependency_paths: Vec<std::path::PathBuf> = match maybe_elm_json {
-        None => {
-            vec!(std::path::Path::join(
-                &elm_home_path,
-                "0.19.1/packages/elm/core/1.0.5"
-            ))
-        }
-        Some(elm::ElmProjectProject::Application(application_elm_json)) => {
-            application_elm_json
-                .deps_direct
-                .into_iter()
-                .map(|(elm::ElmPackageName::Name(package_author, package_name), elm::ElmVersionVersion::Version(package_major_version, package_minor_version, package_patch_version))| {
-                    std::path::Path::join(
-                        &elm_home_path,
-                        format!("0.19.1/packages/{package_author}/{package_name}/{package_major_version}.{package_minor_version}.{package_patch_version}"),
-                    )
-                })
-                .collect::<Vec<_>>()
-        }
-        Some(elm::ElmProjectProject::Package(package_elm_json)) => {
-            package_elm_json.deps
-                .into_iter()
-                .filter_map(|(elm::ElmPackageName::Name(package_author, package_name), elm::ElmConstraintConstraint::Constraint(elm::ElmVersionVersion::Version(package_major_version, package_minor_version, package_patch_version), lower_bound_operator, _, _))| {
-                    match lower_bound_operator {
-                        elm::ElmConstraintOp::LessThan => {
-                            // I have never seen this used
-                            // and it would require some work to implement
-                            // so we don't support it
-                            None
-                        },
-                        elm::ElmConstraintOp::LessOrEq => Some(std::path::Path::join(
-                            &elm_home_path,
-                            format!("0.19.1/packages/{package_author}/{package_name}/{package_major_version}.{package_minor_version}.{package_patch_version}"),
-                        ))
-                    }
-                })
-                .collect::<Vec<_>>()
-        }
+    let direct_dependencies: Box<dyn Iterator<Item = (&str, &str)>> = match &maybe_elm_json {
+        None => Box::new(std::iter::once(("elm/core", "1.0.5"))),
+        Some(ElmJson::Application {
+            direct_dependencies,
+            source_directories: _,
+        }) => Box::new(direct_dependencies.iter().map(|(n, v)| (*n, *v))),
+        Some(ElmJson::Package {
+            dependency_minimum_versions,
+            exposed_modules: _,
+        }) => Box::new(dependency_minimum_versions.iter().map(|(n, v)| (*n, *v))),
     };
     let elm_source_files = elm_json_source_directories
         .iter()
@@ -408,12 +379,14 @@ fn initialize_state_for_project_into(
             },
         );
     }
-    match maybe_elm_json {
+    match &maybe_elm_json {
         None => {}
-        Some(elm::ElmProjectProject::Application(_)) => {}
-        Some(elm::ElmProjectProject::Package(package_elm_json)) => {
-            for exposed_module_name in elm_project_exposed_to_module_names(package_elm_json.exposed)
-            {
+        Some(ElmJson::Application { .. }) => {}
+        Some(ElmJson::Package {
+            exposed_modules,
+            dependency_minimum_versions: _,
+        }) => {
+            for exposed_module_name in exposed_modules {
                 let maybe_module_origin_path: Option<&std::path::PathBuf> = module_states
                     .iter()
                     .find_map(|(module_path, module_state)| {
@@ -426,7 +399,7 @@ fn initialize_state_for_project_into(
                                     .module_name
                                     .as_ref()
                                     .is_some_and(|module_name_node| {
-                                        &module_name_node.value == &exposed_module_name
+                                        &module_name_node.value == exposed_module_name
                                     })
                             })
                         {
@@ -439,7 +412,7 @@ fn initialize_state_for_project_into(
                     None => {}
                     Some(module_origin_path) => {
                         dependency_exposed_module_names_so_far.insert(
-                            exposed_module_name,
+                            exposed_module_name.to_string(),
                             ProjectModuleOrigin {
                                 project_path: project_path.clone(),
                                 module_path: module_origin_path.clone(),
@@ -453,7 +426,12 @@ fn initialize_state_for_project_into(
     let dependency_exposed_module_names = initialize_state_for_projects_into(
         state,
         elm_home_path,
-        direct_dependency_paths.into_iter(),
+        direct_dependencies.map(|(package_name, package_version)| {
+            std::path::Path::join(
+                &elm_home_path,
+                format!("0.19.1/packages/{package_name}/{package_version}"),
+            )
+        }),
     );
     state.projects.insert(
         project_path,
@@ -464,18 +442,178 @@ fn initialize_state_for_project_into(
         },
     );
 }
+enum ElmJson<'a> {
+    Application {
+        source_directories: Vec<&'a str>,
+        direct_dependencies: std::collections::HashMap<&'a str, &'a str>,
+    },
+    Package {
+        dependency_minimum_versions: std::collections::HashMap<&'a str, &'a str>,
+        exposed_modules: Vec<&'a str>,
+    },
+}
 
-fn elm_project_exposed_to_module_names(elm_project_exposed: elm::ElmProjectExposed) -> Vec<String> {
-    match elm_project_exposed {
-        elm::ElmProjectExposed::ExposedDict(grouped) => grouped
-            .into_iter()
-            .flat_map(|(_group_name, names)| names.into_iter())
-            .map(|elm::ElmModuleName::Name(s)| s.to_string())
-            .collect::<Vec<_>>(),
-        elm::ElmProjectExposed::ExposedList(names) => names
-            .into_iter()
-            .map(|elm::ElmModuleName::Name(s)| s.to_string())
-            .collect::<Vec<_>>(),
+fn parse_elm_json<'a>(json: &'a serde_json::Value) -> Result<ElmJson<'a>, String> {
+    let json_object: &serde_json::Map<String, serde_json::Value> = match json {
+        serde_json::Value::Object(json_object) => Ok(json_object),
+        _ => Err("must be an object".to_string()),
+    }?;
+    match json_object.get("type") {
+        Some(serde_json::Value::String(type_string)) => match type_string.as_str() {
+            "application" => {
+                let direct_dependencies: std::collections::HashMap<&str, &str> = match json_object
+                    .get("dependencies")
+                {
+                    Some(serde_json::Value::Object(dependencies)) => {
+                        match dependencies.get("direct") {
+                            Some(serde_json::Value::Object(direct_dependencies_json)) => {
+                                let mut direct_dependencies: std::collections::HashMap<&str, &str> =
+                                    std::collections::HashMap::new();
+                                for (direct_dependency_name, direct_dependency_version_json) in
+                                    direct_dependencies_json
+                                {
+                                    let direct_dependency_version: &str =
+                                        match direct_dependency_version_json {
+                                            serde_json::Value::String(v) => Ok(v.as_str()),
+                                            _ => Err(format!(
+                                                "{direct_dependency_name} dependency version must be a string"
+                                            )),
+                                        }?;
+                                    direct_dependencies.insert(
+                                        direct_dependency_name.as_str(),
+                                        direct_dependency_version,
+                                    );
+                                }
+                                Ok::<std::collections::HashMap<&str, &str>, String>(
+                                    direct_dependencies,
+                                )
+                            }
+                            _ => Ok(std::collections::HashMap::new()),
+                        }
+                    }
+                    _ => Ok(std::collections::HashMap::new()),
+                }?;
+                let mut source_directories: Vec<&str> = Vec::new();
+                match json_object.get("source-directories") {
+                    Some(serde_json::Value::Array(source_directories_json)) => {
+                        for source_directory_json in source_directories_json {
+                            match source_directory_json {
+                                serde_json::Value::String(source_directory) => {
+                                    source_directories.push(source_directory)
+                                }
+                                _ => {
+                                    return Err(
+                                        "source directories must be all strings".to_string()
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                Ok(ElmJson::Application {
+                    source_directories: source_directories,
+                    direct_dependencies: direct_dependencies,
+                })
+            }
+            "package" => {
+                let dependency_minimum_versions: std::collections::HashMap<&str, &str> =
+                    match json_object.get("dependencies") {
+                        Some(serde_json::Value::Object(dependencies)) => {
+                            let mut dependency_minimum_versions: std::collections::HashMap<
+                                &str,
+                                &str,
+                            > = std::collections::HashMap::new();
+                            for (direct_dependency_name, direct_dependency_version_json) in
+                                dependencies
+                            {
+                                let dependency_version_constraint: &str =
+                                    match direct_dependency_version_json {
+                                        serde_json::Value::String(v) => Ok(v.as_str()),
+                                        _ => Err(format!(
+                                            "{direct_dependency_name} dependency version must be a string"
+                                        )),
+                                    }?;
+                                let dependency_version_minimum: &str =
+                                    elm_json_version_constraint_to_minimum_version(
+                                        dependency_version_constraint,
+                                    )?;
+                                dependency_minimum_versions.insert(
+                                    direct_dependency_name.as_str(),
+                                    dependency_version_minimum,
+                                );
+                            }
+                            Ok::<std::collections::HashMap<&str, &str>, String>(
+                                dependency_minimum_versions,
+                            )
+                        }
+                        _ => Ok(std::collections::HashMap::new()),
+                    }?;
+                let mut exposed_modules: Vec<&str> = Vec::new();
+                match json_object.get("exposed-modules") {
+                    Some(serde_json::Value::Array(source_directories_json)) => {
+                        for source_directory_json in source_directories_json {
+                            match source_directory_json {
+                                serde_json::Value::String(source_directory) => {
+                                    exposed_modules.push(source_directory)
+                                }
+                                _ => {
+                                    return Err("exposed modules must be all strings".to_string());
+                                }
+                            }
+                        }
+                    }
+                    Some(serde_json::Value::Object(grouped)) => {
+                        for group_values in grouped.values() {
+                            match group_values {
+                                serde_json::Value::Array(source_directories_json) => {
+                                    for source_directory_json in source_directories_json {
+                                        match source_directory_json {
+                                            serde_json::Value::String(source_directory) => {
+                                                exposed_modules.push(source_directory)
+                                            }
+                                            _ => {
+                                                return Err("exposed modules must be all strings"
+                                                    .to_string());
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                Ok(ElmJson::Package {
+                    dependency_minimum_versions,
+                    exposed_modules: exposed_modules,
+                })
+            }
+            _ => Err("field type must be package or application".to_string()),
+        },
+        _ => Err("must have field type".to_string()),
+    }
+}
+fn elm_json_version_constraint_to_minimum_version<'a>(
+    elm_json_version_constraint: &'a str,
+) -> Result<&'a str, String> {
+    match elm_json_version_constraint.split_once(" <= v < ") {
+        None => Err(format!(
+            "dependency version constraints must be set in the form lo <= v < hi, found {elm_json_version_constraint}"
+        )),
+        Some((minimum_version, _maximum_version)) => {
+            if !minimum_version
+                .chars()
+                .all(|c| c.is_ascii_digit() || c == '.')
+            {
+                Err(format!(
+                    "dependency version constraint minimum version must only be composed of digits and .s, found: {minimum_version}"
+                ))
+            } else {
+                Ok(minimum_version)
+            }
+        }
     }
 }
 
@@ -2635,7 +2773,7 @@ fn state_update_source_at_path(
 }
 
 fn documentation_comment_to_markdown(documentation: &str) -> String {
-    let markdown_source = documentation
+    let markdown_source: &str = documentation
         .trim_start_matches("{-|")
         .trim_end_matches("-}")
         .trim();
@@ -9056,6 +9194,9 @@ fn parse_elm_syntax_type_not_space_separated(state: &mut ParseState) -> Option<E
 fn parse_elm_syntax_type_record_or_record_extension(
     state: &mut ParseState,
 ) -> Option<ElmSyntaxType> {
+    if state.source[state.offset_utf8..].starts_with("{-|") {
+        return None;
+    }
     if !parse_symbol(state, "{") {
         return None;
     }
@@ -9407,6 +9548,9 @@ fn parse_elm_syntax_pattern_list_exact(state: &mut ParseState) -> Option<ElmSynt
     Some(ElmSyntaxPattern::ListExact(elements))
 }
 fn parse_elm_syntax_pattern_record(state: &mut ParseState) -> Option<ElmSyntaxPattern> {
+    if state.source[state.offset_utf8..].starts_with("{-|") {
+        return None;
+    }
     if !parse_symbol(state, "{") {
         return None;
     }
@@ -9896,6 +10040,9 @@ fn parse_elm_syntax_expression_reference(state: &mut ParseState) -> Option<ElmSy
 fn parse_elm_syntax_expression_record_or_record_update(
     state: &mut ParseState,
 ) -> Option<ElmSyntaxExpression> {
+    if state.source[state.offset_utf8..].starts_with("{-|") {
+        return None;
+    }
     if !parse_symbol(state, "{") {
         return None;
     }
@@ -10762,7 +10909,6 @@ fn parse_elm_syntax_module(module_source: String) -> ElmSyntaxModule {
     'parsing_declarations: loop {
         match parse_elm_syntax_documented_declaration(&mut state) {
             Some(documented_declaration) => {
-                eprintln!("parsed declaration {}", declarations.len());
                 declarations.push(documented_declaration);
                 parse_elm_whitespace_and_comments(&mut state);
             }
@@ -10773,10 +10919,6 @@ fn parse_elm_syntax_module(module_source: String) -> ElmSyntaxModule {
             }
         }
     }
-    eprintln!(
-        "done parsing {}",
-        state.source.chars().take(14).collect::<String>()
-    );
     ElmSyntaxModule {
         header: maybe_header,
         documentation: maybe_module_documentation,

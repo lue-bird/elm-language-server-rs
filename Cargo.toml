@@ -15,7 +15,7 @@ tokio = { version = "1.47.1", features = [
     "rt",
     "time",
 ] }
-bumpalo = "3.19.0"
+serde_json = "1.0.145"
 
 [profile.dev]
 # disabling debug info speeds up build
