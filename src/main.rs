@@ -3550,107 +3550,102 @@ fn elm_syntax_module_create_origin_lookup<'a>(
                     .insert(allowed_qualification, import_module_name);
             }
         }
-        match import.exposing {
-            None => {}
-            Some(ref import_exposing) => {
-                match import_exposing.specific.as_ref().map(|node| &node.value) {
-                    None => {}
-                    Some(ElmSyntaxExposingSpecific::All(_)) => {
-                        for import_exposed_symbol in
-                            elm_syntax_module_exposed_symbols(elm_syntax_module)
-                        {
-                            module_origin_lookup
-                                .unqualified
-                                .insert(import_exposed_symbol, import_module_name);
-                        }
+        if let Some(import_exposing) = &import.exposing {
+            match import_exposing.specific.as_ref().map(|node| &node.value) {
+                None => {}
+                Some(ElmSyntaxExposingSpecific::All(_)) => {
+                    for import_exposed_symbol in
+                        elm_syntax_module_exposed_symbols(elm_syntax_module)
+                    {
+                        module_origin_lookup
+                            .unqualified
+                            .insert(import_exposed_symbol, import_module_name);
                     }
-                    Some(ElmSyntaxExposingSpecific::Explicit(exposes)) => {
-                        for expose_node in exposes {
-                            match &expose_node.value {
-                                ElmSyntaxExpose::ChoiceTypeIncludingVariants {
-                                    name: choice_type_expose_name,
-                                    open_range: _,
-                                } => {
-                                    module_origin_lookup
-                                        .unqualified
-                                        .insert(&choice_type_expose_name.value, import_module_name);
-                                    if let Some((_, imported_module_syntax)) =
-                                        project_state_get_module_with_name(
-                                            state,
-                                            project_state,
-                                            import_module_name,
-                                        )
+                }
+                Some(ElmSyntaxExposingSpecific::Explicit(exposes)) => {
+                    for expose_node in exposes {
+                        match &expose_node.value {
+                            ElmSyntaxExpose::ChoiceTypeIncludingVariants {
+                                name: choice_type_expose_name,
+                                open_range: _,
+                            } => {
+                                module_origin_lookup
+                                    .unqualified
+                                    .insert(&choice_type_expose_name.value, import_module_name);
+                                if let Some((_, imported_module_syntax)) =
+                                    project_state_get_module_with_name(
+                                        state,
+                                        project_state,
+                                        import_module_name,
+                                    )
+                                {
+                                    'until_origin_choice_type_declaration_found: for documented_declaration in
+                                        imported_module_syntax.syntax.declarations.iter()
                                     {
-                                        'until_origin_choice_type_declaration_found: for documented_declaration in
-                                            imported_module_syntax.syntax.declarations.iter()
+                                        match &documented_declaration
+                                            .declaration
+                                            .as_ref()
+                                            .map(|node| &node.value)
                                         {
-                                            match &documented_declaration
-                                                .declaration
-                                                .as_ref()
-                                                .map(|node| &node.value)
-                                            {
-                                                Some(ElmSyntaxDeclaration::ChoiceType {
-                                                    name: maybe_imported_module_choice_type_name,
-                                                    parameters: _,
-                                                    equals_key_symbol_range: _,
-                                                    variant0_name:
-                                                        maybe_imported_module_choice_type_variant0_name,
-                                                    variant0_values: _,
-                                                    variant1_up:
-                                                        imported_module_choice_type_variant1_up,
-                                                }) => {
-                                                    if Some(choice_type_expose_name.value.as_str())
-                                                        == maybe_imported_module_choice_type_name
-                                                            .as_ref()
-                                                            .map(|node| node.value.as_str())
-                                                    {
-                                                        if let Some(imported_module_choice_type_variant0_name_node) = maybe_imported_module_choice_type_variant0_name.as_ref() {
+                                            Some(ElmSyntaxDeclaration::ChoiceType {
+                                                name: maybe_imported_module_choice_type_name,
+                                                parameters: _,
+                                                equals_key_symbol_range: _,
+                                                variant0_name:
+                                                    maybe_imported_module_choice_type_variant0_name,
+                                                variant0_values: _,
+                                                variant1_up: imported_module_choice_type_variant1_up,
+                                            }) => {
+                                                if Some(choice_type_expose_name.value.as_str())
+                                                    == maybe_imported_module_choice_type_name
+                                                        .as_ref()
+                                                        .map(|node| node.value.as_str())
+                                                {
+                                                    if let Some(imported_module_choice_type_variant0_name_node) = maybe_imported_module_choice_type_variant0_name.as_ref() {
                                                             module_origin_lookup.unqualified.insert(
                                                                 &imported_module_choice_type_variant0_name_node.value,
                                                                 import_module_name,
                                                             );
                                                         }
-                                                        for imported_module_choice_type_variant in
-                                                            imported_module_choice_type_variant1_up
+                                                    for imported_module_choice_type_variant in
+                                                        imported_module_choice_type_variant1_up
+                                                    {
+                                                        if let Some(
+                                                            imported_module_choice_type_variant_name_node,
+                                                        ) = imported_module_choice_type_variant
+                                                            .name
+                                                            .as_ref()
                                                         {
-                                                            if let Some(
-                                                                imported_module_choice_type_variant_name_node,
-                                                            ) =
-                                                                imported_module_choice_type_variant
-                                                                    .name
-                                                                    .as_ref()
-                                                            {
-                                                                module_origin_lookup.unqualified.insert(
+                                                            module_origin_lookup.unqualified.insert(
                                                                     &imported_module_choice_type_variant_name_node.value,
                                                                     import_module_name,
                                                                 );
-                                                            }
                                                         }
-                                                        break 'until_origin_choice_type_declaration_found;
                                                     }
+                                                    break 'until_origin_choice_type_declaration_found;
                                                 }
-                                                _ => {}
                                             }
+                                            _ => {}
                                         }
                                     }
                                 }
-                                ElmSyntaxExpose::Operator(symbol) => {
-                                    if let Some(operator_symbol_node) = symbol {
-                                        module_origin_lookup
-                                            .unqualified
-                                            .insert(operator_symbol_node.value, import_module_name);
-                                    }
-                                }
-                                ElmSyntaxExpose::Type(name) => {
+                            }
+                            ElmSyntaxExpose::Operator(symbol) => {
+                                if let Some(operator_symbol_node) = symbol {
                                     module_origin_lookup
                                         .unqualified
-                                        .insert(name, import_module_name);
+                                        .insert(operator_symbol_node.value, import_module_name);
                                 }
-                                ElmSyntaxExpose::Variable(name) => {
-                                    module_origin_lookup
-                                        .unqualified
-                                        .insert(name, import_module_name);
-                                }
+                            }
+                            ElmSyntaxExpose::Type(name) => {
+                                module_origin_lookup
+                                    .unqualified
+                                    .insert(name, import_module_name);
+                            }
+                            ElmSyntaxExpose::Variable(name) => {
+                                module_origin_lookup
+                                    .unqualified
+                                    .insert(name, import_module_name);
                             }
                         }
                     }
@@ -6865,7 +6860,6 @@ fn elm_syntax_highlight_module_header_into(
                 elm_syntax_highlight_exposing_into(highlighted_so_far, exposing);
             }
         }
-
         ElmSyntaxModuleHeaderSpecific::Effect {
             effect_keyword_range,
             module_keyword_range,
@@ -6984,6 +6978,8 @@ fn elm_syntax_highlight_and_comment(
     characters_before_content: usize,
     characters_after_content: usize,
 ) -> impl Iterator<Item = ElmSyntaxNode<ElmSyntaxHighlightKind>> {
+    let content_does_not_break_line: bool =
+        elm_syntax_comment_node.range.start.line == elm_syntax_comment_node.range.end.line;
     elm_syntax_comment_node
         .value
         .lines()
@@ -6991,6 +6987,8 @@ fn elm_syntax_highlight_and_comment(
             // str::lines() eats the last linebreak. Restore it
             if elm_syntax_comment_node.value.ends_with("\n") {
                 Some("\n").into_iter()
+            } else if content_does_not_break_line {
+                Some("\n\n").into_iter()
             } else {
                 None.into_iter()
             },
@@ -7004,7 +7002,13 @@ fn elm_syntax_highlight_and_comment(
                         start: elm_syntax_comment_node.range.start,
                         end: lsp_position_add_characters(
                             elm_syntax_comment_node.range.start,
-                            (characters_before_content + inner_line_str.len()) as i32,
+                            (characters_before_content
+                                + inner_line_str.len()
+                                + if content_does_not_break_line {
+                                    characters_after_content
+                                } else {
+                                    0
+                                }) as i32,
                         ),
                     }
                 } else {
@@ -8791,20 +8795,22 @@ fn parse_elm_syntax_expose_node(state: &mut ParseState) -> Option<ElmSyntaxNode<
 }
 
 fn parse_elm_syntax_import_node(state: &mut ParseState) -> Option<ElmSyntaxNode<ElmSyntaxImport>> {
-    let import_keyword_range = parse_symbol_as_range(state, "import")?;
+    let import_keyword_range: lsp_types::Range = parse_symbol_as_range(state, "import")?;
     parse_elm_whitespace_and_comments(state);
-    let maybe_module_name_node = parse_elm_uppercase_possibly_dot_separated_node(state);
+    let maybe_module_name_node: Option<ElmSyntaxNode<String>> =
+        parse_elm_uppercase_possibly_dot_separated_node(state);
     parse_elm_whitespace_and_comments(state);
-    let maybe_alias = parse_symbol_as_range(state, "as").and_then(|as_keyword_range| {
-        parse_elm_whitespace_and_comments(state);
-        let maybe_alias_name_node = parse_elm_uppercase_node(state);
-        Some(EmSyntaxImportAs {
-            as_keyword_range: as_keyword_range,
-            name: maybe_alias_name_node,
-        })
-    });
+    let maybe_alias: Option<EmSyntaxImportAs> =
+        parse_symbol_as_range(state, "as").and_then(|as_keyword_range| {
+            parse_elm_whitespace_and_comments(state);
+            let maybe_alias_name_node = parse_elm_uppercase_node(state);
+            Some(EmSyntaxImportAs {
+                as_keyword_range: as_keyword_range,
+                name: maybe_alias_name_node,
+            })
+        });
     parse_elm_whitespace_and_comments(state);
-    let maybe_exposing = parse_elm_syntax_exposing(state);
+    let maybe_exposing: Option<ElmSyntaxExposing> = parse_elm_syntax_exposing(state);
     let end_position: lsp_types::Position = maybe_exposing
         .as_ref()
         .map(|exposing| {
@@ -8823,6 +8829,7 @@ fn parse_elm_syntax_import_node(state: &mut ParseState) -> Option<ElmSyntaxNode<
                     .unwrap_or_else(|| alias.as_keyword_range.end)
             })
         })
+        .or_else(|| maybe_module_name_node.as_ref().map(|node| node.range.end))
         .unwrap_or_else(|| import_keyword_range.end);
     Some(ElmSyntaxNode {
         range: lsp_types::Range {
