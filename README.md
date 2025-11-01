@@ -1,6 +1,6 @@
 > Status: **not ready for use but trying it on small projects probably works**
 
-A minimal LSP language server for [elm](https://elm-lang.org/), written in rust and elm (which itself gets transpiled into rust when building).
+A minimal LSP language server for [elm](https://elm-lang.org/), written in rust.
 
 ## goals
 - fast
@@ -20,12 +20,14 @@ A minimal LSP language server for [elm](https://elm-lang.org/), written in rust 
 - inline GLSL blocks
 
 ## not sure
+Please give me feedback on this
 - adding necessary imports when autocompleting
 - your idea 👀
 
 ## TODO
 - do not suggest member names already listed in explicit exposing
 - trigger autocomplete on . without name
+- remove elm part to make the project easier to build
 - incremental reparsing
 - show errors inline
 - support elm projects with non-root `elm.json`
