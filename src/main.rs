@@ -8415,18 +8415,10 @@ fn parse_until_including_symbol_or_excluding_end_of_line(
 }
 
 fn parse_elm_whitespace_and_comments(state: &mut ParseState) {
-    'while_whitespace: loop {
-        if let Some(next_char) = state.source[state.offset_utf8..].chars().next()
-            && next_char.is_whitespace()
-        {
-            state.offset_utf8 += next_char.len_utf8();
-            state.position.character += next_char.len_utf8() as u32;
-        } else if parse_linebreak(state) {
-        } else if parse_elm_comment(state) {
-        } else {
-            break 'while_whitespace;
-        }
-    }
+    while parse_linebreak(state)
+        || parse_same_line_char_if(state, |c| c.is_whitespace())
+        || parse_elm_comment(state)
+    {}
 }
 fn parse_elm_comment(state: &mut ParseState) -> bool {
     parse_elm_comment_until_linebreak(state) || parse_elm_comment_block(state)
