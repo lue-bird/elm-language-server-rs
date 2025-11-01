@@ -2,12 +2,11 @@
 
 A minimal LSP language server for [elm](https://elm-lang.org/), written in rust.
 
-## installation
-after [installing rust](https://rust-lang.org/tools/install/)
+To use, [install rust](https://rust-lang.org/tools/install/), clone this project and run
 ```bash
 cargo build --release
 ```
-and point your editor to the created `target/release/elm-language-server-rs`.
+Now you can point your editor to the created `target/release/elm-language-server-rs`.
 If you're using vs code (or forks) (which do not appear to have a built-in way to just integrate a language server) you can use extensions like https://github.com/mjmorales/vscode-generic-lsp-proxy
 
 ## goals
