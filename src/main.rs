@@ -4403,7 +4403,10 @@ fn elm_syntax_declaration_find_reference_at_position<'a>(
                     maybe_signature
                         .as_ref()
                         .and_then(|signature: &ElmSyntaxVariableDeclarationSignature| {
-                            if lsp_range_includes_position(start_name_node.range, position) {
+                            if let Some(implementation_name_range) =
+                                signature.implementation_name_range
+                                && lsp_range_includes_position(implementation_name_range, position)
+                            {
                                 Some(ElmSyntaxNode {
                                     value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
                                         module_origin: origin_module,
@@ -6804,18 +6807,23 @@ fn elm_syntax_highlight_module_into(
     if let Some(module_header) = &elm_syntax_module.header {
         elm_syntax_highlight_module_header_into(highlighted_so_far, module_header);
     }
+    if let Some(documentation_node) = &elm_syntax_module.documentation {
+        highlighted_so_far.extend(elm_syntax_highlight_and_comment(
+            elm_syntax_node_as_ref(documentation_node),
+            3,
+            2,
+        ));
+    }
     for import_node in elm_syntax_module.imports.iter() {
         elm_syntax_highlight_import_into(highlighted_so_far, elm_syntax_node_as_ref(import_node));
     }
     for documented_declaration in elm_syntax_module.declarations.iter() {
-        match documented_declaration.documentation {
-            None => {}
-            Some(ref documentation_node) => {
-                elm_syntax_highlight_comment_into(
-                    highlighted_so_far,
-                    elm_syntax_node_as_ref(documentation_node),
-                );
-            }
+        if let Some(documentation_node) = &documented_declaration.documentation {
+            highlighted_so_far.extend(elm_syntax_highlight_and_comment(
+                elm_syntax_node_as_ref(documentation_node),
+                3,
+                2,
+            ));
         }
         if let Some(declaration_node) = &documented_declaration.declaration {
             elm_syntax_highlight_declaration_into(
@@ -6828,12 +6836,9 @@ fn elm_syntax_highlight_module_into(
     // A possible solution (when comment count exceeds other syntax by some factor) is just pushing all comments an sorting the whole thing at once.
     // Feels like overkill, though so I'll hold on on this until issues are opened :)
     for comment_node in elm_syntax_module.comments.iter() {
-        elm_syntax_highlight_comment_into(
+        elm_syntax_highlight_and_place_comment_into(
             highlighted_so_far,
-            ElmSyntaxNode {
-                range: comment_node.range,
-                value: &comment_node.value.content,
-            },
+            elm_syntax_node_as_ref(comment_node),
         );
     }
 }
@@ -6940,51 +6945,87 @@ fn elm_syntax_highlight_module_header_into(
     }
 }
 
-fn elm_syntax_highlight_comment_into(
+fn elm_syntax_highlight_and_place_comment_into(
     highlighted_so_far: &mut Vec<ElmSyntaxNode<ElmSyntaxHighlightKind>>,
-    elm_syntax_comment_node: ElmSyntaxNode<&String>,
+    elm_syntax_comment_node: ElmSyntaxNode<&ElmSyntaxComment>,
 ) {
     let insert_index: usize = highlighted_so_far
         .binary_search_by(|token| {
             lsp_position_compare(token.range.start, elm_syntax_comment_node.range.start)
         })
         .unwrap_or_else(|i| i);
-    let tokens_to_insert =
-        elm_syntax_comment_node
-            .value
-            .lines()
-            .enumerate()
-            .map(|(inner_line, inner_line_str)| {
-                let line = elm_syntax_comment_node.range.start.line + (inner_line as u32);
+    match elm_syntax_comment_node.value.kind {
+        ElmSyntaxCommentKind::UntilLinebreak => {
+            highlighted_so_far.insert(
+                insert_index,
                 ElmSyntaxNode {
-                    range: if inner_line == 0 {
-                        lsp_types::Range {
-                            start: elm_syntax_comment_node.range.start,
-                            end: lsp_position_add_characters(
-                                elm_syntax_comment_node.range.start,
-                                inner_line_str.len() as i32,
-                            ),
-                        }
-                    } else {
-                        lsp_types::Range {
-                            start: lsp_types::Position {
-                                line: line,
-                                character: 0,
-                            },
-                            end: if line == elm_syntax_comment_node.range.end.line {
-                                elm_syntax_comment_node.range.end
-                            } else {
-                                lsp_types::Position {
-                                    line: line,
-                                    character: inner_line_str.len() as u32,
-                                }
-                            },
-                        }
-                    },
+                    range: elm_syntax_comment_node.range,
                     value: ElmSyntaxHighlightKind::Comment,
-                }
-            });
-    highlighted_so_far.splice(insert_index..insert_index, tokens_to_insert);
+                },
+            );
+        }
+        ElmSyntaxCommentKind::Block => {
+            highlighted_so_far.splice(
+                insert_index..insert_index,
+                elm_syntax_highlight_and_comment(
+                    ElmSyntaxNode {
+                        range: elm_syntax_comment_node.range,
+                        value: &elm_syntax_comment_node.value.content,
+                    },
+                    2,
+                    2,
+                ),
+            );
+        }
+    }
+}
+fn elm_syntax_highlight_and_comment(
+    elm_syntax_comment_node: ElmSyntaxNode<&String>,
+    characters_before_content: usize,
+    characters_after_content: usize,
+) -> impl Iterator<Item = ElmSyntaxNode<ElmSyntaxHighlightKind>> {
+    elm_syntax_comment_node
+        .value
+        .lines()
+        .chain(
+            // str::lines() eats the last linebreak. Restore it
+            if elm_syntax_comment_node.value.ends_with("\n") {
+                Some("\n").into_iter()
+            } else {
+                None.into_iter()
+            },
+        )
+        .enumerate()
+        .map(move |(inner_line, inner_line_str)| {
+            let line = elm_syntax_comment_node.range.start.line + (inner_line as u32);
+            ElmSyntaxNode {
+                range: if inner_line == 0 {
+                    lsp_types::Range {
+                        start: elm_syntax_comment_node.range.start,
+                        end: lsp_position_add_characters(
+                            elm_syntax_comment_node.range.start,
+                            (characters_before_content + inner_line_str.len()) as i32,
+                        ),
+                    }
+                } else {
+                    lsp_types::Range {
+                        start: lsp_types::Position {
+                            line: line,
+                            character: 0,
+                        },
+                        end: if line == elm_syntax_comment_node.range.end.line {
+                            elm_syntax_comment_node.range.end
+                        } else {
+                            lsp_types::Position {
+                                line: line,
+                                character: (inner_line_str.len() + characters_after_content) as u32,
+                            }
+                        },
+                    }
+                },
+                value: ElmSyntaxHighlightKind::Comment,
+            }
+        })
 }
 
 fn elm_syntax_highlight_import_into(
@@ -7096,24 +7137,28 @@ fn elm_syntax_highlight_declaration_into(
             equals_key_symbol_range: maybe_equals_key_symbol_range,
             result: maybe_result,
         } => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: start_name_node.range,
+                value: ElmSyntaxHighlightKind::VariableDeclaration,
+            });
             if let Some(signature) = maybe_signature {
-                if let Some(implementation_name_range) = signature.implementation_name_range {
-                    highlighted_so_far.push(ElmSyntaxNode {
-                        range: implementation_name_range,
-                        value: ElmSyntaxHighlightKind::VariableDeclaration,
-                    });
-                }
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: signature.colon_key_symbol_range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
                 if let Some(signature_type_node) = &signature.type_ {
                     elm_syntax_highlight_type_into(
                         highlighted_so_far,
                         elm_syntax_node_as_ref(signature_type_node),
                     );
                 }
+                if let Some(implementation_name_range) = signature.implementation_name_range {
+                    highlighted_so_far.push(ElmSyntaxNode {
+                        range: implementation_name_range,
+                        value: ElmSyntaxHighlightKind::VariableDeclaration,
+                    });
+                }
             }
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: start_name_node.range,
-                value: ElmSyntaxHighlightKind::VariableDeclaration,
-            });
             for parameter_node in parameters {
                 elm_syntax_highlight_pattern_into(
                     highlighted_so_far,
@@ -7225,10 +7270,7 @@ fn elm_syntax_highlight_declaration_into(
             }
             if let Some(operator_node) = maybe_operator {
                 highlighted_so_far.push(ElmSyntaxNode {
-                    range: lsp_types::Range {
-                        start: lsp_position_add_characters(operator_node.range.start, 1),
-                        end: lsp_position_add_characters(operator_node.range.end, -1),
-                    },
+                    range: operator_node.range,
                     value: ElmSyntaxHighlightKind::KeySymbol,
                 });
             }
@@ -8426,20 +8468,23 @@ fn parse_elm_comment(state: &mut ParseState) -> bool {
 fn parse_elm_comment_until_linebreak(state: &mut ParseState) -> bool {
     let position_before: lsp_types::Position = state.position;
     if parse_symbol(state, "--") {
-        let comment: &str = state.source[state.offset_utf8..]
+        let comment: String = state.source[state.offset_utf8..]
             .lines()
             .next()
-            .unwrap_or("");
+            .unwrap_or("")
+            .to_string();
         state.offset_utf8 += comment.len();
-        state.position.line += 1;
-        state.position.character = 0;
+        state.position.character += comment.len() as u32;
+        let full_range: lsp_types::Range = lsp_types::Range {
+            start: position_before,
+            end: state.position,
+        };
+        // because comment.len() does not include the line break
+        let _: bool = parse_linebreak(state);
         state.comments.push(ElmSyntaxNode {
-            range: lsp_types::Range {
-                start: position_before,
-                end: state.position,
-            },
+            range: full_range,
             value: ElmSyntaxComment {
-                content: comment.to_string(),
+                content: comment,
                 kind: ElmSyntaxCommentKind::UntilLinebreak,
             },
         });
@@ -8577,13 +8622,14 @@ fn parse_elm_uppercase_possibly_dot_separated_node(
 ) -> Option<ElmSyntaxNode<String>> {
     // implementation note: state will only be updated at the very end,
     // offset is instead tracked in the variable below:
-    let mut current_offset_utf8: usize = state.offset_utf8;
-    if state.source[current_offset_utf8..].starts_with(char::is_uppercase) {
-        current_offset_utf8 += 1;
+    // TODO switch to state being modified throughout
+    if state.source[state.offset_utf8..].starts_with(char::is_uppercase) {
+        let mut current_offset_utf8: usize = state.offset_utf8 + 1;
         current_offset_utf8 += state.source[current_offset_utf8..]
             .chars()
             .take_while(|&c| c.is_alphanumeric() || c == '_')
-            .count();
+            .map(|c| c.len_utf8())
+            .sum::<usize>();
         'from_dots: loop {
             let mut next_chars: std::str::Chars = state.source[current_offset_utf8..].chars();
             if (next_chars.next() == Some('.'))
@@ -8593,7 +8639,8 @@ fn parse_elm_uppercase_possibly_dot_separated_node(
                 current_offset_utf8 += state.source[current_offset_utf8..]
                     .chars()
                     .take_while(|&c| c.is_alphanumeric() || c == '_')
-                    .count();
+                    .map(|c| c.len_utf8())
+                    .sum::<usize>();
             } else {
                 break 'from_dots;
             }
@@ -8965,6 +9012,7 @@ fn parse_elm_syntax_type_record_or_record_extension(
             fields.push(field0);
             parse_elm_whitespace_and_comments(state);
             'parsing_field1_up: while parse_symbol(state, ",") {
+                parse_elm_whitespace_and_comments(state);
                 match parse_elm_syntax_type_field(state) {
                     None => {
                         break 'parsing_field1_up;
@@ -8994,6 +9042,7 @@ fn parse_elm_syntax_type_record_or_record_extension(
         }];
         parse_elm_whitespace_and_comments(state);
         'parsing_field1_up: while parse_symbol(state, ",") {
+            parse_elm_whitespace_and_comments(state);
             match parse_elm_syntax_type_field(state) {
                 None => {
                     break 'parsing_field1_up;
@@ -9033,7 +9082,7 @@ fn parse_elm_syntax_type_construct_node(
     let mut construct_end_position: lsp_types::Position = reference_node.range.end;
     'parsing_arguments: loop {
         parse_elm_whitespace_and_comments(state);
-        if state.position.character < state.indent as u32 {
+        if state.position.character <= state.indent as u32 {
             break 'parsing_arguments;
         }
         match parse_elm_syntax_type_not_space_separated_node(state) {
@@ -9623,7 +9672,7 @@ fn parse_elm_syntax_expression_call_or_not_space_separated_node(
             let mut construct_end_position: lsp_types::Position = argument0_node.range.end;
             'parsing_argument1_up: loop {
                 parse_elm_whitespace_and_comments(state);
-                if state.position.character < state.indent as u32 {
+                if state.position.character <= state.indent as u32 {
                     break 'parsing_argument1_up;
                 }
                 match parse_elm_syntax_expression_not_space_separated_node(state) {
@@ -9784,6 +9833,7 @@ fn parse_elm_syntax_expression_record_or_record_update(
             fields.push(field0);
             parse_elm_whitespace_and_comments(state);
             'parsing_field1_up: while parse_symbol(state, ",") {
+                parse_elm_whitespace_and_comments(state);
                 match parse_elm_syntax_expression_field(state) {
                     None => {
                         break 'parsing_field1_up;
@@ -9814,6 +9864,7 @@ fn parse_elm_syntax_expression_record_or_record_update(
         }];
         parse_elm_whitespace_and_comments(state);
         'parsing_field1_up: while parse_symbol(state, ",") {
+            parse_elm_whitespace_and_comments(state);
             match parse_elm_syntax_expression_field(state) {
                 None => {
                     break 'parsing_field1_up;
@@ -9971,7 +10022,7 @@ fn parse_elm_syntax_expression_case_of(
         },
         Some(of_keyword_range) => {
             parse_elm_whitespace_and_comments(state);
-            if state.position.character < state.indent as u32 {
+            if state.position.character <= state.indent as u32 {
                 ElmSyntaxNode {
                     range: lsp_types::Range {
                         start: case_keyword_range.start,
@@ -10014,7 +10065,7 @@ fn parse_elm_syntax_expression_case_of(
     })
 }
 fn parse_elm_syntax_expression_case(state: &mut ParseState) -> Option<ElmSyntaxExpressionCase> {
-    if state.position.character < state.indent as u32 {
+    if state.position.character <= state.indent as u32 {
         return None;
     }
     let case_pattern_node: ElmSyntaxNode<ElmSyntaxPattern> =
@@ -10043,7 +10094,7 @@ fn parse_elm_syntax_expression_let_in(
 ) -> Option<ElmSyntaxNode<ElmSyntaxExpression>> {
     let let_keyword_range: lsp_types::Range = parse_symbol_as_range(state, "let")?;
     parse_elm_whitespace_and_comments(state);
-    Some(if state.position.character < state.indent as u32 {
+    Some(if state.position.character <= state.indent as u32 {
         ElmSyntaxNode {
             range: let_keyword_range,
             value: ElmSyntaxExpression::LetIn {
@@ -10439,7 +10490,7 @@ fn parse_elm_syntax_declaration_choice_type_or_type_alias_node(
                 .unwrap_or(syntax_before_equals_key_symbol_end_location);
             'parsing_arguments: loop {
                 parse_elm_whitespace_and_comments(state);
-                if state.position.character < state.indent as u32 {
+                if state.position.character <= state.indent as u32 {
                     break 'parsing_arguments;
                 }
                 match parse_elm_syntax_type_not_space_separated_node(state) {
@@ -10489,7 +10540,7 @@ fn parse_elm_syntax_choice_type_declaration_trailing_variant_node(
         .unwrap_or_else(|| or_key_symbol_range.end);
     'parsing_arguments: loop {
         parse_elm_whitespace_and_comments(state);
-        if state.position.character < state.indent as u32 {
+        if state.position.character <= state.indent as u32 {
             break 'parsing_arguments;
         }
         match parse_elm_syntax_type_not_space_separated_node(state) {
@@ -10619,6 +10670,7 @@ fn parse_elm_syntax_module(module_source: String) -> ElmSyntaxModule {
     'parsing_declarations: loop {
         match parse_elm_syntax_documented_declaration(&mut state) {
             Some(documented_declaration) => {
+                eprintln!("parsed declaration #{}", declarations.len());
                 declarations.push(documented_declaration);
                 parse_elm_whitespace_and_comments(&mut state);
             }
@@ -10629,6 +10681,10 @@ fn parse_elm_syntax_module(module_source: String) -> ElmSyntaxModule {
             }
         }
     }
+    eprintln!(
+        "done parsing {}",
+        state.source.chars().take(14).collect::<String>()
+    );
     ElmSyntaxModule {
         header: maybe_header,
         documentation: maybe_module_documentation,
