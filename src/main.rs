@@ -3125,7 +3125,7 @@ enum ElmSyntaxExposingSpecific {
 enum ElmSyntaxExpose {
     ChoiceTypeIncludingVariants {
         name: ElmSyntaxNode<String>,
-        open_range: lsp_types::Range,
+        open_range: Option<lsp_types::Range>,
     },
     Operator(Option<ElmSyntaxNode<&'static str>>),
     Type(String),
@@ -7087,16 +7087,18 @@ fn elm_syntax_highlight_exposing_into(
                 match &expose_node.value {
                     ElmSyntaxExpose::ChoiceTypeIncludingVariants {
                         name: type_name_node,
-                        open_range,
+                        open_range: maybe_open_range,
                     } => {
                         highlighted_so_far.push(ElmSyntaxNode {
                             range: type_name_node.range,
                             value: ElmSyntaxHighlightKind::Type,
                         });
-                        highlighted_so_far.push(ElmSyntaxNode {
-                            range: *open_range,
-                            value: ElmSyntaxHighlightKind::Variant,
-                        });
+                        if let &Some(open_range) = maybe_open_range {
+                            highlighted_so_far.push(ElmSyntaxNode {
+                                range: open_range,
+                                value: ElmSyntaxHighlightKind::Variant,
+                            });
+                        }
                     }
                     ElmSyntaxExpose::Operator(_) => {
                         highlighted_so_far.push(ElmSyntaxNode {
@@ -8197,27 +8199,28 @@ fn elm_syntax_highlight_let_declaration_into(
             equals_key_symbol_range: maybe_equals_key_symbol_range,
             result: maybe_result,
         } => {
-            match maybe_signature {
-                None => {}
-                Some(signature) => {
-                    if let Some(implementation_name_range) = signature.implementation_name_range {
-                        highlighted_so_far.push(ElmSyntaxNode {
-                            range: implementation_name_range,
-                            value: ElmSyntaxHighlightKind::VariableDeclaration,
-                        });
-                    }
-                    if let Some(signature_type_node) = &signature.type_ {
-                        elm_syntax_highlight_type_into(
-                            highlighted_so_far,
-                            elm_syntax_node_as_ref(signature_type_node),
-                        );
-                    }
-                }
-            }
             highlighted_so_far.push(ElmSyntaxNode {
                 range: start_name_node.range,
                 value: ElmSyntaxHighlightKind::VariableDeclaration,
             });
+            if let Some(signature) = maybe_signature {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: signature.colon_key_symbol_range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+                if let Some(signature_type_node) = &signature.type_ {
+                    elm_syntax_highlight_type_into(
+                        highlighted_so_far,
+                        elm_syntax_node_as_ref(signature_type_node),
+                    );
+                }
+                if let Some(implementation_name_range) = signature.implementation_name_range {
+                    highlighted_so_far.push(ElmSyntaxNode {
+                        range: implementation_name_range,
+                        value: ElmSyntaxHighlightKind::VariableDeclaration,
+                    });
+                }
+            }
             for parameter_node in parameters {
                 elm_syntax_highlight_pattern_into(
                     highlighted_so_far,
@@ -8467,31 +8470,30 @@ fn parse_elm_comment(state: &mut ParseState) -> bool {
 }
 fn parse_elm_comment_until_linebreak(state: &mut ParseState) -> bool {
     let position_before: lsp_types::Position = state.position;
-    if parse_symbol(state, "--") {
-        let comment: String = state.source[state.offset_utf8..]
-            .lines()
-            .next()
-            .unwrap_or("")
-            .to_string();
-        state.offset_utf8 += comment.len();
-        state.position.character += comment.len() as u32;
-        let full_range: lsp_types::Range = lsp_types::Range {
-            start: position_before,
-            end: state.position,
-        };
-        // because comment.len() does not include the line break
-        let _: bool = parse_linebreak(state);
-        state.comments.push(ElmSyntaxNode {
-            range: full_range,
-            value: ElmSyntaxComment {
-                content: comment,
-                kind: ElmSyntaxCommentKind::UntilLinebreak,
-            },
-        });
-        true
-    } else {
-        false
+    if !parse_symbol(state, "--") {
+        return false;
     }
+    let comment: String = state.source[state.offset_utf8..]
+        .lines()
+        .next()
+        .unwrap_or("")
+        .to_string();
+    state.offset_utf8 += comment.len();
+    state.position.character += comment.len() as u32;
+    let full_range: lsp_types::Range = lsp_types::Range {
+        start: position_before,
+        end: state.position,
+    };
+    // because comment.len() does not include the line break
+    let _: bool = parse_linebreak(state);
+    state.comments.push(ElmSyntaxNode {
+        range: full_range,
+        value: ElmSyntaxComment {
+            content: comment,
+            kind: ElmSyntaxCommentKind::UntilLinebreak,
+        },
+    });
+    true
 }
 /// does not parse documentation comment (starting with {-|)
 fn parse_elm_comment_block(state: &mut ParseState) -> bool {
@@ -8667,12 +8669,8 @@ fn parse_elm_uppercase_possibly_dot_separated_node(
 fn parse_elm_operator_node(state: &mut ParseState) -> Option<ElmSyntaxNode<&'static str>> {
     // can be optimized by only slicing once for each symbol length
     let start_position = state.position;
-    parse_symbol_as_str(state, "<")
-        .or_else(|| parse_symbol_as_str(state, ">"))
-        .or_else(|| parse_symbol_as_str(state, "+"))
-        .or_else(|| parse_symbol_as_str(state, "*"))
-        .or_else(|| parse_symbol_as_str(state, "/"))
-        .or_else(|| parse_symbol_as_str(state, "^"))
+    parse_symbol_as_str(state, "</>")
+        .or_else(|| parse_symbol_as_str(state, "<?>"))
         .or_else(|| parse_symbol_as_str(state, "=="))
         .or_else(|| parse_symbol_as_str(state, "/="))
         .or_else(|| parse_symbol_as_str(state, "::"))
@@ -8688,8 +8686,13 @@ fn parse_elm_operator_node(state: &mut ParseState) -> Option<ElmSyntaxNode<&'sta
         .or_else(|| parse_symbol_as_str(state, "//"))
         .or_else(|| parse_symbol_as_str(state, "<<"))
         .or_else(|| parse_symbol_as_str(state, ">>"))
-        .or_else(|| parse_symbol_as_str(state, "</>"))
-        .or_else(|| parse_symbol_as_str(state, "<?>"))
+        .or_else(|| parse_symbol_as_str(state, "<"))
+        .or_else(|| parse_symbol_as_str(state, ">"))
+        .or_else(|| parse_symbol_as_str(state, "+"))
+        .or_else(|| parse_symbol_as_str(state, "-"))
+        .or_else(|| parse_symbol_as_str(state, "*"))
+        .or_else(|| parse_symbol_as_str(state, "/"))
+        .or_else(|| parse_symbol_as_str(state, "^"))
         .map(|parsed_symbol| ElmSyntaxNode {
             range: lsp_types::Range {
                 start: start_position,
@@ -8698,46 +8701,93 @@ fn parse_elm_operator_node(state: &mut ParseState) -> Option<ElmSyntaxNode<&'sta
             value: parsed_symbol,
         })
 }
-fn parse_elm_syntax_expose(state: &mut ParseState) -> Option<ElmSyntaxExpose> {
+fn parse_elm_operator_followed_by_closing_paren(
+    state: &mut ParseState,
+) -> Option<ElmSyntaxNode<&'static str>> {
+    // can be optimized by only slicing once for each symbol length
+    let start_position = state.position;
+    parse_symbol_as(state, "</>)", "</>")
+        .or_else(|| parse_symbol_as(state, "<?>)", "<?>"))
+        .or_else(|| parse_symbol_as(state, "==)", "=="))
+        .or_else(|| parse_symbol_as(state, "/=)", "/="))
+        .or_else(|| parse_symbol_as(state, "::)", "::"))
+        .or_else(|| parse_symbol_as(state, "++)", "++"))
+        .or_else(|| parse_symbol_as(state, "<|)", "<|"))
+        .or_else(|| parse_symbol_as(state, "|>)", "|>"))
+        .or_else(|| parse_symbol_as(state, "||)", "||"))
+        .or_else(|| parse_symbol_as(state, "&&)", "&&"))
+        .or_else(|| parse_symbol_as(state, "<=)", "<="))
+        .or_else(|| parse_symbol_as(state, ">=)", ">="))
+        .or_else(|| parse_symbol_as(state, "|=)", "|="))
+        .or_else(|| parse_symbol_as(state, "|.)", "|."))
+        .or_else(|| parse_symbol_as(state, "//)", "//"))
+        .or_else(|| parse_symbol_as(state, "<<)", "<<"))
+        .or_else(|| parse_symbol_as(state, ">>)", ">>"))
+        .or_else(|| parse_symbol_as(state, "<)", "<"))
+        .or_else(|| parse_symbol_as(state, ">)", ">"))
+        .or_else(|| parse_symbol_as(state, "+)", "+"))
+        .or_else(|| parse_symbol_as(state, "-)", "-"))
+        .or_else(|| parse_symbol_as(state, "*)", "*"))
+        .or_else(|| parse_symbol_as(state, "/)", "/"))
+        .or_else(|| parse_symbol_as(state, "^)", "^"))
+        .map(|parsed_symbol| ElmSyntaxNode {
+            range: lsp_types::Range {
+                start: start_position,
+                end: state.position,
+            },
+            value: parsed_symbol,
+        })
+}
+
+fn parse_elm_syntax_expose_node(state: &mut ParseState) -> Option<ElmSyntaxNode<ElmSyntaxExpose>> {
+    let start_position: lsp_types::Position = state.position;
     if parse_symbol(state, "(") {
         parse_elm_whitespace_and_comments(state);
-        let maybe_operator_symbol = parse_elm_operator_node(state);
+        let maybe_operator_symbol: Option<ElmSyntaxNode<&str>> = parse_elm_operator_node(state);
         parse_elm_whitespace_and_comments(state);
         parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, ")");
-        Some(ElmSyntaxExpose::Operator(maybe_operator_symbol))
+        Some(ElmSyntaxNode {
+            range: lsp_types::Range {
+                start: start_position,
+                end: state.position,
+            },
+            value: ElmSyntaxExpose::Operator(maybe_operator_symbol),
+        })
     } else if let Some(variable_name) = parse_elm_lowercase_as_string(state) {
-        Some(ElmSyntaxExpose::Variable(variable_name))
+        Some(ElmSyntaxNode {
+            range: lsp_types::Range {
+                start: start_position,
+                end: state.position,
+            },
+            value: ElmSyntaxExpose::Variable(variable_name),
+        })
     } else if let Some(type_name_node) = parse_elm_uppercase_node(state) {
         parse_elm_whitespace_and_comments(state);
-        let maybe_open_range = if parse_symbol(state, "(") {
+        if parse_symbol(state, "(") {
             parse_elm_whitespace_and_comments(state);
-            parse_symbol_as_range(state, "..").and_then(|exposing_variants_range| {
-                parse_elm_whitespace_and_comments(state);
-                parse_symbol_as(state, ")", exposing_variants_range)
+            let maybe_exposing_variants_range: Option<lsp_types::Range> =
+                parse_symbol_as_range(state, "..");
+            parse_elm_whitespace_and_comments(state);
+            parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, ")");
+            Some(ElmSyntaxNode {
+                range: lsp_types::Range {
+                    start: start_position,
+                    end: state.position,
+                },
+                value: ElmSyntaxExpose::ChoiceTypeIncludingVariants {
+                    name: type_name_node,
+                    open_range: maybe_exposing_variants_range,
+                },
             })
         } else {
-            None
-        };
-        match maybe_open_range {
-            None => Some(ElmSyntaxExpose::Type(type_name_node.value)),
-            Some(exposing_variants_range) => Some(ElmSyntaxExpose::ChoiceTypeIncludingVariants {
-                name: type_name_node,
-                open_range: exposing_variants_range,
-            }),
+            Some(ElmSyntaxNode {
+                range: type_name_node.range,
+                value: ElmSyntaxExpose::Type(type_name_node.value),
+            })
         }
     } else {
         None
     }
-}
-fn parse_elm_syntax_expose_node(state: &mut ParseState) -> Option<ElmSyntaxNode<ElmSyntaxExpose>> {
-    let start_position = state.position;
-    parse_elm_syntax_expose(state).map(|expose| ElmSyntaxNode {
-        range: lsp_types::Range {
-            start: start_position,
-            end: state.position,
-        },
-        value: expose,
-    })
 }
 
 fn parse_elm_syntax_import_node(state: &mut ParseState) -> Option<ElmSyntaxNode<ElmSyntaxImport>> {
@@ -9626,12 +9676,17 @@ fn parse_elm_text_content_char(state: &mut ParseState) -> Option<char> {
 fn parse_elm_syntax_expression_space_separated_node(
     state: &mut ParseState,
 ) -> Option<ElmSyntaxNode<ElmSyntaxExpression>> {
-    match parse_elm_syntax_expression_call_or_not_space_separated_node(state) {
-        Some(left_node) => {
+    parse_elm_syntax_expression_if_then_else(state)
+        .or_else(|| parse_elm_syntax_expression_case_of(state))
+        .or_else(|| parse_elm_syntax_expression_let_in(state))
+        .or_else(|| parse_elm_syntax_expression_lambda(state))
+        .or_else(|| {
+            let left_node = parse_elm_syntax_expression_call_or_not_space_separated_node(state)?;
             parse_elm_whitespace_and_comments(state);
             Some(match parse_elm_operator_node(state) {
                 None => left_node,
                 Some(operator_node) => {
+                    parse_elm_whitespace_and_comments(state);
                     let maybe_right: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
                         parse_elm_syntax_expression_space_separated_node(state);
                     ElmSyntaxNode {
@@ -9650,12 +9705,7 @@ fn parse_elm_syntax_expression_space_separated_node(
                     }
                 }
             })
-        }
-        None => parse_elm_syntax_expression_if_then_else(state)
-            .or_else(|| parse_elm_syntax_expression_case_of(state))
-            .or_else(|| parse_elm_syntax_expression_let_in(state))
-            .or_else(|| parse_elm_syntax_expression_lambda(state)),
-    }
+        })
 }
 fn parse_elm_syntax_expression_call_or_not_space_separated_node(
     state: &mut ParseState,
@@ -9664,12 +9714,12 @@ fn parse_elm_syntax_expression_call_or_not_space_separated_node(
         parse_elm_syntax_expression_not_space_separated_node(state)?;
     parse_elm_whitespace_and_comments(state);
     Some(
-        if (state.position.character >= state.indent as u32)
+        if (state.position.character > state.indent as u32)
             && let Some(argument0_node) =
                 parse_elm_syntax_expression_not_space_separated_node(state)
         {
             let mut argument1_up: Vec<ElmSyntaxNode<ElmSyntaxExpression>> = Vec::new();
-            let mut construct_end_position: lsp_types::Position = argument0_node.range.end;
+            let mut call_end_position: lsp_types::Position = argument0_node.range.end;
             'parsing_argument1_up: loop {
                 parse_elm_whitespace_and_comments(state);
                 if state.position.character <= state.indent as u32 {
@@ -9680,7 +9730,7 @@ fn parse_elm_syntax_expression_call_or_not_space_separated_node(
                         break 'parsing_argument1_up;
                     }
                     Some(argument_node) => {
-                        construct_end_position = argument_node.range.end;
+                        call_end_position = argument_node.range.end;
                         argument1_up.push(argument_node);
                     }
                 }
@@ -9688,7 +9738,7 @@ fn parse_elm_syntax_expression_call_or_not_space_separated_node(
             ElmSyntaxNode {
                 range: lsp_types::Range {
                     start: called_node.range.start,
-                    end: construct_end_position,
+                    end: call_end_position,
                 },
                 value: ElmSyntaxExpression::Call {
                     called: elm_syntax_node_box(called_node),
@@ -9720,7 +9770,7 @@ fn parse_elm_syntax_expression_not_space_separated_node(
             .or_else(|| parse_elm_syntax_expression_number(state))
             .or_else(|| parse_elm_char(state).map(ElmSyntaxExpression::Char))
             .or_else(|| parse_elm_syntax_expression_negation(state))?;
-    let mut result_node = ElmSyntaxNode {
+    let mut result_node: ElmSyntaxNode<ElmSyntaxExpression> = ElmSyntaxNode {
         range: lsp_types::Range {
             start: start_position,
             end: state.position,
@@ -9753,6 +9803,15 @@ fn parse_elm_syntax_expression_record_access_function(
     ))
 }
 fn parse_elm_syntax_expression_negation(state: &mut ParseState) -> Option<ElmSyntaxExpression> {
+    if state.source[state.offset_utf8..]
+        .chars()
+        .skip(1)
+        .next()
+        .is_some_and(char::is_whitespace)
+    {
+        // exit if - is followed by whitespace, as that means it is a subtraction operation instead
+        return None;
+    }
     if !parse_symbol(state, "-") {
         return None;
     }
@@ -9760,11 +9819,21 @@ fn parse_elm_syntax_expression_negation(state: &mut ParseState) -> Option<ElmSyn
         parse_elm_syntax_expression_not_space_separated_node(state).map(elm_syntax_node_box),
     ))
 }
+fn str_starts_with_keyword(source: &str, keyword: &'static str) -> bool {
+    source.starts_with(keyword)
+        && source
+            .chars()
+            .skip(keyword.len())
+            .next()
+            .is_some_and(|c| c != '_' && !c.is_alphanumeric())
+}
 fn parse_elm_syntax_expression_reference(state: &mut ParseState) -> Option<ElmSyntaxExpression> {
-    if parse_symbol(state, "in")
-        || parse_symbol(state, "of")
-        || parse_symbol(state, "then")
-        || parse_symbol(state, "else")
+    // can be optimized by e.g. adding a non-state-mutating parse_elm_lowercase_as_string
+    // that checks for keywords on successful chomp and returns None only then (and if no keyword, mutate the state)
+    if str_starts_with_keyword(&state.source[state.offset_utf8..], "in")
+        || str_starts_with_keyword(&state.source[state.offset_utf8..], "of")
+        || str_starts_with_keyword(&state.source[state.offset_utf8..], "then")
+        || str_starts_with_keyword(&state.source[state.offset_utf8..], "else")
     {
         return None;
     }
@@ -10065,7 +10134,7 @@ fn parse_elm_syntax_expression_case_of(
     })
 }
 fn parse_elm_syntax_expression_case(state: &mut ParseState) -> Option<ElmSyntaxExpressionCase> {
-    if state.position.character <= state.indent as u32 {
+    if state.position.character < state.indent as u32 {
         return None;
     }
     let case_pattern_node: ElmSyntaxNode<ElmSyntaxPattern> =
@@ -10151,6 +10220,9 @@ fn parse_elm_syntax_expression_let_in(
 fn parse_elm_syntax_let_declaration(
     state: &mut ParseState,
 ) -> Option<ElmSyntaxNode<ElmSyntaxLetDeclaration>> {
+    if state.position.character < state.indent as u32 {
+        return None;
+    }
     parse_elm_syntax_let_variable_declaration(state)
         .or_else(|| parse_elm_syntax_let_destructuring(state))
 }
@@ -10202,7 +10274,11 @@ fn parse_elm_syntax_let_variable_declaration(
                 parse_elm_syntax_type_space_separated_node(state);
             parse_elm_whitespace_and_comments(state);
             let maybe_implementation_name_range: Option<lsp_types::Range> =
-                parse_symbol_as_range(state, &start_name_node.value);
+                if state.position.character < state.indent as u32 {
+                    None
+                } else {
+                    parse_symbol_as_range(state, &start_name_node.value)
+                };
             parse_elm_whitespace_and_comments(state);
             ElmSyntaxVariableDeclarationSignature {
                 colon_key_symbol_range: colon_key_symbol_range,
@@ -10291,8 +10367,8 @@ fn parse_elm_syntax_expression_operator_function_or_parenthesized_or_tuple_or_tr
     }
     parse_elm_whitespace_and_comments(state);
     Some(
-        if let Some(operator_node) = parse_elm_operator_node(state) {
-            parse_until_including_symbol_or_before_0_indented_or_end_of_source(state, ")");
+        if let Some(operator_node) = parse_elm_operator_followed_by_closing_paren(state) {
+            // needs to be this cursed to differentiate (-) and (-negated)
             ElmSyntaxExpression::OperatorFunction(operator_node)
         } else {
             let maybe_in_parens_0: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
@@ -10459,7 +10535,11 @@ fn parse_elm_syntax_declaration_choice_type_or_type_alias_node(
     Some(match maybe_alias_keyword_range {
         Some(alias_keyword_range) => {
             let maybe_type: Option<ElmSyntaxNode<ElmSyntaxType>> =
-                parse_elm_syntax_type_space_separated_node(state);
+                if state.position.character <= state.indent as u32 {
+                    None
+                } else {
+                    parse_elm_syntax_type_space_separated_node(state)
+                };
             let full_end_location: lsp_types::Position = maybe_type
                 .as_ref()
                 .map(|type_node| type_node.range.end)
@@ -10532,6 +10612,7 @@ fn parse_elm_syntax_choice_type_declaration_trailing_variant_node(
     state: &mut ParseState,
 ) -> Option<ElmSyntaxNode<ElmSyntaxChoiceTypeDeclarationTailingVariant>> {
     let or_key_symbol_range: lsp_types::Range = parse_symbol_as_range(state, "|")?;
+    parse_elm_whitespace_and_comments(state);
     let maybe_name: Option<ElmSyntaxNode<String>> = parse_elm_uppercase_node(state);
     let mut values: Vec<ElmSyntaxNode<ElmSyntaxType>> = Vec::new();
     let mut full_end_position: lsp_types::Position = maybe_name
@@ -10603,7 +10684,11 @@ fn parse_elm_syntax_declaration_variable_node(
     let maybe_equals_key_symbol_range: Option<lsp_types::Range> = parse_symbol_as_range(state, "=");
     parse_elm_whitespace_and_comments(state);
     let maybe_result: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
-        parse_elm_syntax_expression_space_separated_node(state);
+        if state.position.character <= state.indent as u32 {
+            None
+        } else {
+            parse_elm_syntax_expression_space_separated_node(state)
+        };
     Some(ElmSyntaxNode {
         range: lsp_types::Range {
             start: start_name_node.range.start,
@@ -10670,7 +10755,7 @@ fn parse_elm_syntax_module(module_source: String) -> ElmSyntaxModule {
     'parsing_declarations: loop {
         match parse_elm_syntax_documented_declaration(&mut state) {
             Some(documented_declaration) => {
-                eprintln!("parsed declaration #{}", declarations.len());
+                eprintln!("parsed declaration {}", declarations.len());
                 declarations.push(documented_declaration);
                 parse_elm_whitespace_and_comments(&mut state);
             }

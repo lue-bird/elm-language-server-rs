@@ -24,8 +24,8 @@ A minimal LSP language server for [elm](https://elm-lang.org/), written in rust 
 - your idea 👀
 
 ## TODO
+- correctly highlight empty and single-line block comments
 - incremental reparsing
-- partial parsing
 - show errors inline
 - support elm projects with non-root `elm.json`
 - support `tests/`
