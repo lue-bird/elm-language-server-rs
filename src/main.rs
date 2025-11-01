@@ -2914,7 +2914,7 @@ enum ElmSyntaxPattern {
     Ignored,
     Char(Option<char>),
     Int {
-        base: elm::ElmSyntaxIntBase,
+        base: ElmSyntaxIntBase,
         value: Option<i64>,
     },
     String {
@@ -3046,7 +3046,7 @@ enum ElmSyntaxExpression {
     },
     Integer {
         value: Option<i64>,
-        base: elm::ElmSyntaxIntBase,
+        base: ElmSyntaxIntBase,
     },
     Lambda {
         parameters: Vec<ElmSyntaxNode<ElmSyntaxPattern>>,
@@ -3090,6 +3090,11 @@ enum ElmSyntaxExpression {
         part0: Option<ElmSyntaxNode<Box<ElmSyntaxExpression>>>,
         part1: Option<ElmSyntaxNode<Box<ElmSyntaxExpression>>>,
     },
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ElmSyntaxIntBase {
+    IntBase10,
+    IntBase16,
 }
 #[derive(Clone, Debug, PartialEq)]
 struct ElmSyntaxExpressionCase {
@@ -9386,12 +9391,12 @@ fn parse_elm_syntax_pattern_string(state: &mut ParseState) -> Option<ElmSyntaxPa
 fn parse_elm_syntax_pattern_integer(state: &mut ParseState) -> Option<ElmSyntaxPattern> {
     parse_elm_unsigned_integer_base10_as_i64(state)
         .map(|value| ElmSyntaxPattern::Int {
-            base: elm::ElmSyntaxIntBase::IntBase10,
+            base: ElmSyntaxIntBase::IntBase10,
             value: value,
         })
         .or_else(|| {
             parse_elm_unsigned_integer_base16_as_i64(state).map(|value| ElmSyntaxPattern::Int {
-                base: elm::ElmSyntaxIntBase::IntBase16,
+                base: ElmSyntaxIntBase::IntBase16,
                 value: value,
             })
         })
@@ -9453,7 +9458,7 @@ fn parse_elm_unsigned_integer_base10_as_i64(state: &mut ParseState) -> Option<Op
 fn parse_elm_syntax_expression_number(state: &mut ParseState) -> Option<ElmSyntaxExpression> {
     if let Some(unsigned_int_base16) = parse_elm_unsigned_integer_base16_as_i64(state) {
         return Some(ElmSyntaxExpression::Integer {
-            base: elm::ElmSyntaxIntBase::IntBase16,
+            base: ElmSyntaxIntBase::IntBase16,
             value: unsigned_int_base16,
         });
     }
@@ -9489,7 +9494,7 @@ fn parse_elm_syntax_expression_number(state: &mut ParseState) -> Option<ElmSynta
         )
     } else {
         ElmSyntaxExpression::Integer {
-            base: elm::ElmSyntaxIntBase::IntBase10,
+            base: ElmSyntaxIntBase::IntBase10,
             value: i64::from_str_radix(full_chomped_str, 10).ok(),
         }
     })
