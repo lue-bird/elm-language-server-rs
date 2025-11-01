@@ -1,8 +1,6 @@
 #![allow(non_shorthand_field_patterns)]
 #![allow(non_upper_case_globals)]
 
-use crate::elm::ElmSyntaxInfixDirection;
-
 mod elm;
 
 struct State {
@@ -2016,7 +2014,7 @@ fn present_operator_declaration_info_markdown(
     )>,
     maybe_documentation: Option<&ElmSyntaxNode<String>>,
     precedence: Option<i64>,
-    maybe_direction: Option<elm::ElmSyntaxInfixDirection>,
+    maybe_direction: Option<ElmSyntaxInfixDirection>,
 ) -> String {
     match maybe_origin_operator_function_declaration {
         Some((
@@ -2079,11 +2077,11 @@ fn present_operator_declaration_info_markdown(
         }
     }
 }
-fn elm_syntax_infix_direction_to_str(direction: elm::ElmSyntaxInfixDirection) -> &'static str {
+fn elm_syntax_infix_direction_to_str(direction: ElmSyntaxInfixDirection) -> &'static str {
     match direction {
-        elm::ElmSyntaxInfixDirection::Left => "left",
-        elm::ElmSyntaxInfixDirection::Non => "non",
-        elm::ElmSyntaxInfixDirection::Right => "right",
+        ElmSyntaxInfixDirection::Left => "left",
+        ElmSyntaxInfixDirection::Non => "non",
+        ElmSyntaxInfixDirection::Right => "right",
     }
 }
 
@@ -2838,22 +2836,6 @@ fn elm_syntax_highlight_kind_to_lsp_semantic_token_type(
     }
 }
 
-fn text_grid_location_to_lsp_position(
-    text_grid_location: elm::TextGridLocation,
-) -> lsp_types::Position {
-    lsp_types::Position {
-        line: (text_grid_location.line - 1) as u32,
-        character: (text_grid_location.column - 1) as u32,
-    }
-}
-
-fn text_grid_range_to_lsp_range(text_grid_range: elm::TextGridRange) -> lsp_types::Range {
-    lsp_types::Range {
-        start: text_grid_location_to_lsp_position(text_grid_range.start),
-        end: text_grid_location_to_lsp_position(text_grid_range.end),
-    }
-}
-
 fn list_elm_files_in_source_directory_at_path(
     path: &std::path::PathBuf,
 ) -> std::io::Result<Vec<(std::path::PathBuf, String)>> {
@@ -2937,7 +2919,7 @@ enum ElmSyntaxPattern {
     },
     String {
         content: String,
-        quoting_style: elm::ElmSyntaxStringQuotingStyle,
+        quoting_style: ElmSyntaxStringQuotingStyle,
     },
     Variable(String),
     As {
@@ -2966,6 +2948,11 @@ enum ElmSyntaxPattern {
         reference: ElmSyntaxNode<ElmQualifiedName>,
         values: Vec<ElmSyntaxNode<ElmSyntaxPattern>>,
     },
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ElmSyntaxStringQuotingStyle {
+    SingleQuoted,
+    TripleQuoted,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -3092,7 +3079,7 @@ enum ElmSyntaxExpression {
     },
     String {
         content: String,
-        quoting_style: elm::ElmSyntaxStringQuotingStyle,
+        quoting_style: ElmSyntaxStringQuotingStyle,
     },
     Triple {
         part0: Option<ElmSyntaxNode<Box<ElmSyntaxExpression>>>,
@@ -3151,7 +3138,7 @@ enum ElmSyntaxDeclaration {
         variant1_up: Vec<ElmSyntaxChoiceTypeDeclarationTailingVariant>,
     },
     Operator {
-        direction: Option<ElmSyntaxNode<elm::ElmSyntaxInfixDirection>>,
+        direction: Option<ElmSyntaxNode<ElmSyntaxInfixDirection>>,
         precedence: Option<ElmSyntaxNode<i64>>,
         operator: Option<ElmSyntaxNode<&'static str>>,
         equals_key_symbol_range: Option<lsp_types::Range>,
@@ -3176,6 +3163,12 @@ enum ElmSyntaxDeclaration {
         equals_key_symbol_range: Option<lsp_types::Range>,
         result: Option<ElmSyntaxNode<ElmSyntaxExpression>>,
     },
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ElmSyntaxInfixDirection {
+    Left,
+    Non,
+    Right,
 }
 #[derive(Clone, Debug, PartialEq)]
 struct ElmSyntaxChoiceTypeDeclarationTailingVariant {
@@ -6803,10 +6796,9 @@ fn elm_syntax_highlight_module_into(
     highlighted_so_far: &mut Vec<ElmSyntaxNode<ElmSyntaxHighlightKind>>,
     elm_syntax_module: &ElmSyntaxModule,
 ) {
-    elm_syntax_highlight_module_header_into(
-        highlighted_so_far,
-        elm_syntax_node_as_ref(&elm_syntax_module.header),
-    );
+    if let Some(module_header) = &elm_syntax_module.header {
+        elm_syntax_highlight_module_header_into(highlighted_so_far, module_header);
+    }
     for import_node in elm_syntax_module.imports.iter() {
         elm_syntax_highlight_import_into(highlighted_so_far, elm_syntax_node_as_ref(import_node));
     }
@@ -6820,120 +6812,126 @@ fn elm_syntax_highlight_module_into(
                 );
             }
         }
-        elm_syntax_highlight_declaration_into(
-            highlighted_so_far,
-            elm_syntax_node_as_ref(&documented_declaration.declaration),
-        );
+        if let Some(declaration_node) = &documented_declaration.declaration {
+            elm_syntax_highlight_declaration_into(
+                highlighted_so_far,
+                elm_syntax_node_as_ref(declaration_node),
+            );
+        }
     }
     // Inserting many comments in the middle can get expensive (having so many comments to make it matter will be rare).
     // A possible solution (when comment count exceeds other syntax by some factor) is just pushing all comments an sorting the whole thing at once.
     // Feels like overkill, though so I'll hold on on this until issues are opened :)
     for comment_node in elm_syntax_module.comments.iter() {
-        elm_syntax_highlight_comment_into(highlighted_so_far, elm_syntax_node_as_ref(comment_node));
+        elm_syntax_highlight_comment_into(
+            highlighted_so_far,
+            ElmSyntaxNode {
+                range: comment_node.range,
+                value: &comment_node.value.content,
+            },
+        );
     }
 }
 
 fn elm_syntax_highlight_module_header_into(
     highlighted_so_far: &mut Vec<ElmSyntaxNode<ElmSyntaxHighlightKind>>,
-    elm_syntax_module_header_node: ElmSyntaxNode<&ElmSyntaxModuleHeader>,
+    elm_syntax_module_header: &ElmSyntaxModuleHeader,
 ) {
-    match elm_syntax_module_header_node.value.specific {
-        None => {
+    match &elm_syntax_module_header.specific {
+        ElmSyntaxModuleHeaderSpecific::Pure {
+            module_keyword_range,
+        } => {
             highlighted_so_far.push(ElmSyntaxNode {
-                range: lsp_types::Range {
-                    start: elm_syntax_module_header_node.range.start,
-                    end: lsp_position_add_characters(elm_syntax_module_header_node.range.start, 6),
-                },
+                range: *module_keyword_range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            if let Some(module_name_range) = &elm_syntax_module_header.module_name {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: module_name_range.range,
+                    value: ElmSyntaxHighlightKind::ModuleNameOrAlias,
+                });
+            }
+            if let Some(exposing) = &elm_syntax_module_header.exposing {
+                elm_syntax_highlight_exposing_into(highlighted_so_far, exposing);
+            }
+        }
+
+        ElmSyntaxModuleHeaderSpecific::Effect {
+            effect_keyword_range,
+            module_keyword_range,
+            where_keyword_range,
+            command: maybe_command,
+            subscription: maybe_subscription,
+        } => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: *effect_keyword_range,
                 value: ElmSyntaxHighlightKind::KeySymbol,
             });
             highlighted_so_far.push(ElmSyntaxNode {
-                range: elm_syntax_module_header_node.value.module_name.range,
-                value: ElmSyntaxHighlightKind::ModuleNameOrAlias,
+                range: *module_keyword_range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
             });
-            elm_syntax_highlight_exposing_into(
-                highlighted_so_far,
-                elm_syntax_node_as_ref(&elm_syntax_module_header_node.value.exposing),
-            );
+            if let Some(module_name_node) = &elm_syntax_module_header.module_name {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: module_name_node.range,
+                    value: ElmSyntaxHighlightKind::ModuleNameOrAlias,
+                });
+            }
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: *where_keyword_range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            if let Some(command_node) = maybe_command {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: command_node.key_range,
+                    value: ElmSyntaxHighlightKind::Field,
+                });
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: command_node.equals_range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: command_node.value_type_name.range,
+                    value: ElmSyntaxHighlightKind::VariableDeclaration,
+                });
+            }
+            if let Some(subscription_node) = maybe_subscription {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: subscription_node.key_range,
+                    value: ElmSyntaxHighlightKind::Field,
+                });
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: subscription_node.equals_range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: subscription_node.value_type_name.range,
+                    value: ElmSyntaxHighlightKind::VariableDeclaration,
+                });
+            }
         }
-        Some(ref module_header_specific) => match module_header_specific {
-            ElmSyntaxModuleHeaderSpecific::Effect {
-                module_keyword_range,
-                where_keyword_range,
-                command: maybe_command,
-                subscription: maybe_subscription,
-            } => {
+        ElmSyntaxModuleHeaderSpecific::Port {
+            module_keyword_range,
+            port_keyword_range,
+        } => {
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: *port_keyword_range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            highlighted_so_far.push(ElmSyntaxNode {
+                range: *module_keyword_range,
+                value: ElmSyntaxHighlightKind::KeySymbol,
+            });
+            if let Some(module_name_node) = &elm_syntax_module_header.module_name {
                 highlighted_so_far.push(ElmSyntaxNode {
-                    range: lsp_types::Range {
-                        start: elm_syntax_module_header_node.range.start,
-                        end: lsp_position_add_characters(
-                            elm_syntax_module_header_node.range.start,
-                            6,
-                        ),
-                    },
-                    value: ElmSyntaxHighlightKind::KeySymbol,
-                });
-                highlighted_so_far.push(ElmSyntaxNode {
-                    range: *module_keyword_range,
-                    value: ElmSyntaxHighlightKind::KeySymbol,
-                });
-                highlighted_so_far.push(ElmSyntaxNode {
-                    range: elm_syntax_module_header_node.value.module_name.range,
+                    range: module_name_node.range,
                     value: ElmSyntaxHighlightKind::ModuleNameOrAlias,
                 });
-                highlighted_so_far.push(ElmSyntaxNode {
-                    range: *where_keyword_range,
-                    value: ElmSyntaxHighlightKind::KeySymbol,
-                });
-                match maybe_command {
-                    None => {}
-                    Some(command_node) => {
-                        highlighted_so_far.push(ElmSyntaxNode {
-                            range: command_node.range,
-                            value: ElmSyntaxHighlightKind::VariableDeclaration,
-                        });
-                    }
-                }
-                match maybe_subscription {
-                    None => {}
-                    Some(subscription_node) => {
-                        highlighted_so_far.push(ElmSyntaxNode {
-                            range: subscription_node.range,
-                            value: ElmSyntaxHighlightKind::VariableDeclaration,
-                        });
-                    }
-                }
-                elm_syntax_highlight_exposing_into(
-                    highlighted_so_far,
-                    elm_syntax_node_as_ref(&elm_syntax_module_header_node.value.exposing),
-                );
             }
-            ElmSyntaxModuleHeaderSpecific::Port {
-                module_keyword_range,
-            } => {
-                highlighted_so_far.push(ElmSyntaxNode {
-                    range: lsp_types::Range {
-                        start: elm_syntax_module_header_node.range.start,
-                        end: lsp_position_add_characters(
-                            elm_syntax_module_header_node.range.start,
-                            4,
-                        ),
-                    },
-                    value: ElmSyntaxHighlightKind::KeySymbol,
-                });
-                highlighted_so_far.push(ElmSyntaxNode {
-                    range: *module_keyword_range,
-                    value: ElmSyntaxHighlightKind::KeySymbol,
-                });
-                highlighted_so_far.push(ElmSyntaxNode {
-                    range: elm_syntax_module_header_node.value.module_name.range,
-                    value: ElmSyntaxHighlightKind::ModuleNameOrAlias,
-                });
-                elm_syntax_highlight_exposing_into(
-                    highlighted_so_far,
-                    elm_syntax_node_as_ref(&elm_syntax_module_header_node.value.exposing),
-                );
+            if let Some(exposing) = &elm_syntax_module_header.exposing {
+                elm_syntax_highlight_exposing_into(highlighted_so_far, exposing);
             }
-        },
+        }
     }
 }
 
@@ -6941,7 +6939,7 @@ fn elm_syntax_highlight_comment_into(
     highlighted_so_far: &mut Vec<ElmSyntaxNode<ElmSyntaxHighlightKind>>,
     elm_syntax_comment_node: ElmSyntaxNode<&String>,
 ) {
-    let insert_index = highlighted_so_far
+    let insert_index: usize = highlighted_so_far
         .binary_search_by(|token| {
             lsp_position_compare(token.range.start, elm_syntax_comment_node.range.start)
         })
@@ -6995,53 +6993,50 @@ fn elm_syntax_highlight_import_into(
         },
         value: ElmSyntaxHighlightKind::KeySymbol,
     });
-    highlighted_so_far.push(ElmSyntaxNode {
-        range: elm_syntax_import_node.value.module_name.range,
-        value: ElmSyntaxHighlightKind::ModuleNameOrAlias,
-    });
-    match elm_syntax_import_node.value.alias {
-        None => {}
-        Some(ref alias_node) => {
+    if let Some(module_name_node) = &elm_syntax_import_node.value.module_name {
+        highlighted_so_far.push(ElmSyntaxNode {
+            range: module_name_node.range,
+            value: ElmSyntaxHighlightKind::ModuleNameOrAlias,
+        });
+    }
+    if let Some(alias_node) = &elm_syntax_import_node.value.alias {
+        highlighted_so_far.push(ElmSyntaxNode {
+            range: alias_node.as_keyword_range,
+            value: ElmSyntaxHighlightKind::KeySymbol,
+        });
+        if let Some(alias_name_node) = &alias_node.name {
             highlighted_so_far.push(ElmSyntaxNode {
-                range: alias_node.as_keyword_range,
-                value: ElmSyntaxHighlightKind::KeySymbol,
-            });
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: alias_node.name.range,
+                range: alias_name_node.range,
                 value: ElmSyntaxHighlightKind::ModuleNameOrAlias,
             });
         }
     }
-    match elm_syntax_import_node.value.exposing {
-        None => {}
-        Some(ref exposing_node) => {
-            elm_syntax_highlight_exposing_into(
-                highlighted_so_far,
-                elm_syntax_node_as_ref(exposing_node),
-            );
-        }
+    if let Some(exposing) = &elm_syntax_import_node.value.exposing {
+        elm_syntax_highlight_exposing_into(highlighted_so_far, exposing);
     }
 }
 
 fn elm_syntax_highlight_exposing_into(
     highlighted_so_far: &mut Vec<ElmSyntaxNode<ElmSyntaxHighlightKind>>,
-    elm_syntax_exposing_node: ElmSyntaxNode<&ElmSyntaxExposingSpecific>,
+    elm_syntax_exposing: &ElmSyntaxExposing,
 ) {
     highlighted_so_far.push(ElmSyntaxNode {
-        range: lsp_types::Range {
-            start: elm_syntax_exposing_node.range.start,
-            end: lsp_position_add_characters(elm_syntax_exposing_node.range.start, 8),
-        },
+        range: elm_syntax_exposing.exposing_keyword_range,
         value: ElmSyntaxHighlightKind::KeySymbol,
     });
-    match elm_syntax_exposing_node.value {
-        ElmSyntaxExposingSpecific::All(ellipsis_range) => {
+    match elm_syntax_exposing
+        .specific
+        .as_ref()
+        .map(|node| &node.value)
+    {
+        None => {}
+        Some(ElmSyntaxExposingSpecific::All(ellipsis_range)) => {
             highlighted_so_far.push(ElmSyntaxNode {
                 range: *ellipsis_range,
                 value: ElmSyntaxHighlightKind::KeySymbol,
             });
         }
-        ElmSyntaxExposingSpecific::Explicit(exposes) => {
+        Some(ElmSyntaxExposingSpecific::Explicit(exposes)) => {
             for expose_node in exposes {
                 match &expose_node.value {
                     ElmSyntaxExpose::ChoiceTypeIncludingVariants {
@@ -7090,28 +7085,28 @@ fn elm_syntax_highlight_declaration_into(
 ) {
     match elm_syntax_declaration_node.value {
         ElmSyntaxDeclaration::Variable {
-            name: _,
+            start_name: start_name_node,
             signature: maybe_signature,
-            implementation_name_range,
             parameters,
-            equals_key_symbol_range,
-            result,
+            equals_key_symbol_range: maybe_equals_key_symbol_range,
+            result: maybe_result,
         } => {
-            match maybe_signature {
-                None => {}
-                Some(signature) => {
+            if let Some(signature) = maybe_signature {
+                if let Some(implementation_name_range) = signature.implementation_name_range {
                     highlighted_so_far.push(ElmSyntaxNode {
-                        range: signature.name.range,
+                        range: implementation_name_range,
                         value: ElmSyntaxHighlightKind::VariableDeclaration,
                     });
+                }
+                if let Some(signature_type_node) = &signature.type_ {
                     elm_syntax_highlight_type_into(
                         highlighted_so_far,
-                        elm_syntax_node_as_ref(&signature.type_1),
+                        elm_syntax_node_as_ref(signature_type_node),
                     );
                 }
             }
             highlighted_so_far.push(ElmSyntaxNode {
-                range: *implementation_name_range,
+                range: start_name_node.range,
                 value: ElmSyntaxHighlightKind::VariableDeclaration,
             });
             for parameter_node in parameters {
@@ -7120,20 +7115,25 @@ fn elm_syntax_highlight_declaration_into(
                     elm_syntax_node_as_ref(parameter_node),
                 );
             }
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: *equals_key_symbol_range,
-                value: ElmSyntaxHighlightKind::KeySymbol,
-            });
-            elm_syntax_highlight_expression_into(
-                highlighted_so_far,
-                elm_syntax_node_as_ref(result),
-            );
+            if let &Some(equals_key_symbol_range) = maybe_equals_key_symbol_range {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: equals_key_symbol_range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+            }
+            if let Some(result_node) = maybe_result {
+                elm_syntax_highlight_expression_into(
+                    highlighted_so_far,
+                    elm_syntax_node_as_ref(result_node),
+                );
+            }
         }
         ElmSyntaxDeclaration::ChoiceType {
-            name,
+            name: maybe_name,
             parameters,
-            equals_key_symbol_range,
-            variant0,
+            equals_key_symbol_range: maybe_equals_key_symbol_range,
+            variant0_name: maybe_variant0_name,
+            variant0_values,
             variant1_up,
         } => {
             highlighted_so_far.push(ElmSyntaxNode {
@@ -7143,25 +7143,31 @@ fn elm_syntax_highlight_declaration_into(
                 },
                 value: ElmSyntaxHighlightKind::KeySymbol,
             });
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: name.range,
-                value: ElmSyntaxHighlightKind::Type,
-            });
+            if let Some(name_node) = maybe_name {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: name_node.range,
+                    value: ElmSyntaxHighlightKind::Type,
+                });
+            }
             for parameter_name_node in parameters {
                 highlighted_so_far.push(ElmSyntaxNode {
                     range: parameter_name_node.range,
                     value: ElmSyntaxHighlightKind::TypeVariable,
                 });
             }
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: *equals_key_symbol_range,
-                value: ElmSyntaxHighlightKind::KeySymbol,
-            });
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: variant0.name.range,
-                value: ElmSyntaxHighlightKind::Variant,
-            });
-            for variant0_value_node in variant0.values.iter() {
+            if let &Some(equals_key_symbol_range) = maybe_equals_key_symbol_range {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: equals_key_symbol_range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+            }
+            if let Some(variant0_name_node) = maybe_variant0_name {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: variant0_name_node.range,
+                    value: ElmSyntaxHighlightKind::Variant,
+                });
+            }
+            for variant0_value_node in variant0_values {
                 elm_syntax_highlight_type_into(
                     highlighted_so_far,
                     elm_syntax_node_as_ref(variant0_value_node),
@@ -7172,10 +7178,12 @@ fn elm_syntax_highlight_declaration_into(
                     range: variant.or_key_symbol_range,
                     value: ElmSyntaxHighlightKind::KeySymbol,
                 });
-                highlighted_so_far.push(ElmSyntaxNode {
-                    range: variant.name.range,
-                    value: ElmSyntaxHighlightKind::Variant,
-                });
+                if let Some(variant_name_node) = &variant.name {
+                    highlighted_so_far.push(ElmSyntaxNode {
+                        range: variant_name_node.range,
+                        value: ElmSyntaxHighlightKind::Variant,
+                    });
+                }
                 for variant_value_node in variant.values.iter() {
                     elm_syntax_highlight_type_into(
                         highlighted_so_far,
@@ -7185,10 +7193,11 @@ fn elm_syntax_highlight_declaration_into(
             }
         }
         ElmSyntaxDeclaration::Operator {
-            direction,
-            operator: operator_node,
-            function: function_name_node,
-            precedence: precedence_node,
+            direction: maybe_direction,
+            precedence: maybe_precedence,
+            operator: maybe_operator,
+            equals_key_symbol_range: maybe_equals_key_symbol_range,
+            function: maybe_function_name,
         } => {
             highlighted_so_far.push(ElmSyntaxNode {
                 range: lsp_types::Range {
@@ -7197,29 +7206,44 @@ fn elm_syntax_highlight_declaration_into(
                 },
                 value: ElmSyntaxHighlightKind::KeySymbol,
             });
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: direction.range,
-                value: ElmSyntaxHighlightKind::KeySymbol,
-            });
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: precedence_node.range,
-                value: ElmSyntaxHighlightKind::Number,
-            });
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: lsp_types::Range {
-                    start: lsp_position_add_characters(operator_node.range.start, 1),
-                    end: lsp_position_add_characters(operator_node.range.end, -1),
-                },
-                value: ElmSyntaxHighlightKind::KeySymbol,
-            });
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: function_name_node.range,
-                value: ElmSyntaxHighlightKind::VariableDeclaration,
-            });
+            if let Some(direction_node) = maybe_direction {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: direction_node.range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+            }
+            if let Some(precedence_node) = maybe_precedence {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: precedence_node.range,
+                    value: ElmSyntaxHighlightKind::Number,
+                });
+            }
+            if let Some(operator_node) = maybe_operator {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: lsp_types::Range {
+                        start: lsp_position_add_characters(operator_node.range.start, 1),
+                        end: lsp_position_add_characters(operator_node.range.end, -1),
+                    },
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+            }
+            if let &Some(equals_key_symbol_range) = maybe_equals_key_symbol_range {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: equals_key_symbol_range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+            }
+            if let Some(function_name_node) = maybe_function_name {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: function_name_node.range,
+                    value: ElmSyntaxHighlightKind::VariableDeclaration,
+                });
+            }
         }
         ElmSyntaxDeclaration::Port {
-            name: name_node,
-            type_,
+            name: maybe_name,
+            colon_key_symbol_range: maybe_colon_key_symbol_range,
+            type_: maybe_type,
         } => {
             highlighted_so_far.push(ElmSyntaxNode {
                 range: lsp_types::Range {
@@ -7228,18 +7252,31 @@ fn elm_syntax_highlight_declaration_into(
                 },
                 value: ElmSyntaxHighlightKind::KeySymbol,
             });
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: name_node.range,
-                value: ElmSyntaxHighlightKind::VariableDeclaration,
-            });
-            elm_syntax_highlight_type_into(highlighted_so_far, elm_syntax_node_as_ref(type_));
+            if let Some(name_node) = maybe_name {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: name_node.range,
+                    value: ElmSyntaxHighlightKind::VariableDeclaration,
+                });
+            }
+            if let &Some(colon_key_symbol_range) = maybe_colon_key_symbol_range {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: colon_key_symbol_range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+            }
+            if let Some(type_node) = maybe_type {
+                elm_syntax_highlight_type_into(
+                    highlighted_so_far,
+                    elm_syntax_node_as_ref(type_node),
+                );
+            }
         }
         ElmSyntaxDeclaration::TypeAlias {
             alias_keyword_range,
-            name,
+            name: maybe_name,
             parameters,
-            equals_key_symbol_range,
-            type_,
+            equals_key_symbol_range: maybe_equals_key_symbol_range,
+            type_: maybe_type,
         } => {
             highlighted_so_far.push(ElmSyntaxNode {
                 range: lsp_types::Range {
@@ -7252,28 +7289,37 @@ fn elm_syntax_highlight_declaration_into(
                 range: *alias_keyword_range,
                 value: ElmSyntaxHighlightKind::KeySymbol,
             });
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: name.range,
-                value: ElmSyntaxHighlightKind::Type,
-            });
+            if let Some(name_node) = maybe_name {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: name_node.range,
+                    value: ElmSyntaxHighlightKind::Type,
+                });
+            }
             for parameter_name_node in parameters {
                 highlighted_so_far.push(ElmSyntaxNode {
                     range: parameter_name_node.range,
                     value: ElmSyntaxHighlightKind::TypeVariable,
                 });
             }
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: *equals_key_symbol_range,
-                value: ElmSyntaxHighlightKind::KeySymbol,
-            });
-            elm_syntax_highlight_type_into(highlighted_so_far, elm_syntax_node_as_ref(type_));
+            if let &Some(equals_key_symbol_range) = maybe_equals_key_symbol_range {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: equals_key_symbol_range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+            }
+            if let Some(type_node) = maybe_type {
+                elm_syntax_highlight_type_into(
+                    highlighted_so_far,
+                    elm_syntax_node_as_ref(type_node),
+                );
+            }
         }
     }
 }
 
 fn elm_syntax_highlight_qualified_into(
     highlighted_so_far: &mut Vec<ElmSyntaxNode<ElmSyntaxHighlightKind>>,
-    qualified_node: ElmSyntaxNode<&elm::GeneratedNameQualification<String, String>>,
+    qualified_node: ElmSyntaxNode<ElmQualified>,
     kind: ElmSyntaxHighlightKind,
 ) {
     if qualified_node.value.qualification.is_empty() {
@@ -7310,7 +7356,7 @@ fn elm_syntax_highlight_pattern_into(
         ElmSyntaxPattern::As {
             pattern: alias_pattern_node,
             as_keyword_range,
-            variable: variable_node,
+            variable: maybe_variable,
         } => {
             elm_syntax_highlight_pattern_into(
                 highlighted_so_far,
@@ -7320,10 +7366,12 @@ fn elm_syntax_highlight_pattern_into(
                 range: *as_keyword_range,
                 value: ElmSyntaxHighlightKind::KeySymbol,
             });
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: variable_node.range,
-                value: ElmSyntaxHighlightKind::Variable,
-            });
+            if let Some(variable_node) = maybe_variable {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: variable_node.range,
+                    value: ElmSyntaxHighlightKind::Variable,
+                });
+            }
         }
         ElmSyntaxPattern::Char(_) => {
             highlighted_so_far.push(ElmSyntaxNode {
@@ -7347,16 +7395,26 @@ fn elm_syntax_highlight_pattern_into(
             });
         }
         ElmSyntaxPattern::ListCons {
-            head,
+            head: maybe_head,
             cons_key_symbol,
-            tail,
+            tail: maybe_tail,
         } => {
-            elm_syntax_highlight_pattern_into(highlighted_so_far, elm_syntax_node_unbox(head));
+            if let Some(head_node) = maybe_head {
+                elm_syntax_highlight_pattern_into(
+                    highlighted_so_far,
+                    elm_syntax_node_unbox(head_node),
+                );
+            }
             highlighted_so_far.push(ElmSyntaxNode {
                 range: *cons_key_symbol,
                 value: ElmSyntaxHighlightKind::KeySymbol,
             });
-            elm_syntax_highlight_pattern_into(highlighted_so_far, elm_syntax_node_unbox(tail));
+            if let Some(tail_node) = maybe_tail {
+                elm_syntax_highlight_pattern_into(
+                    highlighted_so_far,
+                    elm_syntax_node_unbox(tail_node),
+                );
+            }
         }
         ElmSyntaxPattern::ListExact(elements) => {
             for element_node in elements {
@@ -7383,11 +7441,11 @@ fn elm_syntax_highlight_pattern_into(
         } => {
             highlighted_so_far.push(ElmSyntaxNode {
                 range: match quoting_style {
-                    elm::ElmSyntaxStringQuotingStyle::StringSingleQuoted => lsp_types::Range {
+                    ElmSyntaxStringQuotingStyle::SingleQuoted => lsp_types::Range {
                         start: lsp_position_add_characters(elm_syntax_pattern_node.range.start, 1),
                         end: lsp_position_add_characters(elm_syntax_pattern_node.range.end, -1),
                     },
-                    elm::ElmSyntaxStringQuotingStyle::StringTripleQuoted => lsp_types::Range {
+                    ElmSyntaxStringQuotingStyle::TripleQuoted => lsp_types::Range {
                         start: lsp_position_add_characters(elm_syntax_pattern_node.range.start, 3),
                         end: lsp_position_add_characters(elm_syntax_pattern_node.range.end, -3),
                     },
@@ -7396,17 +7454,45 @@ fn elm_syntax_highlight_pattern_into(
             });
         }
         ElmSyntaxPattern::Triple {
-            part0,
-            part1,
-            part2,
+            part0: maybe_part0,
+            part1: maybe_part1,
+            part2: maybe_part2,
         } => {
-            elm_syntax_highlight_pattern_into(highlighted_so_far, elm_syntax_node_unbox(part0));
-            elm_syntax_highlight_pattern_into(highlighted_so_far, elm_syntax_node_unbox(part1));
-            elm_syntax_highlight_pattern_into(highlighted_so_far, elm_syntax_node_unbox(part2));
+            if let Some(part0_node) = maybe_part0 {
+                elm_syntax_highlight_pattern_into(
+                    highlighted_so_far,
+                    elm_syntax_node_unbox(part0_node),
+                );
+            }
+            if let Some(part1_node) = maybe_part1 {
+                elm_syntax_highlight_pattern_into(
+                    highlighted_so_far,
+                    elm_syntax_node_unbox(part1_node),
+                );
+            }
+            if let Some(part2_node) = maybe_part2 {
+                elm_syntax_highlight_pattern_into(
+                    highlighted_so_far,
+                    elm_syntax_node_unbox(part2_node),
+                );
+            }
         }
-        ElmSyntaxPattern::Tuple { part0, part1 } => {
-            elm_syntax_highlight_pattern_into(highlighted_so_far, elm_syntax_node_unbox(part0));
-            elm_syntax_highlight_pattern_into(highlighted_so_far, elm_syntax_node_unbox(part1));
+        ElmSyntaxPattern::Tuple {
+            part0: maybe_part0,
+            part1: maybe_part1,
+        } => {
+            if let Some(part0_node) = maybe_part0 {
+                elm_syntax_highlight_pattern_into(
+                    highlighted_so_far,
+                    elm_syntax_node_unbox(part0_node),
+                );
+            }
+            if let Some(part1_node) = maybe_part1 {
+                elm_syntax_highlight_pattern_into(
+                    highlighted_so_far,
+                    elm_syntax_node_unbox(part1_node),
+                );
+            }
         }
         ElmSyntaxPattern::Unit => {
             highlighted_so_far.push(ElmSyntaxNode {
@@ -7420,10 +7506,19 @@ fn elm_syntax_highlight_pattern_into(
                 value: ElmSyntaxHighlightKind::Variable,
             });
         }
-        ElmSyntaxPattern::Variant { reference, values } => {
+        ElmSyntaxPattern::Variant {
+            reference: reference_node,
+            values,
+        } => {
             elm_syntax_highlight_qualified_into(
                 highlighted_so_far,
-                elm_syntax_node_as_ref(reference),
+                ElmSyntaxNode {
+                    range: reference_node.range,
+                    value: ElmQualified {
+                        qualification: &reference_node.value.qualification,
+                        name: &reference_node.value.name,
+                    },
+                },
                 ElmSyntaxHighlightKind::Variant,
             );
             for value_node in values {
@@ -7441,12 +7536,18 @@ fn elm_syntax_highlight_type_into(
 ) {
     match elm_syntax_type_node.value {
         ElmSyntaxType::Construct {
-            reference,
+            reference: reference_node,
             arguments,
         } => {
             elm_syntax_highlight_qualified_into(
                 highlighted_so_far,
-                elm_syntax_node_as_ref(reference),
+                ElmSyntaxNode {
+                    range: reference_node.range,
+                    value: ElmQualified {
+                        qualification: &reference_node.value.qualification,
+                        name: &reference_node.value.name,
+                    },
+                },
                 ElmSyntaxHighlightKind::Type,
             );
             for argument_node in arguments {
@@ -7459,14 +7560,19 @@ fn elm_syntax_highlight_type_into(
         ElmSyntaxType::Function {
             input,
             arrow_key_symbol_range,
-            output,
+            output: maybe_output,
         } => {
             elm_syntax_highlight_type_into(highlighted_so_far, elm_syntax_node_unbox(input));
             highlighted_so_far.push(ElmSyntaxNode {
                 range: *arrow_key_symbol_range,
                 value: ElmSyntaxHighlightKind::KeySymbol,
             });
-            elm_syntax_highlight_type_into(highlighted_so_far, elm_syntax_node_unbox(output));
+            if let Some(output_node) = maybe_output {
+                elm_syntax_highlight_type_into(
+                    highlighted_so_far,
+                    elm_syntax_node_unbox(output_node),
+                );
+            }
         }
         ElmSyntaxType::Parenthesized(in_parens) => {
             elm_syntax_highlight_type_into(highlighted_so_far, elm_syntax_node_unbox(in_parens));
@@ -7477,69 +7583,94 @@ fn elm_syntax_highlight_type_into(
                     range: field.name.range,
                     value: ElmSyntaxHighlightKind::Field,
                 });
-                highlighted_so_far.push(ElmSyntaxNode {
-                    range: field.colon_key_symbol_range,
-                    value: ElmSyntaxHighlightKind::KeySymbol,
-                });
-                elm_syntax_highlight_type_into(
-                    highlighted_so_far,
-                    elm_syntax_node_as_ref(&field.value),
-                );
+                if let Some(colon_key_symbol_range) = field.colon_key_symbol_range {
+                    highlighted_so_far.push(ElmSyntaxNode {
+                        range: colon_key_symbol_range,
+                        value: ElmSyntaxHighlightKind::KeySymbol,
+                    });
+                }
+                if let Some(field_value_node) = &field.value {
+                    elm_syntax_highlight_type_into(
+                        highlighted_so_far,
+                        elm_syntax_node_as_ref(field_value_node),
+                    );
+                }
             }
         }
         ElmSyntaxType::RecordExtension {
-            record_variable,
+            record_variable: maybe_record_variable,
             bar_key_symbol_range,
-            field0,
-            field1_up,
+            fields,
         } => {
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: record_variable.range,
-                value: ElmSyntaxHighlightKind::TypeVariable,
-            });
+            if let Some(record_variable_node) = maybe_record_variable {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: record_variable_node.range,
+                    value: ElmSyntaxHighlightKind::TypeVariable,
+                });
+            }
             highlighted_so_far.push(ElmSyntaxNode {
                 range: *bar_key_symbol_range,
                 value: ElmSyntaxHighlightKind::KeySymbol,
             });
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: field0.name.range,
-                value: ElmSyntaxHighlightKind::Field,
-            });
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: field0.colon_key_symbol_range,
-                value: ElmSyntaxHighlightKind::KeySymbol,
-            });
-            elm_syntax_highlight_type_into(
-                highlighted_so_far,
-                elm_syntax_node_unbox(&field0.value),
-            );
-            for field in field1_up {
+            for field in fields {
                 highlighted_so_far.push(ElmSyntaxNode {
                     range: field.name.range,
                     value: ElmSyntaxHighlightKind::Field,
                 });
-                highlighted_so_far.push(ElmSyntaxNode {
-                    range: field.colon_key_symbol_range,
-                    value: ElmSyntaxHighlightKind::KeySymbol,
-                });
-                elm_syntax_highlight_type_into(
-                    highlighted_so_far,
-                    elm_syntax_node_as_ref(&field.value),
-                );
+                if let Some(colon_key_symbol_range) = field.colon_key_symbol_range {
+                    highlighted_so_far.push(ElmSyntaxNode {
+                        range: colon_key_symbol_range,
+                        value: ElmSyntaxHighlightKind::KeySymbol,
+                    });
+                }
+                if let Some(field_value_node) = &field.value {
+                    elm_syntax_highlight_type_into(
+                        highlighted_so_far,
+                        elm_syntax_node_as_ref(field_value_node),
+                    );
+                }
             }
         }
         ElmSyntaxType::Triple {
-            part0,
-            part1,
-            part2,
+            part0: maybe_part0,
+            part1: maybe_part1,
+            part2: maybe_part2,
         } => {
-            elm_syntax_highlight_type_into(highlighted_so_far, elm_syntax_node_unbox(part0));
-            elm_syntax_highlight_type_into(highlighted_so_far, elm_syntax_node_unbox(part1));
-            elm_syntax_highlight_type_into(highlighted_so_far, elm_syntax_node_unbox(part2));
+            if let Some(part0_node) = maybe_part0 {
+                elm_syntax_highlight_type_into(
+                    highlighted_so_far,
+                    elm_syntax_node_unbox(part0_node),
+                );
+            }
+            if let Some(part1_node) = maybe_part1 {
+                elm_syntax_highlight_type_into(
+                    highlighted_so_far,
+                    elm_syntax_node_unbox(part1_node),
+                );
+            }
+            if let Some(part2_node) = maybe_part2 {
+                elm_syntax_highlight_type_into(
+                    highlighted_so_far,
+                    elm_syntax_node_unbox(part2_node),
+                );
+            }
         }
-        ElmSyntaxType::Tuple { part0, part1 } => {
-            elm_syntax_highlight_type_into(highlighted_so_far, elm_syntax_node_unbox(part0));
-            elm_syntax_highlight_type_into(highlighted_so_far, elm_syntax_node_unbox(part1));
+        ElmSyntaxType::Tuple {
+            part0: maybe_part0,
+            part1: maybe_part1,
+        } => {
+            if let Some(part0_node) = maybe_part0 {
+                elm_syntax_highlight_type_into(
+                    highlighted_so_far,
+                    elm_syntax_node_unbox(part0_node),
+                );
+            }
+            if let Some(part1_node) = maybe_part1 {
+                elm_syntax_highlight_type_into(
+                    highlighted_so_far,
+                    elm_syntax_node_unbox(part1_node),
+                );
+            }
         }
         ElmSyntaxType::Unit => {
             highlighted_so_far.push(ElmSyntaxNode {
@@ -7579,10 +7710,9 @@ fn elm_syntax_highlight_expression_into(
             }
         }
         ElmSyntaxExpression::CaseOf {
-            matched,
-            of_keyword_range,
-            case0,
-            case1_up,
+            matched: maybe_matched,
+            of_keyword_range: maybe_of_keyword_range,
+            cases,
         } => {
             highlighted_so_far.push(ElmSyntaxNode {
                 range: lsp_types::Range {
@@ -7591,39 +7721,35 @@ fn elm_syntax_highlight_expression_into(
                 },
                 value: ElmSyntaxHighlightKind::KeySymbol,
             });
-            elm_syntax_highlight_expression_into(
-                highlighted_so_far,
-                elm_syntax_node_unbox(matched),
-            );
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: *of_keyword_range,
-                value: ElmSyntaxHighlightKind::KeySymbol,
-            });
-            elm_syntax_highlight_pattern_into(
-                highlighted_so_far,
-                elm_syntax_node_as_ref(&case0.pattern),
-            );
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: case0.arrow_key_symbol_range,
-                value: ElmSyntaxHighlightKind::KeySymbol,
-            });
-            elm_syntax_highlight_expression_into(
-                highlighted_so_far,
-                elm_syntax_node_unbox(&case0.result),
-            );
-            for case in case1_up {
+            if let Some(matched_node) = maybe_matched {
+                elm_syntax_highlight_expression_into(
+                    highlighted_so_far,
+                    elm_syntax_node_unbox(matched_node),
+                );
+            }
+            if let &Some(of_keyword_range) = maybe_of_keyword_range {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: of_keyword_range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+            }
+            for case in cases {
                 elm_syntax_highlight_pattern_into(
                     highlighted_so_far,
                     elm_syntax_node_as_ref(&case.pattern),
                 );
-                highlighted_so_far.push(ElmSyntaxNode {
-                    range: case.arrow_key_symbol_range,
-                    value: ElmSyntaxHighlightKind::KeySymbol,
-                });
-                elm_syntax_highlight_expression_into(
-                    highlighted_so_far,
-                    elm_syntax_node_as_ref(&case.result),
-                );
+                if let Some(arrow_key_symbol_range) = case.arrow_key_symbol_range {
+                    highlighted_so_far.push(ElmSyntaxNode {
+                        range: arrow_key_symbol_range,
+                        value: ElmSyntaxHighlightKind::KeySymbol,
+                    });
+                }
+                if let Some(result_node) = &case.result {
+                    elm_syntax_highlight_expression_into(
+                        highlighted_so_far,
+                        elm_syntax_node_as_ref(result_node),
+                    );
+                }
             }
         }
         ElmSyntaxExpression::Char(_) => {
@@ -7642,11 +7768,11 @@ fn elm_syntax_highlight_expression_into(
             });
         }
         ElmSyntaxExpression::IfThenElse {
-            condition,
-            then_keyword_range,
-            on_true,
-            else_keyword_range,
-            on_false,
+            condition: maybe_condition,
+            then_keyword_range: maybe_then_keyword_range,
+            on_true: maybe_on_true,
+            else_keyword_range: maybe_else_keyword_range,
+            on_false: maybe_on_false,
         } => {
             highlighted_so_far.push(ElmSyntaxNode {
                 range: lsp_types::Range {
@@ -7655,38 +7781,53 @@ fn elm_syntax_highlight_expression_into(
                 },
                 value: ElmSyntaxHighlightKind::KeySymbol,
             });
-            elm_syntax_highlight_expression_into(
-                highlighted_so_far,
-                elm_syntax_node_unbox(condition),
-            );
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: *then_keyword_range,
-                value: ElmSyntaxHighlightKind::KeySymbol,
-            });
-            elm_syntax_highlight_expression_into(
-                highlighted_so_far,
-                elm_syntax_node_unbox(on_true),
-            );
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: *else_keyword_range,
-                value: ElmSyntaxHighlightKind::KeySymbol,
-            });
-            elm_syntax_highlight_expression_into(
-                highlighted_so_far,
-                elm_syntax_node_unbox(on_false),
-            );
+            if let Some(condition_node) = maybe_condition {
+                elm_syntax_highlight_expression_into(
+                    highlighted_so_far,
+                    elm_syntax_node_unbox(condition_node),
+                );
+            }
+            if let &Some(then_keyword_range) = maybe_then_keyword_range {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: then_keyword_range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+            }
+            if let Some(on_true_node) = maybe_on_true {
+                elm_syntax_highlight_expression_into(
+                    highlighted_so_far,
+                    elm_syntax_node_unbox(on_true_node),
+                );
+            }
+            if let Some(else_keyword_range) = maybe_else_keyword_range {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: *else_keyword_range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+            }
+            if let Some(on_false_node) = maybe_on_false {
+                elm_syntax_highlight_expression_into(
+                    highlighted_so_far,
+                    elm_syntax_node_unbox(on_false_node),
+                );
+            }
         }
         ElmSyntaxExpression::InfixOperationIgnoringPrecedence {
             left,
             operator: operator_node,
-            right,
+            right: maybe_right,
         } => {
             elm_syntax_highlight_expression_into(highlighted_so_far, elm_syntax_node_unbox(left));
             highlighted_so_far.push(ElmSyntaxNode {
                 range: operator_node.range,
                 value: ElmSyntaxHighlightKind::KeySymbol,
             });
-            elm_syntax_highlight_expression_into(highlighted_so_far, elm_syntax_node_unbox(right));
+            if let Some(right_node) = maybe_right {
+                elm_syntax_highlight_expression_into(
+                    highlighted_so_far,
+                    elm_syntax_node_unbox(right_node),
+                );
+            }
         }
         ElmSyntaxExpression::Integer { .. } => {
             highlighted_so_far.push(ElmSyntaxNode {
@@ -7695,10 +7836,9 @@ fn elm_syntax_highlight_expression_into(
             });
         }
         ElmSyntaxExpression::Lambda {
-            parameter0,
-            parameter1_up,
-            arrow_key_symbol_range,
-            result,
+            parameters,
+            arrow_key_symbol_range: maybe_arrow_key_symbol_range,
+            result: maybe_result,
         } => {
             highlighted_so_far.push(ElmSyntaxNode {
                 range: lsp_types::Range {
@@ -7707,27 +7847,29 @@ fn elm_syntax_highlight_expression_into(
                 },
                 value: ElmSyntaxHighlightKind::KeySymbol,
             });
-            elm_syntax_highlight_pattern_into(
-                highlighted_so_far,
-                elm_syntax_node_as_ref(parameter0),
-            );
-            for parameter_node in parameter1_up {
+            for parameter_node in parameters {
                 elm_syntax_highlight_pattern_into(
                     highlighted_so_far,
                     elm_syntax_node_as_ref(parameter_node),
                 );
             }
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: *arrow_key_symbol_range,
-                value: ElmSyntaxHighlightKind::KeySymbol,
-            });
-            elm_syntax_highlight_expression_into(highlighted_so_far, elm_syntax_node_unbox(result));
+            if let &Some(arrow_key_symbol_range) = maybe_arrow_key_symbol_range {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: arrow_key_symbol_range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+            }
+            if let Some(result_node) = maybe_result {
+                elm_syntax_highlight_expression_into(
+                    highlighted_so_far,
+                    elm_syntax_node_unbox(result_node),
+                );
+            }
         }
         ElmSyntaxExpression::LetIn {
-            declaration0,
-            declaration1_up,
-            in_keyword_range,
-            result,
+            declarations,
+            in_keyword_range: maybe_in_keyword_range,
+            result: maybe_result,
         } => {
             highlighted_so_far.push(ElmSyntaxNode {
                 range: lsp_types::Range {
@@ -7736,21 +7878,24 @@ fn elm_syntax_highlight_expression_into(
                 },
                 value: ElmSyntaxHighlightKind::KeySymbol,
             });
-            elm_syntax_highlight_let_declaration_into(
-                highlighted_so_far,
-                elm_syntax_node_unbox(declaration0),
-            );
-            for let_declaration_node in declaration1_up {
+            for let_declaration_node in declarations {
                 elm_syntax_highlight_let_declaration_into(
                     highlighted_so_far,
                     elm_syntax_node_as_ref(let_declaration_node),
                 );
             }
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: *in_keyword_range,
-                value: ElmSyntaxHighlightKind::KeySymbol,
-            });
-            elm_syntax_highlight_expression_into(highlighted_so_far, elm_syntax_node_unbox(result));
+            if let &Some(in_keyword_range) = maybe_in_keyword_range {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: in_keyword_range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+            }
+            if let Some(result_node) = maybe_result {
+                elm_syntax_highlight_expression_into(
+                    highlighted_so_far,
+                    elm_syntax_node_unbox(result_node),
+                );
+            }
         }
         ElmSyntaxExpression::List(elements) => {
             for element_node in elements {
@@ -7760,11 +7905,13 @@ fn elm_syntax_highlight_expression_into(
                 );
             }
         }
-        ElmSyntaxExpression::Negation(in_negation) => {
-            elm_syntax_highlight_expression_into(
-                highlighted_so_far,
-                elm_syntax_node_unbox(in_negation),
-            );
+        ElmSyntaxExpression::Negation(maybe_in_negation) => {
+            if let Some(in_negation_node) = maybe_in_negation {
+                elm_syntax_highlight_expression_into(
+                    highlighted_so_far,
+                    elm_syntax_node_unbox(in_negation_node),
+                );
+            }
         }
         ElmSyntaxExpression::OperatorFunction(_) => {
             highlighted_so_far.push(ElmSyntaxNode {
@@ -7787,19 +7934,23 @@ fn elm_syntax_highlight_expression_into(
                     range: field.name.range,
                     value: ElmSyntaxHighlightKind::Field,
                 });
-                highlighted_so_far.push(ElmSyntaxNode {
-                    range: field.equals_key_symbol_range,
-                    value: ElmSyntaxHighlightKind::KeySymbol,
-                });
-                elm_syntax_highlight_expression_into(
-                    highlighted_so_far,
-                    elm_syntax_node_as_ref(&field.value),
-                );
+                if let Some(equals_key_symbol_range) = field.equals_key_symbol_range {
+                    highlighted_so_far.push(ElmSyntaxNode {
+                        range: equals_key_symbol_range,
+                        value: ElmSyntaxHighlightKind::KeySymbol,
+                    });
+                }
+                if let Some(value_node) = &field.value {
+                    elm_syntax_highlight_expression_into(
+                        highlighted_so_far,
+                        elm_syntax_node_as_ref(value_node),
+                    );
+                }
             }
         }
         ElmSyntaxExpression::RecordAccess {
             record: record_node,
-            field: field_name_node,
+            field: maybe_field_name,
         } => {
             elm_syntax_highlight_expression_into(
                 highlighted_so_far,
@@ -7808,14 +7959,16 @@ fn elm_syntax_highlight_expression_into(
             highlighted_so_far.push(ElmSyntaxNode {
                 range: lsp_types::Range {
                     start: record_node.range.end,
-                    end: field_name_node.range.start,
+                    end: lsp_position_add_characters(record_node.range.end, 1),
                 },
                 value: ElmSyntaxHighlightKind::KeySymbol,
             });
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: field_name_node.range,
-                value: ElmSyntaxHighlightKind::Field,
-            });
+            if let Some(field_name_node) = maybe_field_name {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: field_name_node.range,
+                    value: ElmSyntaxHighlightKind::Field,
+                });
+            }
         }
         ElmSyntaxExpression::RecordAccessFunction(_) => {
             let field_name_start_position =
@@ -7836,54 +7989,53 @@ fn elm_syntax_highlight_expression_into(
             });
         }
         ElmSyntaxExpression::RecordUpdate {
-            record_variable,
+            record_variable: maybe_record_variable,
             bar_key_symbol_range,
-            field0,
-            field1_up,
+            fields,
         } => {
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: record_variable.range,
-                value: ElmSyntaxHighlightKind::Variable,
-            });
+            if let Some(record_variable_node) = maybe_record_variable {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: record_variable_node.range,
+                    value: ElmSyntaxHighlightKind::Variable,
+                });
+            }
             highlighted_so_far.push(ElmSyntaxNode {
                 range: *bar_key_symbol_range,
                 value: ElmSyntaxHighlightKind::KeySymbol,
             });
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: field0.name.range,
-                value: ElmSyntaxHighlightKind::Field,
-            });
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: field0.equals_key_symbol_range,
-                value: ElmSyntaxHighlightKind::KeySymbol,
-            });
-            elm_syntax_highlight_expression_into(
-                highlighted_so_far,
-                elm_syntax_node_unbox(&field0.value),
-            );
-            for field in field1_up {
+            for field in fields {
                 highlighted_so_far.push(ElmSyntaxNode {
                     range: field.name.range,
                     value: ElmSyntaxHighlightKind::Field,
                 });
-                highlighted_so_far.push(ElmSyntaxNode {
-                    range: field.equals_key_symbol_range,
-                    value: ElmSyntaxHighlightKind::KeySymbol,
-                });
-                elm_syntax_highlight_expression_into(
-                    highlighted_so_far,
-                    elm_syntax_node_as_ref(&field.value),
-                );
+                if let Some(equals_key_symbol_range) = field.equals_key_symbol_range {
+                    highlighted_so_far.push(ElmSyntaxNode {
+                        range: equals_key_symbol_range,
+                        value: ElmSyntaxHighlightKind::KeySymbol,
+                    });
+                }
+                if let Some(value_node) = &field.value {
+                    elm_syntax_highlight_expression_into(
+                        highlighted_so_far,
+                        elm_syntax_node_as_ref(value_node),
+                    );
+                }
             }
         }
-        ElmSyntaxExpression::Reference(reference) => {
+        ElmSyntaxExpression::Reference {
+            qualification,
+            name,
+        } => {
             elm_syntax_highlight_qualified_into(
                 highlighted_so_far,
                 ElmSyntaxNode {
                     range: elm_syntax_expression_node.range,
-                    value: reference,
+                    value: ElmQualified {
+                        qualification: qualification.as_str(),
+                        name: name.as_str(),
+                    },
                 },
-                if reference.name.starts_with(|c| c.is_uppercase()) {
+                if name.starts_with(|c: char| c.is_uppercase()) {
                     ElmSyntaxHighlightKind::Variant
                 } else {
                     ElmSyntaxHighlightKind::Variable
@@ -7896,14 +8048,14 @@ fn elm_syntax_highlight_expression_into(
         } => {
             highlighted_so_far.push(ElmSyntaxNode {
                 range: match quoting_style {
-                    elm::ElmSyntaxStringQuotingStyle::StringSingleQuoted => lsp_types::Range {
+                    ElmSyntaxStringQuotingStyle::SingleQuoted => lsp_types::Range {
                         start: lsp_position_add_characters(
                             elm_syntax_expression_node.range.start,
                             1,
                         ),
                         end: lsp_position_add_characters(elm_syntax_expression_node.range.end, -1),
                     },
-                    elm::ElmSyntaxStringQuotingStyle::StringTripleQuoted => lsp_types::Range {
+                    ElmSyntaxStringQuotingStyle::TripleQuoted => lsp_types::Range {
                         start: lsp_position_add_characters(
                             elm_syntax_expression_node.range.start,
                             3,
@@ -7915,17 +8067,45 @@ fn elm_syntax_highlight_expression_into(
             });
         }
         ElmSyntaxExpression::Triple {
-            part0,
-            part1,
-            part2,
+            part0: maybe_part0,
+            part1: maybe_part1,
+            part2: maybe_part2,
         } => {
-            elm_syntax_highlight_expression_into(highlighted_so_far, elm_syntax_node_unbox(part0));
-            elm_syntax_highlight_expression_into(highlighted_so_far, elm_syntax_node_unbox(part1));
-            elm_syntax_highlight_expression_into(highlighted_so_far, elm_syntax_node_unbox(part2));
+            if let Some(part0_node) = maybe_part0 {
+                elm_syntax_highlight_expression_into(
+                    highlighted_so_far,
+                    elm_syntax_node_unbox(part0_node),
+                );
+            }
+            if let Some(part1_node) = maybe_part1 {
+                elm_syntax_highlight_expression_into(
+                    highlighted_so_far,
+                    elm_syntax_node_unbox(part1_node),
+                );
+            }
+            if let Some(part2_node) = maybe_part2 {
+                elm_syntax_highlight_expression_into(
+                    highlighted_so_far,
+                    elm_syntax_node_unbox(part2_node),
+                );
+            }
         }
-        ElmSyntaxExpression::Tuple { part0, part1 } => {
-            elm_syntax_highlight_expression_into(highlighted_so_far, elm_syntax_node_unbox(part0));
-            elm_syntax_highlight_expression_into(highlighted_so_far, elm_syntax_node_unbox(part1));
+        ElmSyntaxExpression::Tuple {
+            part0: maybe_part0,
+            part1: maybe_part1,
+        } => {
+            if let Some(part0_node) = maybe_part0 {
+                elm_syntax_highlight_expression_into(
+                    highlighted_so_far,
+                    elm_syntax_node_unbox(part0_node),
+                );
+            }
+            if let Some(part1_node) = maybe_part1 {
+                elm_syntax_highlight_expression_into(
+                    highlighted_so_far,
+                    elm_syntax_node_unbox(part1_node),
+                );
+            }
         }
         ElmSyntaxExpression::Unit => {
             highlighted_so_far.push(ElmSyntaxNode {
@@ -7943,45 +8123,52 @@ fn elm_syntax_highlight_let_declaration_into(
     match elm_syntax_let_declaration_node.value {
         ElmSyntaxLetDeclaration::Destructuring {
             pattern: destructuring_pattern_node,
-            equals_key_symbol_range,
-            expression: destructured_expression_node,
+            equals_key_symbol_range: maybe_equals_key_symbol_range,
+            expression: maybe_destructured_expression,
         } => {
             elm_syntax_highlight_pattern_into(
                 highlighted_so_far,
                 elm_syntax_node_as_ref(destructuring_pattern_node),
             );
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: *equals_key_symbol_range,
-                value: ElmSyntaxHighlightKind::KeySymbol,
-            });
-            elm_syntax_highlight_expression_into(
-                highlighted_so_far,
-                elm_syntax_node_as_ref(destructured_expression_node),
-            );
+            if let &Some(equals_key_symbol_range) = maybe_equals_key_symbol_range {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: equals_key_symbol_range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+            }
+            if let Some(destructured_expression_node) = maybe_destructured_expression {
+                elm_syntax_highlight_expression_into(
+                    highlighted_so_far,
+                    elm_syntax_node_as_ref(destructured_expression_node),
+                );
+            }
         }
         ElmSyntaxLetDeclaration::VariableDeclaration {
-            start_name: _,
+            start_name: start_name_node,
             signature: maybe_signature,
-            implementation_name_range,
             parameters,
-            equals_key_symbol_range,
-            result,
+            equals_key_symbol_range: maybe_equals_key_symbol_range,
+            result: maybe_result,
         } => {
             match maybe_signature {
                 None => {}
                 Some(signature) => {
-                    highlighted_so_far.push(ElmSyntaxNode {
-                        range: signature.name.range,
-                        value: ElmSyntaxHighlightKind::VariableDeclaration,
-                    });
-                    elm_syntax_highlight_type_into(
-                        highlighted_so_far,
-                        elm_syntax_node_as_ref(&signature.type_1),
-                    );
+                    if let Some(implementation_name_range) = signature.implementation_name_range {
+                        highlighted_so_far.push(ElmSyntaxNode {
+                            range: implementation_name_range,
+                            value: ElmSyntaxHighlightKind::VariableDeclaration,
+                        });
+                    }
+                    if let Some(signature_type_node) = &signature.type_ {
+                        elm_syntax_highlight_type_into(
+                            highlighted_so_far,
+                            elm_syntax_node_as_ref(signature_type_node),
+                        );
+                    }
                 }
             }
             highlighted_so_far.push(ElmSyntaxNode {
-                range: *implementation_name_range,
+                range: start_name_node.range,
                 value: ElmSyntaxHighlightKind::VariableDeclaration,
             });
             for parameter_node in parameters {
@@ -7990,14 +8177,18 @@ fn elm_syntax_highlight_let_declaration_into(
                     elm_syntax_node_as_ref(parameter_node),
                 );
             }
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: *equals_key_symbol_range,
-                value: ElmSyntaxHighlightKind::KeySymbol,
-            });
-            elm_syntax_highlight_expression_into(
-                highlighted_so_far,
-                elm_syntax_node_as_ref(result),
-            );
+            if let &Some(equals_key_symbol_range) = maybe_equals_key_symbol_range {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: equals_key_symbol_range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+            }
+            if let Some(result_node) = maybe_result {
+                elm_syntax_highlight_expression_into(
+                    highlighted_so_far,
+                    elm_syntax_node_as_ref(result_node),
+                );
+            }
         }
     }
 }
@@ -8012,11 +8203,16 @@ struct ParseState {
     comments: Vec<ElmSyntaxNode<ElmSyntaxComment>>,
 }
 #[derive(Clone, Debug, PartialEq)]
-enum ElmSyntaxComment {
+struct ElmSyntaxComment {
+    kind: ElmSyntaxCommentKind,
+    content: String,
+}
+#[derive(Clone, Debug, PartialEq)]
+enum ElmSyntaxCommentKind {
     /// --
-    UntilLinebreak(String),
+    UntilLinebreak,
     /// {- ... -}
-    Block(String),
+    Block,
 }
 
 fn parse_state_push_indent(state: &mut ParseState, new_indent: u16) {
@@ -8245,7 +8441,10 @@ fn parse_elm_comment_until_linebreak(state: &mut ParseState) -> bool {
                 start: position_before,
                 end: state.position,
             },
-            value: ElmSyntaxComment::UntilLinebreak(comment.to_string()),
+            value: ElmSyntaxComment {
+                content: comment.to_string(),
+                kind: ElmSyntaxCommentKind::UntilLinebreak,
+            },
         });
         true
     } else {
@@ -8257,11 +8456,11 @@ fn parse_elm_comment_block(state: &mut ParseState) -> bool {
     if state.source[state.offset_utf8..].starts_with("{-|") {
         return false;
     }
-    let start_offset_utf8: usize = state.offset_utf8;
     let start_position: lsp_types::Position = state.position;
     if !parse_symbol(state, "{-") {
         return false;
     }
+    let content_start_offset_utf8: usize = state.offset_utf8;
     let mut nesting_level: u32 = 1;
     'until_fully_unnested: loop {
         if parse_linebreak(state) {
@@ -8284,20 +8483,23 @@ fn parse_elm_comment_block(state: &mut ParseState) -> bool {
             start: start_position,
             end: state.position,
         },
-        value: ElmSyntaxComment::Block(
-            state.source[start_offset_utf8..state.offset_utf8].to_string(),
-        ),
+        value: ElmSyntaxComment {
+            content: state.source[content_start_offset_utf8..state.offset_utf8]
+                .trim_end_matches("-}")
+                .to_string(),
+            kind: ElmSyntaxCommentKind::Block,
+        },
     });
     true
 }
 fn parse_elm_documentation_comment_block_node(
     state: &mut ParseState,
 ) -> Option<ElmSyntaxNode<String>> {
-    let start_offset_utf8: usize = state.offset_utf8;
     let start_position: lsp_types::Position = state.position;
     if !parse_symbol(state, "{-|") {
         return None;
     }
+    let content_start_offset_utf8: usize = state.offset_utf8;
     let mut nesting_level: u32 = 1;
     'until_fully_unnested: loop {
         if parse_linebreak(state) {
@@ -8320,7 +8522,9 @@ fn parse_elm_documentation_comment_block_node(
             start: start_position,
             end: state.position,
         },
-        value: state.source[start_offset_utf8..state.offset_utf8].to_string(),
+        value: state.source[content_start_offset_utf8..state.offset_utf8]
+            .trim_end_matches("-}")
+            .to_string(),
     })
 }
 fn parse_elm_lowercase_as_string(state: &mut ParseState) -> Option<String> {
@@ -9169,12 +9373,12 @@ fn parse_elm_syntax_pattern_string(state: &mut ParseState) -> Option<ElmSyntaxPa
     parse_elm_string_triple_quoted(state)
         .map(|content| ElmSyntaxPattern::String {
             content: content,
-            quoting_style: elm::ElmSyntaxStringQuotingStyle::StringTripleQuoted,
+            quoting_style: ElmSyntaxStringQuotingStyle::TripleQuoted,
         })
         .or_else(|| {
             parse_elm_string_single_quoted(state).map(|content| ElmSyntaxPattern::String {
                 content: content,
-                quoting_style: elm::ElmSyntaxStringQuotingStyle::StringSingleQuoted,
+                quoting_style: ElmSyntaxStringQuotingStyle::SingleQuoted,
             })
         })
 }
@@ -9999,12 +10203,12 @@ fn parse_elm_syntax_expression_string(state: &mut ParseState) -> Option<ElmSynta
     parse_elm_string_triple_quoted(state)
         .map(|content| ElmSyntaxExpression::String {
             content: content,
-            quoting_style: elm::ElmSyntaxStringQuotingStyle::StringTripleQuoted,
+            quoting_style: ElmSyntaxStringQuotingStyle::TripleQuoted,
         })
         .or_else(|| {
             parse_elm_string_single_quoted(state).map(|content| ElmSyntaxExpression::String {
                 content: content,
-                quoting_style: elm::ElmSyntaxStringQuotingStyle::StringSingleQuoted,
+                quoting_style: ElmSyntaxStringQuotingStyle::SingleQuoted,
             })
         })
 }
@@ -10081,7 +10285,7 @@ fn parse_elm_syntax_expression_operator_function_or_parenthesized_or_tuple_or_tr
         },
     )
 }
-fn parse_elm_syntax_declaration(
+fn parse_elm_syntax_declaration_node(
     state: &mut ParseState,
 ) -> Option<ElmSyntaxNode<ElmSyntaxDeclaration>> {
     parse_elm_syntax_declaration_choice_type_or_type_alias_node(state)
@@ -10293,7 +10497,7 @@ fn parse_elm_syntax_documented_declaration(
     state: &mut ParseState,
 ) -> Option<ElmSyntaxDocumentedDeclaration> {
     match parse_elm_documentation_comment_block_node(state) {
-        None => parse_elm_syntax_declaration_variable_node(state).map(|declaration_node| {
+        None => parse_elm_syntax_declaration_node(state).map(|declaration_node| {
             ElmSyntaxDocumentedDeclaration {
                 documentation: None,
                 declaration: Some(declaration_node),
@@ -10302,7 +10506,7 @@ fn parse_elm_syntax_documented_declaration(
         Some(documentation_node) => {
             parse_elm_whitespace_and_comments(state);
             let maybe_declaration: Option<ElmSyntaxNode<ElmSyntaxDeclaration>> =
-                parse_elm_syntax_declaration_variable_node(state);
+                parse_elm_syntax_declaration_node(state);
             Some(ElmSyntaxDocumentedDeclaration {
                 documentation: Some(documentation_node),
                 declaration: maybe_declaration,
