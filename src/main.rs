@@ -313,14 +313,14 @@ fn initialize_state_for_project_into(
 ) {
     let elm_json_path: std::path::PathBuf = std::path::Path::join(&project_path, "elm.json");
     let maybe_elm_json_value: Option<serde_json::Value> = std::fs::read_to_string(&elm_json_path)
+        .map_err(|io_error| {
+            eprintln!("I couldn't read this elm.json file at {elm_json_path:?}: {io_error}")
+        })
         .ok()
         .and_then(|elm_json_source| {
             serde_json::from_str(&elm_json_source)
                 .map_err(|json_parse_error: serde_json::Error| {
-                    eprintln!(
-                        "I couldn't read this elm.json as JSON: {}",
-                        json_parse_error
-                    )
+                    eprintln!("I couldn't read this elm.json as JSON: {json_parse_error}")
                 })
                 .ok()
         });
@@ -488,10 +488,10 @@ fn parse_elm_json<'a>(json: &'a serde_json::Value) -> Result<ElmJson<'a>, String
                                     direct_dependencies,
                                 )
                             }
-                            _ => Ok(std::collections::HashMap::new()),
+                            _ => Err("must have field direct in dependencies".to_string()),
                         }
                     }
-                    _ => Ok(std::collections::HashMap::new()),
+                    _ => Err("must have field dependencies".to_string()),
                 }?;
                 let mut source_directories: Vec<&str> = Vec::new();
                 match json_object.get("source-directories") {
@@ -509,7 +509,7 @@ fn parse_elm_json<'a>(json: &'a serde_json::Value) -> Result<ElmJson<'a>, String
                             }
                         }
                     }
-                    _ => {}
+                    _ => return Err("must have field source-directories".to_string()),
                 }
                 Ok(ElmJson::Application {
                     source_directories: source_directories,
@@ -547,7 +547,7 @@ fn parse_elm_json<'a>(json: &'a serde_json::Value) -> Result<ElmJson<'a>, String
                                 dependency_minimum_versions,
                             )
                         }
-                        _ => Ok(std::collections::HashMap::new()),
+                        _ => Err("must have field dependencies".to_string()),
                     }?;
                 let mut exposed_modules: Vec<&str> = Vec::new();
                 match json_object.get("exposed-modules") {
@@ -579,11 +579,13 @@ fn parse_elm_json<'a>(json: &'a serde_json::Value) -> Result<ElmJson<'a>, String
                                         }
                                     }
                                 }
-                                _ => {}
+                                _ => {
+                                    return Err("exposed module group must be an array".to_string());
+                                }
                             }
                         }
                     }
-                    _ => {}
+                    _ => return Err("must have field exposed-modules".to_string()),
                 }
                 Ok(ElmJson::Package {
                     dependency_minimum_versions,
