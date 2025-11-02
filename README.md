@@ -29,6 +29,7 @@ If you're using vs code (or forks) (which do not appear to have a built-in way t
 ## not sure
 Please give me feedback on this
 - adding necessary imports when autocompleting
+- when suggesting module names, only show those that share the prefix before the last . 
 - your idea 👀
 
 ## TODO

@@ -2253,177 +2253,114 @@ fn respond_to_completion(
             None
         }
         ElmSyntaxSymbol::ModuleName(module_name) => {
-            if Some(module_name)
-                == completion_project_module
+            Some(project_module_name_completions_for_except(
+                state,
+                &completion_project_module.project,
+                module_name,
+                completion_project_module
                     .module_syntax
                     .header
                     .as_ref()
                     .and_then(|header| header.module_name.as_ref())
-                    .map(|node| node.value.as_str())
-            {
-                return None;
-            }
-            Some(
-                completion_project_module
-                    .project
-                    .dependency_exposed_module_names
-                    .iter()
-                    .filter_map(
-                        |(importable_dependency_module_name, importable_dependency_module_origin)| {
-                            let importable_dependency_module_state =
-                                state.projects.get(&importable_dependency_module_origin.project_path)
-                                .and_then(|dependency_state| {
-                                    dependency_state.modules.get(&importable_dependency_module_origin.module_path)
-                                })?;
-                            let maybe_importable_dependency_module_documentation_comment =
-                                importable_dependency_module_state
-                                    .syntax
-                                    .documentation
-                                    .as_ref();
-                            Some(lsp_types::CompletionItem {
-                                label: importable_dependency_module_name.clone(),
-                                kind: Some(lsp_types::CompletionItemKind::MODULE),
-                                documentation: Some(
-                                    lsp_types::Documentation::MarkupContent(
-                                        lsp_types::MarkupContent {
-                                            kind: lsp_types::MarkupKind::Markdown,
-                                            value: match maybe_importable_dependency_module_documentation_comment {
-                                                None => "_module has no documentation comment_".to_string(),
-                                                Some(module_documentation) => {
-                                                    documentation_comment_to_markdown(&module_documentation.value)
-                                                }
-                                            },
-                                        },
-                                    ),
-                                ),
-                                ..lsp_types::CompletionItem::default()
-                            })
-                        },
-                    )
-                    .chain(
-                        completion_project_module
-                            .project
-                            .modules
-                            .iter()
-                            .filter_map(|(_, project_module)| {
-                                let project_module_name = project_module
-                                        .syntax
-                                        .header
-                                        .as_ref()
-                                        .and_then(|header| header.module_name.as_ref())
-                                        .map(|node| &node.value)?;
-                                let maybe_project_module_documentation_comment = project_module
-                                    .syntax
-                                    .documentation
-                                    .as_ref();
-                                Some(lsp_types::CompletionItem {
-                                    label: project_module_name.clone(),
-                                    kind: Some(
-                                        lsp_types::CompletionItemKind::MODULE,
-                                    ),
-                                    documentation: Some(
-                                        lsp_types::Documentation::MarkupContent(
-                                            lsp_types::MarkupContent {
-                                                kind:
-                                                    lsp_types::MarkupKind::Markdown,
-                                                value:
-                                                    match maybe_project_module_documentation_comment {
-                                                        None => "_module has no documentation comment_".to_string(),
-                                                        Some(module_documentation) => {
-                                                            documentation_comment_to_markdown(&module_documentation.value)
-                                                        }
-                                                    },
-                                            },
-                                        ),
-                                    ),
-                                    ..lsp_types::CompletionItem::default()
-                                })
-                            }),
-                    )
-                    .collect::<Vec<_>>(),
-            )
+                    .map(|node| node.value.as_str()),
+            ))
         }
         ElmSyntaxSymbol::VariableOrVariantOrOperator {
-            module_origin,
-            name: _,
+            module_origin: to_complete_qualification_or_module_origin,
+            name: to_complete_name,
         } => {
-            let module_origin: &str = if module_origin.is_empty() {
-                &completion_project_module
-                    .module_syntax
-                    .header
-                    .as_ref()
-                    .and_then(|header| header.module_name.as_ref())
-                    .map(|node| node.value.as_str())
-                    .unwrap_or("")
+            let maybe_completion_module_name: Option<&str> = completion_project_module
+                .module_syntax
+                .header
+                .as_ref()
+                .and_then(|header| header.module_name.as_ref())
+                .map(|node| node.value.as_str());
+            let full_name_to_complete: String =
+                if to_complete_qualification_or_module_origin.is_empty() {
+                    format!("{to_complete_name}")
+                } else {
+                    format!("{to_complete_qualification_or_module_origin}.{to_complete_name}")
+                };
+            let mut completion_items: Vec<lsp_types::CompletionItem> = if (to_complete_name
+                .is_empty())
+                || to_complete_name.starts_with(char::is_uppercase)
+            {
+                project_module_name_completions_for_except(
+                    state,
+                    &completion_project_module.project,
+                    &full_name_to_complete,
+                    maybe_completion_module_name,
+                )
             } else {
-                module_origin
+                Vec::new()
             };
-            let (_, origin_module_state) = project_state_get_module_with_name(
+            let module_origin: &str = if to_complete_qualification_or_module_origin.is_empty() {
+                if to_complete_name.starts_with(char::is_uppercase) {
+                    to_complete_name
+                } else {
+                    maybe_completion_module_name.unwrap_or("")
+                }
+            } else {
+                to_complete_qualification_or_module_origin
+            };
+            if let Some((_, origin_module_state)) = project_state_get_module_with_name(
                 state,
                 completion_project_module.project,
                 module_origin,
-            )?;
-            let module_origin_lookup: ModuleOriginLookup = elm_syntax_module_create_origin_lookup(
-                state,
-                completion_project_module.project,
-                &origin_module_state.syntax,
-            );
-            let variable_and_open_choice_type_exposes_from_origin_module_or_none_if_all =
-                if Some(module_origin)
-                    == completion_project_module
-                        .module_syntax
-                        .header
-                        .as_ref()
-                        .and_then(|header| header.module_name.as_ref())
-                        .map(|node| node.value.as_str())
-                {
-                    None
-                } else {
-                    match origin_module_state
-                        .syntax
-                        .header
-                        .as_ref()
-                        .and_then(|header| header.exposing.as_ref())
-                        .and_then(|exposing| exposing.specific.as_ref())
-                        .map(|node| &node.value)
-                    {
-                        None | Some(ElmSyntaxExposingSpecific::All(_)) => None,
-                        Some(ElmSyntaxExposingSpecific::Explicit(exposes)) => Some(
-                            exposes
-                                .iter()
-                                .filter_map(|expose_node| match &expose_node.value {
-                                    ElmSyntaxExpose::ChoiceTypeIncludingVariants {
-                                        name: open_choice_type_name,
-                                        open_range: _,
-                                    } => Some(open_choice_type_name.value.as_str()),
-                                    ElmSyntaxExpose::Operator(operator_symbol) => {
-                                        operator_symbol.as_ref().map(|node| node.value)
-                                    }
-                                    ElmSyntaxExpose::Type(_) => None,
-                                    ElmSyntaxExpose::Variable(name) => Some(name.as_str()),
-                                })
-                                .collect::<std::collections::HashSet<_>>(),
-                        ),
-                    }
-                };
-
-            let mut completion_items: Vec<lsp_types::CompletionItem> = Vec::new();
-            for (origin_module_declaration_node, origin_module_declaration_documentation) in
-                origin_module_state.syntax.declarations.iter().filter_map(
-                    |documented_declaration| {
-                        documented_declaration
-                            .declaration
+            ) {
+                let module_origin_lookup: ModuleOriginLookup =
+                    elm_syntax_module_create_origin_lookup(
+                        state,
+                        completion_project_module.project,
+                        &origin_module_state.syntax,
+                    );
+                let variable_and_open_choice_type_exposes_from_origin_module_or_none_if_all =
+                    if Some(module_origin) == maybe_completion_module_name {
+                        None
+                    } else {
+                        match origin_module_state
+                            .syntax
+                            .header
                             .as_ref()
-                            .map(|declaration_node| {
-                                (
-                                    declaration_node,
-                                    documented_declaration.documentation.as_ref(),
-                                )
-                            })
-                    },
-                )
-            {
-                match &origin_module_declaration_node.value {
+                            .and_then(|header| header.exposing.as_ref())
+                            .and_then(|exposing| exposing.specific.as_ref())
+                            .map(|node| &node.value)
+                        {
+                            None | Some(ElmSyntaxExposingSpecific::All(_)) => None,
+                            Some(ElmSyntaxExposingSpecific::Explicit(exposes)) => Some(
+                                exposes
+                                    .iter()
+                                    .filter_map(|expose_node| match &expose_node.value {
+                                        ElmSyntaxExpose::ChoiceTypeIncludingVariants {
+                                            name: open_choice_type_name,
+                                            open_range: _,
+                                        } => Some(open_choice_type_name.value.as_str()),
+                                        ElmSyntaxExpose::Operator(operator_symbol) => {
+                                            operator_symbol.as_ref().map(|node| node.value)
+                                        }
+                                        ElmSyntaxExpose::Type(_) => None,
+                                        ElmSyntaxExpose::Variable(name) => Some(name.as_str()),
+                                    })
+                                    .collect::<std::collections::HashSet<_>>(),
+                            ),
+                        }
+                    };
+                for (origin_module_declaration_node, origin_module_declaration_documentation) in
+                    origin_module_state.syntax.declarations.iter().filter_map(
+                        |documented_declaration| {
+                            documented_declaration
+                                .declaration
+                                .as_ref()
+                                .map(|declaration_node| {
+                                    (
+                                        declaration_node,
+                                        documented_declaration.documentation.as_ref(),
+                                    )
+                                })
+                        },
+                    )
+                {
+                    match &origin_module_declaration_node.value {
                     ElmSyntaxDeclaration::ChoiceType {
                         name: maybe_choice_type_name,
                         parameters,
@@ -2579,6 +2516,7 @@ fn respond_to_completion(
                         // Also, wether it needs to be surrounded by parens
                         // is not super easy to find out
                     }
+                }
                 }
             }
             Some(completion_items)
@@ -2760,6 +2698,99 @@ fn respond_to_completion(
         }
     };
     maybe_completion_items.map(lsp_types::CompletionResponse::Array)
+}
+
+fn project_module_name_completions_for_except(
+    state: &State,
+    completion_project: &ProjectState,
+    module_name_to_complete: &str,
+    module_name_exception: Option<&str>,
+) -> Vec<lsp_types::CompletionItem> {
+    let module_name_base_to_complete: String = module_name_to_complete
+        .rsplit_once(".")
+        .map(|(before_last_dot, _)| before_last_dot.to_string() + ".")
+        .unwrap_or("".to_string());
+    completion_project
+        .dependency_exposed_module_names
+        .iter()
+        .filter_map(
+            |(importable_dependency_module_name, importable_dependency_module_origin)| {
+                if !importable_dependency_module_name.starts_with(&module_name_base_to_complete)
+                    || module_name_base_to_complete.starts_with(importable_dependency_module_name)
+                {
+                    return None;
+                }
+                let importable_dependency_module_state = state
+                    .projects
+                    .get(&importable_dependency_module_origin.project_path)
+                    .and_then(|dependency_state| {
+                        dependency_state
+                            .modules
+                            .get(&importable_dependency_module_origin.module_path)
+                    })?;
+                Some((
+                    importable_dependency_module_name,
+                    importable_dependency_module_state
+                        .syntax
+                        .documentation
+                        .as_ref(),
+                ))
+            },
+        )
+        .chain(
+            completion_project
+                .modules
+                .iter()
+                .filter_map(|(_, project_module)| {
+                    let project_module_name: &String = project_module
+                        .syntax
+                        .header
+                        .as_ref()
+                        .and_then(|header| header.module_name.as_ref())
+                        .map(|node| &node.value)?;
+                    if !project_module_name.starts_with(&module_name_base_to_complete)
+                        || module_name_base_to_complete.starts_with(project_module_name)
+                        || Some(project_module_name.as_str()) == module_name_exception
+                    {
+                        None
+                    } else {
+                        Some((
+                            project_module_name,
+                            project_module.syntax.documentation.as_ref(),
+                        ))
+                    }
+                }),
+        )
+        .map(
+            |(module_name, maybe_module_documentation)| lsp_types::CompletionItem {
+                label: module_name.clone(),
+                insert_text: Some(
+                    module_name
+                        .strip_prefix(&module_name_base_to_complete)
+                        .unwrap_or(module_name)
+                        .to_string(),
+                ),
+                sort_text: Some(
+                    module_name
+                        .strip_prefix(&module_name_base_to_complete)
+                        .unwrap_or(module_name)
+                        .to_string(),
+                ),
+                kind: Some(lsp_types::CompletionItemKind::MODULE),
+                documentation: Some(lsp_types::Documentation::MarkupContent(
+                    lsp_types::MarkupContent {
+                        kind: lsp_types::MarkupKind::Markdown,
+                        value: maybe_module_documentation
+                            .map(|module_documentation| {
+                                documentation_comment_to_markdown(&module_documentation.value)
+                            })
+                            .unwrap_or_else(|| "_module has no documentation comment_".to_string()),
+                    },
+                )),
+                ..lsp_types::CompletionItem::default()
+            },
+        )
+        .collect::<Vec<_>>()
 }
 
 fn state_update_source_at_path(
@@ -8784,15 +8815,19 @@ fn parse_elm_uppercase_possibly_dot_separated_node(
             .sum::<usize>();
         'from_dots: loop {
             let mut next_chars: std::str::Chars = state.source[current_offset_utf8..].chars();
-            if (next_chars.next() == Some('.'))
-                && (next_chars.next().is_some_and(char::is_uppercase))
-            {
-                current_offset_utf8 += 2;
-                current_offset_utf8 += state.source[current_offset_utf8..]
-                    .chars()
-                    .take_while(|&c| c.is_alphanumeric() || c == '_')
-                    .map(|c| c.len_utf8())
-                    .sum::<usize>();
+            if next_chars.next() == Some('.') {
+                if next_chars.next().is_some_and(char::is_uppercase) {
+                    current_offset_utf8 += 2;
+                    current_offset_utf8 += state.source[current_offset_utf8..]
+                        .chars()
+                        .take_while(|&c| c.is_alphanumeric() || c == '_')
+                        .map(|c| c.len_utf8())
+                        .sum::<usize>();
+                } else {
+                    // ending in a . is explicitly allowed!
+                    current_offset_utf8 += 1;
+                    break 'from_dots;
+                }
             } else {
                 break 'from_dots;
             }
@@ -9043,9 +9078,10 @@ fn parse_elm_syntax_exposing_specific_node(
 fn parse_elm_syntax_module_header(state: &mut ParseState) -> Option<ElmSyntaxModuleHeader> {
     if let Some(module_keyword_range) = parse_symbol_as_range(state, "module") {
         parse_elm_whitespace_and_comments(state);
-        let maybe_module_name_node = parse_elm_uppercase_possibly_dot_separated_node(state);
+        let maybe_module_name_node: Option<ElmSyntaxNode<String>> =
+            parse_elm_uppercase_possibly_dot_separated_node(state);
         parse_elm_whitespace_and_comments(state);
-        let maybe_exposing = parse_elm_syntax_exposing(state);
+        let maybe_exposing: Option<ElmSyntaxExposing> = parse_elm_syntax_exposing(state);
         Some(ElmSyntaxModuleHeader {
             specific: ElmSyntaxModuleHeaderSpecific::Pure {
                 module_keyword_range: module_keyword_range,
@@ -9055,11 +9091,12 @@ fn parse_elm_syntax_module_header(state: &mut ParseState) -> Option<ElmSyntaxMod
         })
     } else if let Some(port_keyword_range) = parse_symbol_as_range(state, "port") {
         parse_elm_whitespace_and_comments(state);
-        let module_keyword_range = parse_symbol_as_range(state, "module")?;
+        let module_keyword_range: lsp_types::Range = parse_symbol_as_range(state, "module")?;
         parse_elm_whitespace_and_comments(state);
-        let maybe_module_name_node = parse_elm_uppercase_possibly_dot_separated_node(state);
+        let maybe_module_name_node: Option<ElmSyntaxNode<String>> =
+            parse_elm_uppercase_possibly_dot_separated_node(state);
         parse_elm_whitespace_and_comments(state);
-        let maybe_exposing = parse_elm_syntax_exposing(state);
+        let maybe_exposing: Option<ElmSyntaxExposing> = parse_elm_syntax_exposing(state);
         Some(ElmSyntaxModuleHeader {
             specific: ElmSyntaxModuleHeaderSpecific::Port {
                 port_keyword_range: port_keyword_range,
@@ -9070,11 +9107,12 @@ fn parse_elm_syntax_module_header(state: &mut ParseState) -> Option<ElmSyntaxMod
         })
     } else if let Some(effect_keyword_range) = parse_symbol_as_range(state, "effect") {
         parse_elm_whitespace_and_comments(state);
-        let module_keyword_range = parse_symbol_as_range(state, "module")?;
+        let module_keyword_range: lsp_types::Range = parse_symbol_as_range(state, "module")?;
         parse_elm_whitespace_and_comments(state);
-        let maybe_module_name_node = parse_elm_uppercase_possibly_dot_separated_node(state);
+        let maybe_module_name_node: Option<ElmSyntaxNode<String>> =
+            parse_elm_uppercase_possibly_dot_separated_node(state);
         parse_elm_whitespace_and_comments(state);
-        let where_keyword_range = parse_symbol_as_range(state, "where")?;
+        let where_keyword_range: lsp_types::Range = parse_symbol_as_range(state, "where")?;
         parse_elm_whitespace_and_comments(state);
 
         let maybe_command_entry: Option<EffectModuleHeaderEntry>;
@@ -9096,7 +9134,7 @@ fn parse_elm_syntax_module_header(state: &mut ParseState) -> Option<ElmSyntaxMod
         }
 
         parse_elm_whitespace_and_comments(state);
-        let maybe_exposing = parse_elm_syntax_exposing(state);
+        let maybe_exposing: Option<ElmSyntaxExposing> = parse_elm_syntax_exposing(state);
         Some(ElmSyntaxModuleHeader {
             specific: ElmSyntaxModuleHeaderSpecific::Effect {
                 effect_keyword_range: effect_keyword_range,
@@ -9117,11 +9155,11 @@ fn parse_elm_syntax_effect_module_header_where_entry(
     state: &mut ParseState,
     key: &'static str,
 ) -> Option<EffectModuleHeaderEntry> {
-    let key_range = parse_symbol_as_range(state, key)?;
+    let key_range: lsp_types::Range = parse_symbol_as_range(state, key)?;
     parse_elm_whitespace_and_comments(state);
-    let equals_range = parse_symbol_as_range(state, "=")?;
+    let equals_range: lsp_types::Range = parse_symbol_as_range(state, "=")?;
     parse_elm_whitespace_and_comments(state);
-    let type_name_node = parse_elm_uppercase_node(state)?;
+    let type_name_node: ElmSyntaxNode<String> = parse_elm_uppercase_node(state)?;
     Some(EffectModuleHeaderEntry {
         key_range: key_range,
         equals_range: equals_range,
