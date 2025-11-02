@@ -33,7 +33,8 @@ Please give me feedback on this
 - your idea 👀
 
 ## TODO
-- add suggestions for module names when typing uppercase reference
+- add suggestions for import aliases when typing uppercase reference
+- add suggestions for expose-imported variables and types
 - do not suggest member names already listed in explicit exposing
 - do not suggest anything for declaration names
 - incremental reparsing
