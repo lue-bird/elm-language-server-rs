@@ -8470,6 +8470,7 @@ fn parse_any_guaranteed_non_linebreak_char_as_char(state: &mut ParseState) -> Op
     }
 }
 /// prefer using after parse_line_break or similar failed
+/// TODO can probably be replaced by adding the state.position.character <= 0 check explicitly
 fn parse_any_guaranteed_non_linebreak_char_not_0_indented(state: &mut ParseState) -> bool {
     match state.source[state.offset_utf8..].chars().next() {
         None => false,
@@ -10348,43 +10349,52 @@ fn parse_elm_syntax_expression_let_in(
         let mut syntax_before_in_key_symbol_end_position: lsp_types::Position =
             let_keyword_range.end;
         let mut declarations: Vec<ElmSyntaxNode<ElmSyntaxLetDeclaration>> = Vec::new();
-        while let Some(declaration_node) = parse_elm_syntax_let_declaration(state) {
-            syntax_before_in_key_symbol_end_position = declaration_node.range.end;
-            declarations.push(declaration_node);
-            parse_elm_whitespace_and_comments(state);
-        }
-        parse_state_pop_indent(state);
-        match parse_symbol_as_range(state, "in") {
-            None => ElmSyntaxNode {
-                range: lsp_types::Range {
-                    start: let_keyword_range.start,
-                    end: syntax_before_in_key_symbol_end_position,
-                },
-                value: ElmSyntaxExpression::LetIn {
-                    declarations: declarations,
-                    in_keyword_range: None,
-                    result: None,
-                },
-            },
-            Some(in_keyword_range) => {
-                parse_elm_whitespace_and_comments(state);
-                let maybe_result: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
-                    parse_elm_syntax_expression_space_separated_node(state);
-                ElmSyntaxNode {
-                    range: lsp_types::Range {
-                        start: let_keyword_range.start,
-                        end: match maybe_result {
-                            None => in_keyword_range.end,
-                            Some(ref result_node) => result_node.range.end,
-                        },
-                    },
-                    value: ElmSyntaxExpression::LetIn {
-                        declarations: declarations,
-                        in_keyword_range: Some(in_keyword_range),
-                        result: maybe_result.map(elm_syntax_node_box),
-                    },
+        let maybe_in_keyword_range: Option<lsp_types::Range>;
+        'parsing_declarations: loop {
+            if let Some(in_keyword_range) = parse_symbol_as_range(state, "in") {
+                maybe_in_keyword_range = Some(in_keyword_range);
+                break 'parsing_declarations;
+            }
+            match parse_elm_syntax_let_declaration(state) {
+                None => {
+                    if state.position.character <= state.indent as u32 {
+                        maybe_in_keyword_range = None;
+                        break 'parsing_declarations;
+                    }
+                    if parse_any_guaranteed_non_linebreak_char(state) {
+                        parse_elm_whitespace_and_comments(state);
+                    } else {
+                        maybe_in_keyword_range = None;
+                        break 'parsing_declarations;
+                    }
+                }
+                Some(declaration_node) => {
+                    syntax_before_in_key_symbol_end_position = declaration_node.range.end;
+                    declarations.push(declaration_node);
+                    parse_elm_whitespace_and_comments(state);
                 }
             }
+        }
+        parse_state_pop_indent(state);
+
+        parse_elm_whitespace_and_comments(state);
+        let maybe_result: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
+            parse_elm_syntax_expression_space_separated_node(state);
+        ElmSyntaxNode {
+            range: lsp_types::Range {
+                start: let_keyword_range.start,
+                end: match maybe_result {
+                    None => maybe_in_keyword_range
+                        .map(|range| range.end)
+                        .unwrap_or(syntax_before_in_key_symbol_end_position),
+                    Some(ref result_node) => result_node.range.end,
+                },
+            },
+            value: ElmSyntaxExpression::LetIn {
+                declarations: declarations,
+                in_keyword_range: maybe_in_keyword_range,
+                result: maybe_result.map(elm_syntax_node_box),
+            },
         }
     })
 }
