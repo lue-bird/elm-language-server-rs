@@ -32,8 +32,9 @@ Please give me feedback on this
 - your idea 👀
 
 ## TODO
+- add suggestions for module names when typing uppercase reference
 - do not suggest member names already listed in explicit exposing
-- trigger autocomplete on . without name
+- do not suggest anything for declaration names
 - incremental reparsing
 - show errors inline
 - support elm projects with non-root `elm.json`

@@ -102,7 +102,8 @@ async fn main() {
         );
         router.request::<lsp_types::request::Rename, _>(
             |state, rename_arguments: lsp_types::RenameParams| {
-                let maybe_rename_edits = respond_to_rename(state, rename_arguments);
+                let maybe_rename_edits: Option<Vec<lsp_types::TextDocumentEdit>> =
+                    respond_to_rename(state, rename_arguments);
                 async move {
                     Ok(
                         maybe_rename_edits.map(|rename_edits| lsp_types::WorkspaceEdit {
@@ -116,7 +117,7 @@ async fn main() {
         );
         router.request::<lsp_types::request::SemanticTokensFullRequest, _>(
             |state, semantic_tokens_arguments: lsp_types::SemanticTokensParams| {
-                let semantic_tokens =
+                let semantic_tokens: Option<lsp_types::SemanticTokensResult> =
                     respond_to_semantic_tokens_full(state, semantic_tokens_arguments);
                 async move { Ok(semantic_tokens) }
             },
@@ -128,7 +129,6 @@ async fn main() {
                 async { Ok(maybe_completions) }
             },
         );
-
         router.request::<lsp_types::request::Shutdown, _>(|_state, ()| {
             // ?
             async { Ok(()) }
@@ -2347,7 +2347,7 @@ fn respond_to_completion(
             module_origin,
             name: _,
         } => {
-            let module_origin = if module_origin.is_empty() {
+            let module_origin: &str = if module_origin.is_empty() {
                 &completion_project_module
                     .module_syntax
                     .header
@@ -2587,14 +2587,15 @@ fn respond_to_completion(
             module_origin,
             name: _,
         } => {
-            let module_origin = if module_origin.is_empty() {
-                &completion_project_module
-                    .module_syntax
-                    .header
-                    .as_ref()
-                    .and_then(|header| header.module_name.as_ref())
-                    .map(|node| node.value.as_str())
-                    .unwrap_or("")
+            let completion_module_name = completion_project_module
+                .module_syntax
+                .header
+                .as_ref()
+                .and_then(|header| header.module_name.as_ref())
+                .map(|node| node.value.as_str())
+                .unwrap_or("");
+            let module_origin: &str = if module_origin.is_empty() {
+                completion_module_name
             } else {
                 module_origin
             };
@@ -2608,45 +2609,50 @@ fn respond_to_completion(
                 completion_project_module.project,
                 &origin_module_state.syntax,
             );
-            let type_exposes_from_origin_module_or_none_if_all = completion_project_module
-                .module_syntax
-                .header
-                .as_ref()
-                .and_then(|completion_module_header| {
-                    if Some(module_origin)
-                        == completion_module_header
-                            .module_name
-                            .as_ref()
-                            .map(|node| node.value.as_str())
-                    {
-                        None
-                    } else {
-                        match &completion_module_header
-                            .exposing
-                            .as_ref()
-                            .and_then(|node| node.specific.as_ref())
-                            .map(|node| &node.value)
-                        {
-                            None | Some(ElmSyntaxExposingSpecific::All(_)) => None,
-                            Some(ElmSyntaxExposingSpecific::Explicit(exposes)) => Some(
-                                exposes
-                                    .iter()
-                                    .filter_map(|expose_node| match &expose_node.value {
-                                        ElmSyntaxExpose::ChoiceTypeIncludingVariants {
-                                            name: open_choice_type_name,
-                                            open_range: _,
-                                        } => Some(open_choice_type_name.value.as_str()),
-                                        ElmSyntaxExpose::Type(type_name) => {
-                                            Some(type_name.as_str())
-                                        }
-                                        ElmSyntaxExpose::Operator(_) => None,
-                                        ElmSyntaxExpose::Variable(_) => None,
-                                    })
-                                    .collect::<std::collections::HashSet<&str>>(),
-                            ),
-                        }
-                    }
-                });
+            let type_exposes_from_origin_module_or_none_if_all =
+                if module_origin == completion_module_name {
+                    None
+                } else {
+                    origin_module_state
+                        .syntax
+                        .header
+                        .as_ref()
+                        .and_then(|origin_module_header| {
+                            if Some(module_origin)
+                                == origin_module_header
+                                    .module_name
+                                    .as_ref()
+                                    .map(|node| node.value.as_str())
+                            {
+                                None
+                            } else {
+                                match &origin_module_header
+                                    .exposing
+                                    .as_ref()
+                                    .and_then(|node| node.specific.as_ref())
+                                    .map(|node| &node.value)
+                                {
+                                    None | Some(ElmSyntaxExposingSpecific::All(_)) => None,
+                                    Some(ElmSyntaxExposingSpecific::Explicit(exposes)) => Some(
+                                        exposes
+                                            .iter()
+                                            .filter_map(|expose_node| match &expose_node.value {
+                                                ElmSyntaxExpose::ChoiceTypeIncludingVariants {
+                                                    name: open_choice_type_name,
+                                                    open_range: _,
+                                                } => Some(open_choice_type_name.value.as_str()),
+                                                ElmSyntaxExpose::Type(type_name) => {
+                                                    Some(type_name.as_str())
+                                                }
+                                                ElmSyntaxExpose::Operator(_) => None,
+                                                ElmSyntaxExpose::Variable(_) => None,
+                                            })
+                                            .collect::<std::collections::HashSet<&str>>(),
+                                    ),
+                                }
+                            }
+                        })
+                };
 
             let mut completion_items: Vec<lsp_types::CompletionItem> = Vec::new();
             for (origin_module_declaration_node, origin_module_declaration_documentation) in
@@ -9343,7 +9349,7 @@ fn parse_elm_qualified_uppercase_reference_node(
                         end: state.position,
                     },
                     value: ElmQualifiedName {
-                        qualification: state.source[start_offset_utf8..state.offset_utf8]
+                        qualification: state.source[start_offset_utf8..(state.offset_utf8 - 1)]
                             .to_string(),
                         name: "".to_string(),
                     },
@@ -10041,7 +10047,7 @@ fn parse_elm_syntax_expression_reference(state: &mut ParseState) -> Option<ElmSy
                     } else {
                         // stopping at . and in effect having an empty name is explicitly allowed!
                         return Some(ElmSyntaxExpression::Reference {
-                            qualification: state.source[start_offset_utf8..state.offset_utf8]
+                            qualification: state.source[start_offset_utf8..(state.offset_utf8 - 1)]
                                 .to_string(),
                             name: "".to_string(),
                         });
