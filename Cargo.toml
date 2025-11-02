@@ -3,18 +3,15 @@ cargo-features = ["codegen-backend"]
 name = "elm-language-server-rs"
 edition = "2024"
 
+[[bin]]
+name = "elm-language-server-rs"
+path = "main.rs"
+
 [dependencies]
 async-lsp = { version = "0.2.2", features = ["tokio"] }
 lsp-types = "0.95.1"
 tower = "0.5.2"
-tokio = { version = "1.47.1", features = [
-    "io-std",
-    "io-util",
-    "macros",
-    "process",
-    "rt",
-    "time",
-] }
+tokio = { version = "1.47.1", features = ["macros", "rt"] }
 serde_json = "1.0.145"
 
 [profile.dev]
