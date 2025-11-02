@@ -375,7 +375,7 @@ fn initialize_state_for_project_into(
         module_states.insert(
             module_path,
             ModuleState {
-                syntax: parse_elm_syntax_module(module_source),
+                syntax: parse_elm_syntax_module(&module_source),
             },
         );
     }
@@ -2823,7 +2823,7 @@ fn state_update_source_at_path(
             project_state.modules.insert(
                 changed_path,
                 ModuleState {
-                    syntax: parse_elm_syntax_module(changed_source),
+                    syntax: parse_elm_syntax_module(&changed_source),
                 },
             );
             break 'updating_module;
@@ -8445,8 +8445,8 @@ fn elm_syntax_highlight_let_declaration_into(
 }
 
 // //
-struct ParseState {
-    source: String, // TODO change to Box<str>
+struct ParseState<'a> {
+    source: &'a str,
     offset_utf8: usize,
     position: lsp_types::Position,
     indent: u16,
@@ -8489,7 +8489,7 @@ fn parse_linebreak(state: &mut ParseState) -> bool {
         false
     }
 }
-fn parse_linebreak_as_str(state: &mut ParseState) -> Option<&str> {
+fn parse_linebreak_as_str<'a>(state: &mut ParseState<'a>) -> Option<&'a str> {
     if state.source[state.offset_utf8..].starts_with("\n") {
         state.offset_utf8 += 1;
         state.position.line += 1;
@@ -8604,10 +8604,10 @@ fn parse_same_line_while(state: &mut ParseState, char_is_valid: impl Fn(char) ->
     state.position.character += consumed_length_utf8 as u32;
 }
 /// given condition must not succeed on linebreak
-fn parse_same_line_while_as_str(
-    state: &mut ParseState,
+fn parse_same_line_while_as_str<'a>(
+    state: &mut ParseState<'a>,
     char_is_valid: impl Fn(char) -> bool,
-) -> &str {
+) -> &'a str {
     let start_offset_utf8: usize = state.offset_utf8;
     parse_same_line_while(state, char_is_valid);
     &state.source[start_offset_utf8..state.offset_utf8]
@@ -10973,7 +10973,7 @@ fn parse_elm_syntax_documented_declaration(
         }
     }
 }
-fn parse_elm_syntax_module(module_source: String) -> ElmSyntaxModule {
+fn parse_elm_syntax_module(module_source: &str) -> ElmSyntaxModule {
     let mut state: ParseState = ParseState {
         source: module_source,
         offset_utf8: 0,
