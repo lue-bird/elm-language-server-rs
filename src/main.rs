@@ -2791,7 +2791,7 @@ fn documentation_comment_to_markdown(documentation: &str) -> String {
 fn markdown_convert_unspecific_fenced_code_blocks_to_elm(markdown_source: &str) -> String {
     let mut result_builder: String = String::new();
     let mut current_source_index: usize = 0;
-    'converting_fenced: while current_source_index <= (markdown_source.len() - 1) {
+    'converting_fenced: while current_source_index < markdown_source.len() {
         match markdown_source[current_source_index..]
             .find("```")
             .map(|i| i + current_source_index)
@@ -8459,6 +8459,17 @@ fn parse_any_guaranteed_non_linebreak_char(state: &mut ParseState) -> bool {
     }
 }
 /// prefer using after parse_line_break or similar failed
+fn parse_any_guaranteed_non_linebreak_char_as_char(state: &mut ParseState) -> Option<char> {
+    match state.source[state.offset_utf8..].chars().next() {
+        None => None,
+        Some(parsed_char) => {
+            state.offset_utf8 += parsed_char.len_utf8();
+            state.position.character += parsed_char.len_utf8() as u32;
+            Some(parsed_char)
+        }
+    }
+}
+/// prefer using after parse_line_break or similar failed
 fn parse_any_guaranteed_non_linebreak_char_not_0_indented(state: &mut ParseState) -> bool {
     match state.source[state.offset_utf8..].chars().next() {
         None => false,
@@ -8561,18 +8572,6 @@ fn parse_unsigned_integer_base10(state: &mut ParseState) -> bool {
         true
     } else {
         false
-    }
-}
-/// symbol cannot contain non-utf8 characters or \n
-/// TODO prefer parse_until_including_symbol_or_before_0_indented_or_end_of_source where possible
-fn parse_until_including_symbol_or_before_end_of_source(
-    state: &mut ParseState,
-    end_symbol: &'static str,
-) {
-    'until_including_symbol_or_end_of_source: while !parse_symbol(state, end_symbol) {
-        if !parse_any_char(state) {
-            break 'until_including_symbol_or_end_of_source;
-        }
     }
 }
 /// symbol cannot contain non-utf8 characters or \n
@@ -9407,18 +9406,23 @@ fn parse_elm_syntax_type_parenthesized_or_tuple_or_triple(
 fn parse_elm_syntax_pattern_space_separated_node(
     state: &mut ParseState,
 ) -> Option<ElmSyntaxNode<ElmSyntaxPattern>> {
-    let start_pattern = parse_elm_syntax_pattern_not_as_or_cons_node(state)?;
+    let start_pattern: ElmSyntaxNode<ElmSyntaxPattern> =
+        parse_elm_syntax_pattern_not_as_or_cons_node(state)?;
     parse_elm_whitespace_and_comments(state);
     let mut consed_left_to_right: Vec<(lsp_types::Range, Option<ElmSyntaxNode<ElmSyntaxPattern>>)> =
         vec![];
     while let Some(cons_key_symbol_range) = parse_symbol_as_range(state, "::") {
         parse_elm_whitespace_and_comments(state);
-        let maybe_tail_pattern = parse_elm_syntax_pattern_not_as_or_cons_node(state);
+        let maybe_tail_pattern: Option<ElmSyntaxNode<ElmSyntaxPattern>> =
+            parse_elm_syntax_pattern_not_as_or_cons_node(state);
         consed_left_to_right.push((cons_key_symbol_range, maybe_tail_pattern));
         parse_elm_whitespace_and_comments(state);
     }
     parse_elm_whitespace_and_comments(state);
-    let maybe_combined_tail_cons = consed_left_to_right.into_iter().rev().reduce(
+    let maybe_combined_tail_cons: Option<(
+        lsp_types::Range,
+        Option<ElmSyntaxNode<ElmSyntaxPattern>>,
+    )> = consed_left_to_right.into_iter().rev().reduce(
         |(cons_tail_key_symbol_range, maybe_tail), (cons_head_key_symbol_range, maybe_head)| {
             (
                 cons_head_key_symbol_range,
@@ -9442,7 +9446,7 @@ fn parse_elm_syntax_pattern_space_separated_node(
             )
         },
     );
-    let pattern_with_conses = match maybe_combined_tail_cons {
+    let pattern_with_conses: ElmSyntaxNode<ElmSyntaxPattern> = match maybe_combined_tail_cons {
         None => start_pattern,
         Some((cons_key_symbol_range, maybe_tail)) => ElmSyntaxNode {
             range: lsp_types::Range {
@@ -9463,7 +9467,7 @@ fn parse_elm_syntax_pattern_space_separated_node(
         None => Some(pattern_with_conses),
         Some(as_keyword_range) => {
             parse_elm_whitespace_and_comments(state);
-            let maybe_variable = parse_elm_lowercase_as_node(state);
+            let maybe_variable: Option<ElmSyntaxNode<String>> = parse_elm_lowercase_as_node(state);
             Some(ElmSyntaxNode {
                 range: lsp_types::Range {
                     start: pattern_with_conses.range.start,
@@ -9756,16 +9760,18 @@ fn parse_elm_string_single_quoted(state: &mut ParseState) -> Option<String> {
     if !parse_symbol(state, "\"") {
         return None;
     }
-    let mut result = String::new();
+    let mut result: String = String::new();
     while !(parse_symbol(state, "\"") || parse_linebreak(state)) {
         match parse_elm_text_content_char(state) {
             Some(next_content_char) => {
                 result.push(next_content_char);
             }
-            None => {
-                parse_until_including_symbol_or_excluding_end_of_line(state, "\"");
-                return Some(result);
-            }
+            None => match parse_any_guaranteed_non_linebreak_char_as_char(state) {
+                Some(next_content_char) => {
+                    result.push(next_content_char);
+                }
+                None => return Some(result),
+            },
         }
     }
     Some(result)
@@ -9774,7 +9780,7 @@ fn parse_elm_string_triple_quoted(state: &mut ParseState) -> Option<String> {
     if !parse_symbol(state, "\"\"\"") {
         return None;
     }
-    let mut result = String::new();
+    let mut result: String = String::new();
     while !parse_symbol(state, "\"\"\"") {
         match parse_linebreak_as_str(state) {
             Some(linebreak) => result.push_str(linebreak),
@@ -9784,10 +9790,12 @@ fn parse_elm_string_triple_quoted(state: &mut ParseState) -> Option<String> {
                 Some(next_content_char) => {
                     result.push(next_content_char);
                 }
-                None => {
-                    parse_until_including_symbol_or_before_end_of_source(state, "\"\"\"");
-                    return Some(result);
-                }
+                None => match parse_any_guaranteed_non_linebreak_char_as_char(state) {
+                    Some(next_content_char) => {
+                        result.push(next_content_char);
+                    }
+                    None => return Some(result),
+                },
             },
         }
     }
@@ -9821,7 +9829,14 @@ fn parse_elm_text_content_char(state: &mut ParseState) -> Option<char> {
             {
                 None
             } else {
-                state.source[state.offset_utf8..].chars().next()
+                match state.source[state.offset_utf8..].chars().next() {
+                    None => None,
+                    Some(plain_char) => {
+                        state.offset_utf8 += plain_char.len_utf8();
+                        state.position.character += plain_char.len_utf8() as u32;
+                        Some(plain_char)
+                    }
+                }
             }
         })
 }
