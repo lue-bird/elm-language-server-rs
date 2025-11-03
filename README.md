@@ -35,6 +35,7 @@ Please give me feedback on this
 ## TODO
 - add suggestions for import aliases when typing uppercase reference
 - add suggestions for expose-imported variables and types
+- after typing an import alias, suggest exposed members from its associated module
 - do not suggest member names already listed in explicit exposing
 - do not suggest anything for declaration names
 - incremental reparsing
