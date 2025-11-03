@@ -5102,11 +5102,11 @@ fn elm_syntax_expression_find_reference_at_position<'a>(
                     ) {
                         return std::ops::ControlFlow::Break(found_symbol);
                     };
-                    if let Some(case_result_node) = case.result.as_ref()
+                    if let Some(case_result_node) = &case.result
                     && // we need to check that the position is actually in that case before committing to mutating local bindings
                     lsp_range_includes_position(case_result_node.range, position)
                     {
-                        let mut introduced_bindings = Vec::new();
+                        let mut introduced_bindings: Vec<ElmLocalBinding> = Vec::new();
                         elm_syntax_pattern_bindings_into(
                             &mut introduced_bindings,
                             elm_syntax_node_as_ref(&case.pattern),
@@ -5208,7 +5208,7 @@ fn elm_syntax_expression_find_reference_at_position<'a>(
             }
             match maybe_result {
                 Some(result_node) => {
-                    let mut introduced_bindings = Vec::new();
+                    let mut introduced_bindings: Vec<ElmLocalBinding> = Vec::new();
                     for parameter_node in parameters {
                         elm_syntax_pattern_bindings_into(
                             &mut introduced_bindings,
@@ -5231,7 +5231,7 @@ fn elm_syntax_expression_find_reference_at_position<'a>(
             in_keyword_range: _,
             result: maybe_result,
         } => {
-            let mut introduced_bindings = Vec::new();
+            let mut introduced_bindings: Vec<ElmLocalBinding> = Vec::new();
             for let_declaration_node in declarations {
                 elm_syntax_let_declaration_introduced_bindings_into(
                     &mut introduced_bindings,
@@ -10245,8 +10245,13 @@ fn parse_elm_syntax_expression_lambda(
         parse_elm_whitespace_and_comments(state);
     }
     let maybe_arrow_key_symbol_range: Option<lsp_types::Range> = parse_symbol_as_range(state, "->");
+    parse_elm_whitespace_and_comments(state);
     let maybe_result: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
-        parse_elm_syntax_expression_space_separated_node(state);
+        if state.position.character > state.indent as u32 {
+            parse_elm_syntax_expression_space_separated_node(state)
+        } else {
+            None
+        };
     Some(ElmSyntaxNode {
         range: lsp_types::Range {
             start: backslash_key_symbol_range.start,

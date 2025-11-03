@@ -32,7 +32,6 @@ Please give me feedback on this
 - your idea 👀
 
 ## TODO
-- lambda results seem to have a memory wipe of local bindings and rename, goto definition and hover are broken
 - add suggestions for import aliases when typing uppercase reference
 - add suggestions for expose-imported variables and types
 - after typing an import alias, suggest exposed members from its associated module
