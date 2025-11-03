@@ -5040,13 +5040,13 @@ fn elm_syntax_expression_find_reference_at_position<'a>(
             argument0,
             argument1_up,
         } => {
-            let local_bindings = elm_syntax_expression_find_reference_at_position(
+            local_bindings = elm_syntax_expression_find_reference_at_position(
                 local_bindings,
                 scope_declaration,
                 elm_syntax_node_unbox(called),
                 position,
             )?;
-            let local_bindings = elm_syntax_expression_find_reference_at_position(
+            local_bindings = elm_syntax_expression_find_reference_at_position(
                 local_bindings,
                 scope_declaration,
                 elm_syntax_node_unbox(argument0),
@@ -5068,15 +5068,14 @@ fn elm_syntax_expression_find_reference_at_position<'a>(
             of_keyword_range: _,
             cases,
         } => {
-            let local_bindings = match maybe_matched {
-                Some(matched_node) => elm_syntax_expression_find_reference_at_position(
+            if let Some(matched_node) = maybe_matched {
+                local_bindings = elm_syntax_expression_find_reference_at_position(
                     local_bindings,
                     scope_declaration,
                     elm_syntax_node_unbox(matched_node),
                     position,
-                ),
-                None => std::ops::ControlFlow::Continue(local_bindings),
-            }?;
+                )?;
+            }
             cases
                 .iter()
                 .try_fold(local_bindings, |mut local_bindings, case| {
@@ -5119,24 +5118,22 @@ fn elm_syntax_expression_find_reference_at_position<'a>(
             else_keyword_range: _,
             on_false: maybe_on_false,
         } => {
-            let local_bindings = match maybe_condition {
-                Some(condition_node) => elm_syntax_expression_find_reference_at_position(
+            if let Some(condition_node) = maybe_condition {
+                local_bindings = elm_syntax_expression_find_reference_at_position(
                     local_bindings,
                     scope_declaration,
                     elm_syntax_node_unbox(condition_node),
                     position,
-                ),
-                None => std::ops::ControlFlow::Continue(local_bindings),
-            }?;
-            let local_bindings = match maybe_on_true {
-                Some(on_true_node) => elm_syntax_expression_find_reference_at_position(
+                )?;
+            }
+            if let Some(on_true_node) = maybe_on_true {
+                local_bindings = elm_syntax_expression_find_reference_at_position(
                     local_bindings,
                     scope_declaration,
                     elm_syntax_node_unbox(on_true_node),
                     position,
-                ),
-                None => std::ops::ControlFlow::Continue(local_bindings),
-            }?;
+                )?;
+            }
             match maybe_on_false {
                 Some(on_false_node) => elm_syntax_expression_find_reference_at_position(
                     local_bindings,
@@ -5162,7 +5159,7 @@ fn elm_syntax_expression_find_reference_at_position<'a>(
                     range: operator.range,
                 });
             }
-            let local_bindings = elm_syntax_expression_find_reference_at_position(
+            local_bindings = elm_syntax_expression_find_reference_at_position(
                 local_bindings,
                 scope_declaration,
                 elm_syntax_node_unbox(left),
@@ -5225,7 +5222,7 @@ fn elm_syntax_expression_find_reference_at_position<'a>(
                 );
             }
             local_bindings.push((elm_syntax_expression_node, introduced_bindings));
-            let local_bindings =
+            local_bindings =
                 declarations
                     .iter()
                     .try_fold(local_bindings, |local_bindings, declaration| {
@@ -5355,24 +5352,22 @@ fn elm_syntax_expression_find_reference_at_position<'a>(
             part1: maybe_part1,
             part2: maybe_part2,
         } => {
-            let local_bindings = match maybe_part0 {
-                Some(part0_node) => elm_syntax_expression_find_reference_at_position(
+            if let Some(part0_node) = maybe_part0 {
+                local_bindings = elm_syntax_expression_find_reference_at_position(
                     local_bindings,
                     scope_declaration,
                     elm_syntax_node_unbox(part0_node),
                     position,
-                ),
-                None => std::ops::ControlFlow::Continue(local_bindings),
-            }?;
-            let local_bindings = match maybe_part1 {
-                Some(part1_node) => elm_syntax_expression_find_reference_at_position(
+                )?;
+            }
+            if let Some(part1_node) = maybe_part1 {
+                local_bindings = elm_syntax_expression_find_reference_at_position(
                     local_bindings,
                     scope_declaration,
                     elm_syntax_node_unbox(part1_node),
                     position,
-                ),
-                None => std::ops::ControlFlow::Continue(local_bindings),
-            }?;
+                )?;
+            }
             match maybe_part2 {
                 Some(part2_node) => elm_syntax_expression_find_reference_at_position(
                     local_bindings,
@@ -5387,15 +5382,14 @@ fn elm_syntax_expression_find_reference_at_position<'a>(
             part0: maybe_part0,
             part1: maybe_part1,
         } => {
-            let local_bindings = match maybe_part0 {
-                Some(part0_node) => elm_syntax_expression_find_reference_at_position(
+            if let Some(part0_node) = maybe_part0 {
+                local_bindings = elm_syntax_expression_find_reference_at_position(
                     local_bindings,
                     scope_declaration,
                     elm_syntax_node_unbox(part0_node),
                     position,
-                ),
-                None => std::ops::ControlFlow::Continue(local_bindings),
-            }?;
+                )?;
+            }
             match maybe_part1 {
                 Some(part1_node) => elm_syntax_expression_find_reference_at_position(
                     local_bindings,
@@ -5411,7 +5405,7 @@ fn elm_syntax_expression_find_reference_at_position<'a>(
 }
 
 fn elm_syntax_let_declaration_find_reference_at_position<'a>(
-    local_bindings: ElmLocalBindings<'a>,
+    mut local_bindings: ElmLocalBindings<'a>,
     scope_declaration: &'a ElmSyntaxDeclaration,
     elm_syntax_let_declaration_node: ElmSyntaxNode<&'a ElmSyntaxLetDeclaration>,
     position: lsp_types::Position,
@@ -5462,34 +5456,27 @@ fn elm_syntax_let_declaration_find_reference_at_position<'a>(
                     position,
                 )
             }))?;
-            let mut local_bindings = match maybe_signature {
-                Some(signature) => {
-                    if let Some(implementation_name_range) = signature.implementation_name_range
-                        && lsp_range_includes_position(implementation_name_range, position)
-                    {
-                        return std::ops::ControlFlow::Break(ElmSyntaxNode {
-                            value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
-                                qualification: "",
-                                name: &start_name.value,
-                                local_bindings: local_bindings,
-                            },
-                            range: implementation_name_range,
-                        });
-                    }
-                    match signature.type_ {
-                        Some(ref signature_type_node) => {
-                            on_some_break(elm_syntax_type_find_reference_at_position(
-                                scope_declaration,
-                                elm_syntax_node_as_ref(signature_type_node),
-                                position,
-                            ))?;
-                            std::ops::ControlFlow::Continue(local_bindings)
-                        }
-                        None => std::ops::ControlFlow::Continue(local_bindings),
-                    }
+            if let Some(signature) = maybe_signature {
+                if let Some(implementation_name_range) = signature.implementation_name_range
+                    && lsp_range_includes_position(implementation_name_range, position)
+                {
+                    return std::ops::ControlFlow::Break(ElmSyntaxNode {
+                        value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
+                            qualification: "",
+                            name: &start_name.value,
+                            local_bindings: local_bindings,
+                        },
+                        range: implementation_name_range,
+                    });
+                };
+                if let Some(signature_type_node) = &signature.type_ {
+                    on_some_break(elm_syntax_type_find_reference_at_position(
+                        scope_declaration,
+                        elm_syntax_node_as_ref(signature_type_node),
+                        position,
+                    ))?;
                 }
-                None => std::ops::ControlFlow::Continue(local_bindings),
-            }?;
+            }
             match maybe_result {
                 Some(result_node) => {
                     let mut introduced_bindings: Vec<ElmLocalBinding> = Vec::new();
