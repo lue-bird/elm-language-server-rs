@@ -658,7 +658,7 @@ fn project_state_get_module_with_name<'a>(
             }),
     }
 }
-
+#[derive(Clone, Copy)]
 struct ProjectModuleState<'a> {
     project: &'a ProjectState,
     module_syntax: &'a ElmSyntaxModule,
@@ -728,39 +728,17 @@ fn respond_to_hover(
                 && let Some((hovered_local_binding_origin, _)) =
                     find_local_binding_scope_expression(&local_bindings, hovered_name)
             {
-                return match hovered_local_binding_origin {
-                    LocalBindingOrigin::PatternVariable(_) => None,
-                    LocalBindingOrigin::PatternRecordField(_) => None,
-                    LocalBindingOrigin::LetDeclaredVariable {
-                        signature_type: hovered_local_binding_maybe_signature_type,
-                        start_name_range: _,
-                    } => Some(lsp_types::Hover {
-                        contents: lsp_types::HoverContents::Scalar(
-                            lsp_types::MarkedString::String(
-                                match hovered_local_binding_maybe_signature_type {
-                                    None => {
-                                        format!("```elm\nlet {}\n```\n", hovered_name)
-                                    }
-                                    Some(hovered_local_binding_signature) => {
-                                        format!(
-                                            "```elm\nlet {} : {}\n```\n",
-                                            hovered_name,
-                                            &elm_syntax_type_to_single_line_string(
-                                                &elm_syntax_module_create_origin_lookup(
-                                                    state,
-                                                    hovered_project_module_state.project,
-                                                    hovered_project_module_state.module_syntax
-                                                ),
-                                                hovered_local_binding_signature,
-                                            )
-                                        )
-                                    }
-                                },
-                            ),
+                return Some(lsp_types::Hover {
+                    contents: lsp_types::HoverContents::Scalar(lsp_types::MarkedString::String(
+                        local_binding_info_markdown(
+                            state,
+                            hovered_project_module_state,
+                            hovered_name,
+                            hovered_local_binding_origin,
                         ),
-                        range: Some(hovered_symbol_node.range),
-                    }),
-                };
+                    )),
+                    range: Some(hovered_symbol_node.range),
+                });
             }
             let hovered_module_origin: &str = look_up_origin_module(
                 &elm_syntax_module_create_origin_lookup(
@@ -1119,6 +1097,42 @@ fn respond_to_hover(
                     }
                 })
         }
+    }
+}
+
+fn local_binding_info_markdown(
+    state: &State,
+    hovered_project_module_state: ProjectModuleState,
+    hovered_name: &str,
+    hovered_local_binding_origin: LocalBindingOrigin,
+) -> String {
+    match hovered_local_binding_origin {
+        LocalBindingOrigin::PatternVariable(_) => format!("variable introduced in pattern"),
+        LocalBindingOrigin::PatternRecordField(_) => {
+            format!("variable bound to a field, introduced in a pattern")
+        }
+        LocalBindingOrigin::LetDeclaredVariable {
+            signature_type: hovered_local_binding_maybe_signature_type,
+            start_name_range: _,
+        } => match hovered_local_binding_maybe_signature_type {
+            None => {
+                format!("```elm\nlet {}\n```\n", hovered_name)
+            }
+            Some(hovered_local_binding_signature) => {
+                format!(
+                    "```elm\nlet {} : {}\n```\n",
+                    hovered_name,
+                    &elm_syntax_type_to_single_line_string(
+                        &elm_syntax_module_create_origin_lookup(
+                            state,
+                            hovered_project_module_state.project,
+                            hovered_project_module_state.module_syntax
+                        ),
+                        hovered_local_binding_signature,
+                    )
+                )
+            }
+        },
     }
 }
 
@@ -1650,8 +1664,7 @@ fn respond_to_prepare_rename(
 struct ProjectModuleOriginAndState<'a> {
     project_state: &'a ProjectState,
     module_path: &'a std::path::PathBuf,
-    // TODO use full ModuleState instead
-    module_syntax: &'a ElmSyntaxModule,
+    module_state: &'a ModuleState,
 }
 
 fn state_iter_all_modules<'a>(
@@ -1664,7 +1677,7 @@ fn state_iter_all_modules<'a>(
             .map(|(module_path, module_state)| ProjectModuleOriginAndState {
                 project_state: project_state,
                 module_path: module_path,
-                module_syntax: &module_state.syntax,
+                module_state: module_state,
             })
     })
 }
@@ -1852,7 +1865,7 @@ fn respond_to_rename(
                             &mut all_uses_of_renamed_module_name,
                             state,
                             project_module.project_state,
-                            project_module.module_syntax,
+                            &project_module.module_state.syntax,
                             ElmDeclaredSymbol::VariableOrVariant {
                                 module_origin: to_rename_module_origin,
                                 name: to_rename_name,
@@ -1938,7 +1951,7 @@ fn respond_to_rename(
                         &mut all_uses_of_renamed_module_name,
                         state,
                         project_module.project_state,
-                        project_module.module_syntax,
+                        &project_module.module_state.syntax,
                         elm_declared_symbol_to_rename,
                     );
                     lsp_types::Url::from_file_path(project_module.module_path)
@@ -2365,12 +2378,16 @@ fn respond_to_completion(
                     })
                     .map(|local_binding| lsp_types::CompletionItem {
                         label: local_binding.name.to_string(),
-                        kind: Some(lsp_types::CompletionItemKind::MODULE),
+                        kind: Some(lsp_types::CompletionItemKind::VARIABLE),
                         documentation: Some(lsp_types::Documentation::MarkupContent(
                             lsp_types::MarkupContent {
                                 kind: lsp_types::MarkupKind::Markdown,
-                                // TODO better documentation based on origin, similar to on hover
-                                value: "local binding".to_string(),
+                                value: local_binding_info_markdown(
+                                    state,
+                                    completion_project_module,
+                                    local_binding.name,
+                                    local_binding.origin,
+                                ),
                             },
                         )),
                         ..lsp_types::CompletionItem::default()
@@ -8745,7 +8762,7 @@ fn parse_elm_documentation_comment_block_node(
     })
 }
 fn parse_elm_lowercase_as_string(state: &mut ParseState) -> Option<String> {
-    let mut chars_from_offset = state.source[state.offset_utf8..].chars();
+    let mut chars_from_offset: std::str::Chars = state.source[state.offset_utf8..].chars();
     if let Some(first_char) = chars_from_offset.next()
         && first_char.is_lowercase()
     {
@@ -8759,7 +8776,7 @@ fn parse_elm_lowercase_as_string(state: &mut ParseState) -> Option<String> {
     }
 }
 fn parse_elm_lowercase_as_node(state: &mut ParseState) -> Option<ElmSyntaxNode<String>> {
-    let start_position = state.position;
+    let start_position: lsp_types::Position = state.position;
     parse_elm_lowercase_as_string(state).map(|name| ElmSyntaxNode {
         range: lsp_types::Range {
             start: start_position,
