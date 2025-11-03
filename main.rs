@@ -3779,12 +3779,17 @@ fn elm_syntax_module_create_origin_lookup<'a>(
             .uniquely_qualified
             .remove(allowed_qualification)
         {
+            None => {
+                module_origin_lookup
+                    .uniquely_qualified
+                    .insert(allowed_qualification, import_module_name);
+            }
             Some(module_origin_for_existing_qualification) => {
                 if let Some((_, origin_module_state_for_existing_qualification)) =
                     project_state_get_module_with_name(
                         state,
                         project_state,
-                        &module_origin_for_existing_qualification,
+                        module_origin_for_existing_qualification,
                     )
                 {
                     for imported_module_expose in elm_syntax_module_exposed_symbols(
@@ -3815,22 +3820,21 @@ fn elm_syntax_module_create_origin_lookup<'a>(
                     }
                 }
             }
-            None => {
-                module_origin_lookup
-                    .uniquely_qualified
-                    .insert(allowed_qualification, import_module_name);
-            }
         }
         if let Some(import_exposing) = &import.exposing {
             match import_exposing.specific.as_ref().map(|node| &node.value) {
                 None => {}
                 Some(ElmSyntaxExposingSpecific::All(_)) => {
-                    for import_exposed_symbol in
-                        elm_syntax_module_exposed_symbols(elm_syntax_module)
+                    if let Some((_, imported_module_state)) =
+                        project_state_get_module_with_name(state, project_state, import_module_name)
                     {
-                        module_origin_lookup
-                            .unqualified
-                            .insert(import_exposed_symbol, import_module_name);
+                        for import_exposed_symbol in
+                            elm_syntax_module_exposed_symbols(&imported_module_state.syntax)
+                        {
+                            module_origin_lookup
+                                .unqualified
+                                .insert(import_exposed_symbol, import_module_name);
+                        }
                     }
                 }
                 Some(ElmSyntaxExposingSpecific::Explicit(exposes)) => {
