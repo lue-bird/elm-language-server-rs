@@ -9799,7 +9799,10 @@ fn parse_elm_string_single_quoted(state: &mut ParseState) -> Option<String> {
         return None;
     }
     let mut result: String = String::new();
-    while !(parse_symbol(state, "\"") || parse_linebreak(state)) {
+    while !(parse_symbol(state, "\"")
+        || state.source[state.offset_utf8..].starts_with("\n")
+        || state.source[state.offset_utf8..].starts_with("\r\n"))
+    {
         match parse_elm_text_content_char(state) {
             Some(next_content_char) => {
                 result.push(next_content_char);
