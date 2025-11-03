@@ -8548,6 +8548,23 @@ fn parse_symbol_as_range(state: &mut ParseState, symbol: &str) -> Option<lsp_typ
         None
     }
 }
+/// a symbol that must be followed by a character that could not be part of an elm identifier
+fn parse_elm_keyword_as_range(state: &mut ParseState, symbol: &str) -> Option<lsp_types::Range> {
+    if state.source[state.offset_utf8..].starts_with(symbol)
+        && !(state.source[(state.offset_utf8 + symbol.len())..]
+            .starts_with(|c: char| c.is_alphanumeric() || c == '_'))
+    {
+        let start_position: lsp_types::Position = state.position;
+        state.offset_utf8 += symbol.len();
+        state.position.character += symbol.len() as u32;
+        Some(lsp_types::Range {
+            start: start_position,
+            end: state.position,
+        })
+    } else {
+        None
+    }
+}
 
 /// given condition must not succeed on linebreak
 fn parse_same_line_while(state: &mut ParseState, char_is_valid: impl Fn(char) -> bool) {
@@ -10371,7 +10388,7 @@ fn parse_elm_syntax_expression_let_in(
         let mut declarations: Vec<ElmSyntaxNode<ElmSyntaxLetDeclaration>> = Vec::new();
         let maybe_in_keyword_range: Option<lsp_types::Range>;
         'parsing_declarations: loop {
-            if let Some(in_keyword_range) = parse_symbol_as_range(state, "in") {
+            if let Some(in_keyword_range) = parse_elm_keyword_as_range(state, "in") {
                 maybe_in_keyword_range = Some(in_keyword_range);
                 break 'parsing_declarations;
             }
