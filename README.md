@@ -28,11 +28,12 @@ If you're using vs code (or forks) (which do not appear to have a built-in way t
 
 ## not sure
 Please give me feedback on this
-- adding necessary imports when autocompleting
-- when suggesting module names, only show those that share the prefix before the last . 
+- adding necessary imports when autocompleting vs making it a separate code action vs nothing vs ?
 - your idea 👀
+- support UTF-16 characters outside of comments (especially strings, identifiers are less important because 99.99% I've seen are UTF-8)
 
 ## TODO
+- fix bug where highlighting after single-line block comment gets messed up
 - add suggestions for import aliases when typing uppercase reference
 - add suggestions for expose-imported variables and types
 - after typing an import alias, suggest exposed members from its associated module

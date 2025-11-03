@@ -7146,7 +7146,8 @@ fn elm_syntax_highlight_and_comment(
         )
         .enumerate()
         .map(move |(inner_line, inner_line_str)| {
-            let line = elm_syntax_comment_node.range.start.line + (inner_line as u32);
+            let line: u32 = elm_syntax_comment_node.range.start.line + (inner_line as u32);
+            let line_length_utf16: usize = inner_line_str.encode_utf16().count();
             ElmSyntaxNode {
                 range: if inner_line == 0 {
                     lsp_types::Range {
@@ -7154,7 +7155,7 @@ fn elm_syntax_highlight_and_comment(
                         end: lsp_position_add_characters(
                             elm_syntax_comment_node.range.start,
                             (characters_before_content
-                                + inner_line_str.len()
+                                + line_length_utf16
                                 + if content_does_not_break_line {
                                     characters_after_content
                                 } else {
@@ -7173,7 +7174,7 @@ fn elm_syntax_highlight_and_comment(
                         } else {
                             lsp_types::Position {
                                 line: line,
-                                character: (inner_line_str.len() + characters_after_content) as u32,
+                                character: (line_length_utf16 + characters_after_content) as u32,
                             }
                         },
                     }
