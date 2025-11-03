@@ -1,7 +1,6 @@
 > Status: **not ready for use but trying it on small projects probably works**
 
-A minimal LSP language server for [elm](https://elm-lang.org/), written in rust.
-
+Minimal LSP language server for [elm](https://elm-lang.org/).
 To use, [install rust](https://rust-lang.org/tools/install/), clone this project and run
 ```bash
 cargo build --release
@@ -26,9 +25,10 @@ If you're using vs code (or forks) (which do not appear to have a built-in way t
 - `elm.json` help
 - inline GLSL blocks
 
-## not sure
-Please give me feedback on this
-- adding necessary imports when autocompleting vs making it a separate code action vs nothing vs ?
+## not sure (Please give me feedback on this)
+- adding necessary imports when autocompleting vs making it a separate code action vs nothing vs ? (leaning towards separate code action)
+- show function parameter names (leaning towards no, as they are often confusing if they are curried, reveal non-exposed variant patterns, have more parameters than the type suggests, are undescriptive etc)
+- add code actions like "expose (including variants)", "inline", "inline all uses" (leaning towards no as it is fairly complicated, though it it very useful for sure)
 - your idea 👀
 
 ## TODO
