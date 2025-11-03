@@ -33,7 +33,6 @@ Please give me feedback on this
 - your idea 👀
 
 ## TODO
-- fix rename for locally declared variables and types
 - add suggestions for import aliases when typing uppercase reference
 - add suggestions for expose-imported variables and types
 - after typing an import alias, suggest exposed members from its associated module

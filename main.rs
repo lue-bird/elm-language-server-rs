@@ -5546,16 +5546,20 @@ fn elm_syntax_module_uses_of_reference_into(
     elm_syntax_module: &ElmSyntaxModule,
     symbol_to_collect_uses_of: ElmDeclaredSymbol,
 ) {
-    if let ElmDeclaredSymbol::ModuleName(module_name_to_collect_uses_of) = symbol_to_collect_uses_of
-        && let Some(module_header) = &elm_syntax_module.header
-        && let Some(module_name_node) = &module_header.module_name
-        && &module_name_node.value == module_name_to_collect_uses_of
+    let maybe_self_module_name: Option<&ElmSyntaxNode<String>> = elm_syntax_module
+        .header
+        .as_ref()
+        .and_then(|header| header.module_name.as_ref());
+    if let Some(self_module_name_node) = maybe_self_module_name
+        && let ElmDeclaredSymbol::ModuleName(module_name_to_collect_uses_of) =
+            symbol_to_collect_uses_of
+        && module_name_to_collect_uses_of == &self_module_name_node.value
     {
-        uses_so_far.push(module_name_node.range);
+        uses_so_far.push(self_module_name_node.range);
         // a module cannot reference itself within its declarations, imports etc
         return;
     }
-    let symbol_to_collect_uses_of_is_not_imported: bool = match symbol_to_collect_uses_of {
+    let symbol_to_collect_can_occur_here: bool = match symbol_to_collect_uses_of {
         ElmDeclaredSymbol::ModuleName(module_origin_to_collect_uses_of)
         | ElmDeclaredSymbol::RecordTypeAlias {
             module_origin: module_origin_to_collect_uses_of,
@@ -5568,27 +5572,30 @@ fn elm_syntax_module_uses_of_reference_into(
         | ElmDeclaredSymbol::VariableOrVariant {
             module_origin: module_origin_to_collect_uses_of,
             name: _,
-        } => !elm_syntax_module.imports.iter().any(|import| {
-            import
-                .value
-                .module_name
-                .as_ref()
-                .map(|node| node.value.as_str())
-                == Some(module_origin_to_collect_uses_of)
-        }),
+        } => {
+            Some(module_origin_to_collect_uses_of)
+                == maybe_self_module_name
+                    .as_ref()
+                    .map(|node| node.value.as_str())
+                || elm_syntax_module.imports.iter().any(|import| {
+                    import
+                        .value
+                        .module_name
+                        .as_ref()
+                        .map(|node| node.value.as_str())
+                        == Some(module_origin_to_collect_uses_of)
+                })
+        }
         ElmDeclaredSymbol::ImportAlias { .. } => false,
         ElmDeclaredSymbol::TypeVariable(_) => false,
         ElmDeclaredSymbol::LocalBinding(_) => false,
     };
-    if symbol_to_collect_uses_of_is_not_imported {
+    if !symbol_to_collect_can_occur_here {
         // if not imported, that module name can never appear, so we can skip a bunch of
         // traversing! (unless implicitly imported, but those modules are never renamed!)
         return;
     }
-    let self_module_name = elm_syntax_module
-        .header
-        .as_ref()
-        .and_then(|header| header.module_name.as_ref())
+    let self_module_name: &str = maybe_self_module_name
         .map(|node| node.value.as_str())
         .unwrap_or("");
     if let Some(module_header) = &elm_syntax_module.header
