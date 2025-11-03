@@ -7138,8 +7138,6 @@ fn elm_syntax_highlight_and_comment(
             // str::lines() eats the last linebreak. Restore it
             if elm_syntax_comment_node.value.ends_with("\n") {
                 Some("\n").into_iter()
-            } else if content_does_not_break_line {
-                Some("\n\n").into_iter()
             } else {
                 None.into_iter()
             },
@@ -7533,9 +7531,9 @@ fn elm_syntax_highlight_qualified_into(
             value: kind,
         })
     } else {
-        let name_start_position = lsp_position_add_characters(
+        let name_start_position: lsp_types::Position = lsp_position_add_characters(
             qualified_node.range.end,
-            -(qualified_node.value.name.len() as i32),
+            -(qualified_node.value.name.encode_utf16().count() as i32),
         );
         highlighted_so_far.push(ElmSyntaxNode {
             range: lsp_types::Range {
@@ -8465,7 +8463,7 @@ fn parse_any_guaranteed_non_linebreak_char(state: &mut ParseState) -> bool {
         None => false,
         Some(parsed_char) => {
             state.offset_utf8 += parsed_char.len_utf8();
-            state.position.character += parsed_char.len_utf8() as u32;
+            state.position.character += parsed_char.len_utf16() as u32;
             true
         }
     }
@@ -8476,7 +8474,7 @@ fn parse_any_guaranteed_non_linebreak_char_as_char(state: &mut ParseState) -> Op
         None => None,
         Some(parsed_char) => {
             state.offset_utf8 += parsed_char.len_utf8();
-            state.position.character += parsed_char.len_utf8() as u32;
+            state.position.character += parsed_char.len_utf16() as u32;
             Some(parsed_char)
         }
     }
@@ -8491,7 +8489,7 @@ fn parse_any_guaranteed_non_linebreak_char_not_0_indented(state: &mut ParseState
                 false
             } else {
                 state.offset_utf8 += parsed_char.len_utf8();
-                state.position.character += parsed_char.len_utf8() as u32;
+                state.position.character += parsed_char.len_utf16() as u32;
                 true
             }
         }
@@ -8507,7 +8505,7 @@ fn parse_any_char_not_0_indented(state: &mut ParseState) -> bool {
 fn parse_char_symbol_as_char(state: &mut ParseState, symbol: char) -> Option<char> {
     if state.source[state.offset_utf8..].starts_with(symbol) {
         state.offset_utf8 += symbol.len_utf8();
-        state.position.character += symbol.len_utf8() as u32;
+        state.position.character += symbol.len_utf16() as u32;
         Some(symbol)
     } else {
         None
@@ -8547,7 +8545,7 @@ fn parse_symbol_as_range(state: &mut ParseState, symbol: &str) -> Option<lsp_typ
         None
     }
 }
-/// a symbol that must be followed by a character that could not be part of an elm identifier
+/// a valid elm symbol that must be followed by a character that could not be part of an elm identifier
 fn parse_elm_keyword_as_range(state: &mut ParseState, symbol: &str) -> Option<lsp_types::Range> {
     if state.source[state.offset_utf8..].starts_with(symbol)
         && !(state.source[(state.offset_utf8 + symbol.len())..]
@@ -8567,13 +8565,13 @@ fn parse_elm_keyword_as_range(state: &mut ParseState, symbol: &str) -> Option<ls
 
 /// given condition must not succeed on linebreak
 fn parse_same_line_while(state: &mut ParseState, char_is_valid: impl Fn(char) -> bool) {
-    let consumed_length_utf8: usize = state.source[state.offset_utf8..]
+    let consumed_chars_iterator = state.source[state.offset_utf8..]
         .chars()
-        .take_while(|&c| char_is_valid(c))
-        .map(char::len_utf8)
-        .sum();
+        .take_while(|&c| char_is_valid(c));
+    let consumed_length_utf8: usize = consumed_chars_iterator.clone().map(char::len_utf8).sum();
+    let consumed_length_utf16: usize = consumed_chars_iterator.clone().map(char::len_utf16).sum();
     state.offset_utf8 += consumed_length_utf8;
-    state.position.character += consumed_length_utf8 as u32;
+    state.position.character += consumed_length_utf16 as u32;
 }
 /// given condition must not succeed on linebreak
 fn parse_same_line_while_as_str<'a>(
@@ -8586,9 +8584,11 @@ fn parse_same_line_while_as_str<'a>(
 }
 /// given condition must not succeed on linebreak
 fn parse_same_line_char_if(state: &mut ParseState, char_is_valid: impl Fn(char) -> bool) -> bool {
-    if state.source[state.offset_utf8..].starts_with(char_is_valid) {
-        state.offset_utf8 += 1;
-        state.position.character += 1;
+    if let Some(next_char) = state.source[state.offset_utf8..].chars().next()
+        && char_is_valid(next_char)
+    {
+        state.offset_utf8 += next_char.len_utf8();
+        state.position.character += next_char.len_utf16() as u32;
         true
     } else {
         false
@@ -8752,7 +8752,7 @@ fn parse_elm_lowercase_as_string(state: &mut ParseState) -> Option<String> {
         let mut parsed_name: String = first_char.to_string();
         parsed_name.extend(chars_from_offset.take_while(|&c| c.is_alphanumeric() || c == '_'));
         state.offset_utf8 += parsed_name.len();
-        state.position.character += parsed_name.len() as u32;
+        state.position.character += parsed_name.encode_utf16().count() as u32;
         Some(parsed_name)
     } else {
         None
@@ -8792,56 +8792,23 @@ fn parse_elm_uppercase_node(state: &mut ParseState) -> Option<ElmSyntaxNode<Stri
         value: name,
     })
 }
-fn parse_elm_uppercase_possibly_dot_separated_node(
-    state: &mut ParseState,
-) -> Option<ElmSyntaxNode<String>> {
-    // implementation note: state will only be updated at the very end,
-    // offset is instead tracked in the variable below:
-    // TODO switch to state being modified throughout
-    if state.source[state.offset_utf8..].starts_with(char::is_uppercase) {
-        let mut current_offset_utf8: usize = state.offset_utf8 + 1;
-        current_offset_utf8 += state.source[current_offset_utf8..]
-            .chars()
-            .take_while(|&c| c.is_alphanumeric() || c == '_')
-            .map(|c| c.len_utf8())
-            .sum::<usize>();
-        'from_dots: loop {
-            let mut next_chars: std::str::Chars = state.source[current_offset_utf8..].chars();
-            if next_chars.next() == Some('.') {
-                if next_chars.next().is_some_and(char::is_uppercase) {
-                    current_offset_utf8 += 2;
-                    current_offset_utf8 += state.source[current_offset_utf8..]
-                        .chars()
-                        .take_while(|&c| c.is_alphanumeric() || c == '_')
-                        .map(|c| c.len_utf8())
-                        .sum::<usize>();
-                } else {
-                    // ending in a . is explicitly allowed!
-                    current_offset_utf8 += 1;
-                    break 'from_dots;
-                }
-            } else {
-                break 'from_dots;
-            }
-        }
-        let end_position: lsp_types::Position = lsp_types::Position {
-            line: state.position.line,
-            character: state.position.character
-                + ((current_offset_utf8 - state.offset_utf8) as u32),
-        };
-        let parsed_name_node: ElmSyntaxNode<String> = ElmSyntaxNode {
-            range: lsp_types::Range {
-                start: state.position,
-                end: end_position,
-            },
-            value: state.source[state.offset_utf8..current_offset_utf8].to_string(),
-        };
-        state.offset_utf8 = current_offset_utf8;
-        state.position = end_position;
-        Some(parsed_name_node)
-    } else {
-        None
+fn parse_elm_standalone_module_name_node(state: &mut ParseState) -> Option<ElmSyntaxNode<String>> {
+    // very lenient, even allowing lowercase in most places it's usually forbidden
+    // to allow for more convenient autocomplete without pressing shift
+    let start_offset_utf8: usize = state.offset_utf8;
+    let start_position: lsp_types::Position = state.position;
+    if !parse_same_line_char_if(state, |c| c.is_alphabetic()) {
+        return None;
     }
+    parse_same_line_while(state, |c| c.is_alphanumeric() || c == '_' || c == '.');
+    let parsed_name_node: ElmSyntaxNode<String> = ElmSyntaxNode {
+        range: lsp_types::Range {
+            start: start_position,
+            end: state.position,
+        },
+        value: state.source[start_offset_utf8..state.offset_utf8].to_string(),
+    };
+    Some(parsed_name_node)
 }
 fn parse_elm_operator_node(state: &mut ParseState) -> Option<ElmSyntaxNode<&'static str>> {
     // can be optimized by only slicing once for each symbol length
@@ -8971,7 +8938,7 @@ fn parse_elm_syntax_import_node(state: &mut ParseState) -> Option<ElmSyntaxNode<
     let import_keyword_range: lsp_types::Range = parse_symbol_as_range(state, "import")?;
     parse_elm_whitespace_and_comments(state);
     let maybe_module_name_node: Option<ElmSyntaxNode<String>> =
-        parse_elm_uppercase_possibly_dot_separated_node(state);
+        parse_elm_standalone_module_name_node(state);
     parse_elm_whitespace_and_comments(state);
     let maybe_alias: Option<EmSyntaxImportAs> =
         parse_symbol_as_range(state, "as").and_then(|as_keyword_range| {
@@ -9071,7 +9038,7 @@ fn parse_elm_syntax_module_header(state: &mut ParseState) -> Option<ElmSyntaxMod
     if let Some(module_keyword_range) = parse_symbol_as_range(state, "module") {
         parse_elm_whitespace_and_comments(state);
         let maybe_module_name_node: Option<ElmSyntaxNode<String>> =
-            parse_elm_uppercase_possibly_dot_separated_node(state);
+            parse_elm_standalone_module_name_node(state);
         parse_elm_whitespace_and_comments(state);
         let maybe_exposing: Option<ElmSyntaxExposing> = parse_elm_syntax_exposing(state);
         Some(ElmSyntaxModuleHeader {
@@ -9086,7 +9053,7 @@ fn parse_elm_syntax_module_header(state: &mut ParseState) -> Option<ElmSyntaxMod
         let module_keyword_range: lsp_types::Range = parse_symbol_as_range(state, "module")?;
         parse_elm_whitespace_and_comments(state);
         let maybe_module_name_node: Option<ElmSyntaxNode<String>> =
-            parse_elm_uppercase_possibly_dot_separated_node(state);
+            parse_elm_standalone_module_name_node(state);
         parse_elm_whitespace_and_comments(state);
         let maybe_exposing: Option<ElmSyntaxExposing> = parse_elm_syntax_exposing(state);
         Some(ElmSyntaxModuleHeader {
@@ -9102,7 +9069,7 @@ fn parse_elm_syntax_module_header(state: &mut ParseState) -> Option<ElmSyntaxMod
         let module_keyword_range: lsp_types::Range = parse_symbol_as_range(state, "module")?;
         parse_elm_whitespace_and_comments(state);
         let maybe_module_name_node: Option<ElmSyntaxNode<String>> =
-            parse_elm_uppercase_possibly_dot_separated_node(state);
+            parse_elm_standalone_module_name_node(state);
         parse_elm_whitespace_and_comments(state);
         let where_keyword_range: lsp_types::Range = parse_symbol_as_range(state, "where")?;
         parse_elm_whitespace_and_comments(state);
@@ -9873,7 +9840,7 @@ fn parse_elm_text_content_char(state: &mut ParseState) -> Option<char> {
                     None => None,
                     Some(plain_char) => {
                         state.offset_utf8 += plain_char.len_utf8();
-                        state.position.character += plain_char.len_utf8() as u32;
+                        state.position.character += plain_char.len_utf16() as u32;
                         Some(plain_char)
                     }
                 }
@@ -9889,7 +9856,8 @@ fn parse_elm_syntax_expression_space_separated_node(
         .or_else(|| parse_elm_syntax_expression_let_in(state))
         .or_else(|| parse_elm_syntax_expression_lambda(state))
         .or_else(|| {
-            let left_node = parse_elm_syntax_expression_call_or_not_space_separated_node(state)?;
+            let left_node: ElmSyntaxNode<ElmSyntaxExpression> =
+                parse_elm_syntax_expression_call_or_not_space_separated_node(state)?;
             parse_elm_whitespace_and_comments(state);
             Some(match parse_elm_operator_node(state) {
                 None => left_node,
