@@ -28,70 +28,126 @@ async fn main() {
         let mut router: async_lsp::router::Router<State> = async_lsp::router::Router::new(State {
             projects: std::collections::HashMap::new(),
         });
-        router.request::<lsp_types::request::Initialize, _>(|state, initialize_arguments| {
-            initialize_state_for_workspace_directories_into(state, initialize_arguments);
-            async move {
-                Ok(lsp_types::InitializeResult {
-                    capabilities: lsp_types::ServerCapabilities {
-                        hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
-                        definition_provider: Some(lsp_types::OneOf::Left(true)),
-                        semantic_tokens_provider: Some(
-                            lsp_types::SemanticTokensServerCapabilities::SemanticTokensOptions(
-                                lsp_types::SemanticTokensOptions {
+        router.request::<lsp_types::request::Initialize, _>({
+            let client = client.clone();
+            move |state, initialize_arguments| {
+                initialize_state_for_workspace_directories_into(state, initialize_arguments);
+                let file_watch_registration_options: lsp_types::DidChangeWatchedFilesRegistrationOptions =
+                    lsp_types::DidChangeWatchedFilesRegistrationOptions {
+                        watchers: state
+                            .projects
+                            .values()
+                            .flat_map(|project| &project.source_directories)
+                            .filter_map(|source_directory_path| {
+                                lsp_types::Url::from_directory_path(source_directory_path).ok()
+                            })
+                            .map(|source_directory_url| lsp_types::FileSystemWatcher {
+                                glob_pattern: lsp_types::GlobPattern::Relative(
+                                    lsp_types::RelativePattern {
+                                        base_uri: lsp_types::OneOf::Right(source_directory_url),
+                                        pattern: "**/*.{elm,elm-testing}".to_string(),
+                                    },
+                                ),
+                                kind: Some(
+                                    lsp_types::WatchKind::Create
+                                        | lsp_types::WatchKind::Change
+                                        | lsp_types::WatchKind::Delete,
+                                ),
+                            })
+                            .collect::<Vec<lsp_types::FileSystemWatcher>>(),
+                    };
+                match serde_json::to_value(file_watch_registration_options) {
+                    Err(encode_error) => {
+                        eprintln!(
+                            "failed to register file watchers because encoding the request \
+                            options failed: {encode_error}"
+                        );
+                    }
+                    Ok(file_watch_registration_options_json) => {
+                        let _ = client.request::<lsp_types::request::RegisterCapability>(
+                            lsp_types::RegistrationParams {
+                                registrations: vec![lsp_types::Registration {
+                                    id: "file-watch".to_string(),
+                                    method: <lsp_types::notification::DidChangeWatchedFiles as lsp_types::notification::Notification>::METHOD
+                                        .to_string(),
+                                    register_options: Some(file_watch_registration_options_json),
+                                }],
+                            },
+                        );
+                    }
+                }
+                async move {
+                    Ok(lsp_types::InitializeResult {
+                        capabilities: lsp_types::ServerCapabilities {
+                            hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
+                            definition_provider: Some(lsp_types::OneOf::Left(true)),
+                            semantic_tokens_provider: Some(
+                                lsp_types::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                                    lsp_types::SemanticTokensOptions {
+                                        work_done_progress_options:
+                                            lsp_types::WorkDoneProgressOptions {
+                                                work_done_progress: None,
+                                            },
+                                        legend: lsp_types::SemanticTokensLegend {
+                                            token_modifiers: Vec::new(),
+                                            token_types: Vec::from(token_types),
+                                        },
+                                        range: None,
+                                        full: Some(lsp_types::SemanticTokensFullOptions::Bool(
+                                            true,
+                                        )),
+                                    },
+                                ),
+                            ),
+                            text_document_sync: Some(lsp_types::TextDocumentSyncCapability::Kind(
+                                lsp_types::TextDocumentSyncKind::FULL,
+                            )),
+                            rename_provider: Some(lsp_types::OneOf::Right(
+                                lsp_types::RenameOptions {
+                                    prepare_provider: Some(true),
                                     work_done_progress_options:
                                         lsp_types::WorkDoneProgressOptions {
                                             work_done_progress: None,
                                         },
-                                    legend: lsp_types::SemanticTokensLegend {
-                                        token_modifiers: Vec::new(),
-                                        token_types: Vec::from(token_types),
-                                    },
-                                    range: None,
-                                    full: Some(lsp_types::SemanticTokensFullOptions::Bool(true)),
                                 },
-                            ),
-                        ),
-                        text_document_sync: Some(lsp_types::TextDocumentSyncCapability::Kind(
-                            lsp_types::TextDocumentSyncKind::FULL,
-                        )),
-                        rename_provider: Some(lsp_types::OneOf::Right(lsp_types::RenameOptions {
-                            prepare_provider: Some(true),
-                            work_done_progress_options: lsp_types::WorkDoneProgressOptions {
-                                work_done_progress: None,
-                            },
-                        })),
-                        completion_provider: Some(lsp_types::CompletionOptions {
-                            resolve_provider: Some(false),
-                            trigger_characters: Some(vec![".".to_string()]),
-                            all_commit_characters: None,
-                            work_done_progress_options: lsp_types::WorkDoneProgressOptions {
-                                work_done_progress: None,
-                            },
-                            completion_item: Some(lsp_types::CompletionOptionsCompletionItem {
-                                label_details_support: None,
+                            )),
+                            completion_provider: Some(lsp_types::CompletionOptions {
+                                resolve_provider: Some(false),
+                                trigger_characters: Some(vec![".".to_string()]),
+                                all_commit_characters: None,
+                                work_done_progress_options: lsp_types::WorkDoneProgressOptions {
+                                    work_done_progress: None,
+                                },
+                                completion_item: Some(lsp_types::CompletionOptionsCompletionItem {
+                                    label_details_support: None,
+                                }),
                             }),
-                        }),
-                        ..lsp_types::ServerCapabilities::default()
-                    },
-                    server_info: None,
-                })
+                            ..lsp_types::ServerCapabilities::default()
+                        },
+                        server_info: None,
+                    })
+                }
             }
         });
         router.request::<lsp_types::request::HoverRequest, _>(
             |state, hover_arguments: lsp_types::HoverParams| {
-                let maybe_hover_result = respond_to_hover(state, hover_arguments);
+                let maybe_hover_result: Option<lsp_types::Hover> =
+                    respond_to_hover(state, hover_arguments);
                 async move { Ok(maybe_hover_result) }
             },
         );
         router.request::<lsp_types::request::GotoDefinition, _>(
             |state, goto_definition_arguments: lsp_types::GotoDefinitionParams| {
-                let response = respond_to_goto_definition(state, goto_definition_arguments);
+                let response: Option<lsp_types::GotoDefinitionResponse> =
+                    respond_to_goto_definition(state, goto_definition_arguments);
                 async move { Ok(response) }
             },
         );
         router.request::<lsp_types::request::PrepareRenameRequest, _>(
             |state, prepare_rename_arguments: lsp_types::TextDocumentPositionParams| {
-                let prepared = respond_to_prepare_rename(state, prepare_rename_arguments);
+                let prepared: Option<
+                    Result<lsp_types::PrepareRenameResponse, async_lsp::ResponseError>,
+                > = respond_to_prepare_rename(state, prepare_rename_arguments);
                 async move {
                     match prepared {
                         None => Ok(None),
@@ -164,7 +220,7 @@ async fn main() {
                         Some(changed_file_source) => {
                             state_update_source_at_path(
                                 state,
-                                changed_file_path,
+                                &changed_file_path,
                                 changed_file_source,
                             );
                         }
@@ -177,7 +233,7 @@ async fn main() {
             |state, did_change_watched_files| {
                 for file_change_event in did_change_watched_files.changes {
                     match file_change_event.uri.to_file_path() {
-                        Err(_) => {}
+                        Err(()) => {}
                         Ok(changed_file_path) => match file_change_event.typ {
                             lsp_types::FileChangeType::DELETED => {
                                 'removing_module: for project_state in state.projects.values_mut() {
@@ -194,7 +250,7 @@ async fn main() {
                                     Ok(changed_file_source) => {
                                         state_update_source_at_path(
                                             state,
-                                            changed_file_path,
+                                            &changed_file_path,
                                             changed_file_source,
                                         );
                                     }
@@ -2906,18 +2962,24 @@ fn project_module_name_completions_for_except(
 
 fn state_update_source_at_path(
     state: &mut State,
-    changed_path: std::path::PathBuf,
+    changed_path: &std::path::PathBuf,
     changed_source: String,
 ) {
-    'updating_module: for project_state in state.projects.values_mut() {
-        if project_state.modules.contains_key(&changed_path) {
+    for project_state in state.projects.values_mut() {
+        if project_state.modules.contains_key(changed_path)
+            || project_state
+                .source_directories
+                .iter()
+                .any(|source_directory_path| changed_path.starts_with(source_directory_path))
+        {
             project_state.modules.insert(
-                changed_path,
+                changed_path.clone(),
                 ModuleState {
                     syntax: parse_elm_syntax_module(&changed_source),
                 },
             );
-            break 'updating_module;
+            // we do not break out of the loop because
+            // source directories can be (partially) shared between applications
         }
     }
 }

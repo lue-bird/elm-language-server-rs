@@ -26,6 +26,7 @@ If you're using vs code (or forks) (which do not appear to have a built-in way t
 - inline GLSL blocks
 
 ## not sure (Please give me feedback on this)
+- switch to `position_encoding: Some(lsp_types::PositionEncodingKind::UTF8)`. This makes source edits and parsing easier and faster at the cost of compatibility with lsp clients below version 3.17.0. Is that acceptable? (leaning towards yes)
 - adding necessary imports when autocompleting vs making it a separate code action vs nothing vs ? (leaning towards separate code action)
 - show function parameter names (leaning towards no, as they are often confusing if they are curried, reveal non-exposed variant patterns, have more parameters than the type suggests, are undescriptive etc)
 - add code actions like "expose (including variants)", "inline", "inline all uses" (leaning towards no as it is fairly complicated, though it it very useful for sure)
@@ -41,7 +42,7 @@ If you're using vs code (or forks) (which do not appear to have a built-in way t
 - show errors inline
 - support elm projects with non-root `elm.json`
 - support `tests/`
-- support when new modules get created or the `elm.json` changes
+- support when the `elm.json` changes
 
 ## setup for developing
 Rebuild the project with
