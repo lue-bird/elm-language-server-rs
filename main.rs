@@ -819,7 +819,8 @@ fn respond_to_hover(
                     hovered_project_module_state.project,
                     &origin_module_state.syntax,
                 );
-            origin_module_state
+            let origin_declaration_info_markdown: String =
+                origin_module_state
                 .syntax
                 .declarations
                 .iter()
@@ -846,34 +847,26 @@ fn respond_to_hover(
                                         },
                                     ));
                             if any_declared_name_matches_hovered {
-                                Some(lsp_types::Hover {
-                                    contents: lsp_types::HoverContents::Markup(
-                                        lsp_types::MarkupContent {
-                                            kind: lsp_types::MarkupKind::Markdown,
-                                            value: format!(
-                                                "variant in\n{}",
-                                                &present_choice_type_declaration_info_markdown(
-                                                    &origin_module_origin_lookup,
-                                                    hovered_module_origin,
-                                                    origin_module_declaration_name
-                                                        .as_ref()
-                                                        .map(|node| node.value.as_str())
-                                                        .unwrap_or(""),
-                                                    origin_module_declaration
-                                                        .documentation
-                                                        .as_ref(),
-                                                    &origin_module_declaration_parameters,
-                                                    origin_module_declaration_variant0_name_node
-                                                        .as_ref()
-                                                        .map(|node| node.value.as_str()),
-                                                    &origin_module_declaration_variant0_values,
-                                                    &origin_module_declaration_variant1_up,
-                                                )
-                                            ),
-                                        },
-                                    ),
-                                    range: Some(hovered_symbol_node.range),
-                                })
+                                Some(format!(
+                                    "variant in\n{}",
+                                    &present_choice_type_declaration_info_markdown(
+                                        &origin_module_origin_lookup,
+                                        hovered_module_origin,
+                                        origin_module_declaration_name
+                                            .as_ref()
+                                            .map(|node| node.value.as_str())
+                                            .unwrap_or(""),
+                                        origin_module_declaration
+                                            .documentation
+                                            .as_ref(),
+                                        &origin_module_declaration_parameters,
+                                        origin_module_declaration_variant0_name_node
+                                            .as_ref()
+                                            .map(|node| node.value.as_str()),
+                                        &origin_module_declaration_variant0_values,
+                                        &origin_module_declaration_variant1_up,
+                                    )
+                                ))
                             } else {
                                 None
                             }
@@ -916,27 +909,19 @@ fn respond_to_hover(
                                                 })
                                             },
                                         );
-                                Some(lsp_types::Hover {
-                                    contents: lsp_types::HoverContents::Markup(
-                                        lsp_types::MarkupContent {
-                                            kind: lsp_types::MarkupKind::Markdown,
-                                            value: present_operator_declaration_info_markdown(
-                                                &origin_module_origin_lookup,
-                                                hovered_module_origin,
-                                                maybe_origin_module_declaration_operator
-                                                    .as_ref()
-                                                    .map(|node| node.value),
-                                                maybe_origin_operator_function_declaration,
-                                                origin_module_declaration.documentation.as_ref(),
-                                                maybe_origin_module_declaration_precedence
-                                                    .map(|node| node.value),
-                                                maybe_origin_module_declaration_direction
-                                                    .map(|node| node.value),
-                                            ),
-                                        },
-                                    ),
-                                    range: Some(hovered_symbol_node.range),
-                                })
+                                Some(present_operator_declaration_info_markdown(
+                                    &origin_module_origin_lookup,
+                                    hovered_module_origin,
+                                    maybe_origin_module_declaration_operator
+                                        .as_ref()
+                                        .map(|node| node.value),
+                                    maybe_origin_operator_function_declaration,
+                                    origin_module_declaration.documentation.as_ref(),
+                                    maybe_origin_module_declaration_precedence
+                                        .map(|node| node.value),
+                                    maybe_origin_module_declaration_direction
+                                        .map(|node| node.value),
+                                ))
                             } else {
                                 None
                             }
@@ -947,21 +932,13 @@ fn respond_to_hover(
                             type_,
                         } => {
                             if origin_module_declaration_name.as_ref().map(|node| node.value.as_str()) == Some(hovered_name) {
-                                Some(lsp_types::Hover {
-                                    contents: lsp_types::HoverContents::Markup(
-                                        lsp_types::MarkupContent {
-                                            kind: lsp_types::MarkupKind::Markdown,
-                                            value: present_port_declaration_info_markdown(
-                                                &origin_module_origin_lookup,
-                                                &hovered_module_origin,
-                                                hovered_name,
-                                                origin_module_declaration.documentation.as_ref(),
-                                                type_.as_ref().map(|node| &node.value),
-                                            ),
-                                        },
-                                    ),
-                                    range: Some(hovered_symbol_node.range),
-                                })
+                                Some(present_port_declaration_info_markdown(
+                                    &origin_module_origin_lookup,
+                                    &hovered_module_origin,
+                                    hovered_name,
+                                    origin_module_declaration.documentation.as_ref(),
+                                    type_.as_ref().map(|node| &node.value),
+                                ))
                             } else {
                                 None
                             }
@@ -977,27 +954,19 @@ fn respond_to_hover(
                                 .as_ref()
                                 .is_some_and(|name_node| &name_node.value == hovered_name)
                             {
-                                Some(lsp_types::Hover {
-                                    contents: lsp_types::HoverContents::Markup(
-                                        lsp_types::MarkupContent {
-                                            kind: lsp_types::MarkupKind::Markdown,
-                                            value: format!(
-                                                "constructor function for record\n{}",
-                                                &present_type_alias_declaration_info_markdown(
-                                                    &origin_module_origin_lookup,
-                                                    hovered_module_origin,
-                                                    hovered_name,
-                                                    origin_module_declaration
-                                                        .documentation
-                                                        .as_ref(),
-                                                    &origin_module_declaration_parameters,
-                                                    type_.as_ref().map(|node| &node.value)
-                                                )
-                                            ),
-                                        },
-                                    ),
-                                    range: Some(hovered_symbol_node.range),
-                                })
+                                Some(format!(
+                                    "constructor function for record\n{}",
+                                    &present_type_alias_declaration_info_markdown(
+                                        &origin_module_origin_lookup,
+                                        hovered_module_origin,
+                                        hovered_name,
+                                        origin_module_declaration
+                                            .documentation
+                                            .as_ref(),
+                                        &origin_module_declaration_parameters,
+                                        type_.as_ref().map(|node| &node.value)
+                                    )
+                                ))
                             } else {
                                 None
                             }
@@ -1010,34 +979,33 @@ fn respond_to_hover(
                             result: _,
                         } => {
                             if &origin_module_declaration_name_node.value == hovered_name {
-                                Some(lsp_types::Hover {
-                                    contents: lsp_types::HoverContents::Markup(
-                                        lsp_types::MarkupContent {
-                                            kind: lsp_types::MarkupKind::Markdown,
-                                            value: present_variable_declaration_info_markdown(
-                                                &origin_module_origin_lookup,
-                                                hovered_module_origin,
-                                                &origin_module_declaration_name_node.value,
-                                                origin_module_declaration.documentation.as_ref(),
-                                                origin_module_declaration_maybe_signature
-                                                    .as_ref()
-                                                    .and_then(|signature| {
-                                                        signature
-                                                            .type_
-                                                            .as_ref()
-                                                            .map(|node| &node.value)
-                                                    }),
-                                            ),
-                                        },
-                                    ),
-                                    range: Some(hovered_symbol_node.range),
-                                })
+                                Some(present_variable_declaration_info_markdown(
+                                    &origin_module_origin_lookup,
+                                    hovered_module_origin,
+                                    &origin_module_declaration_name_node.value,
+                                    origin_module_declaration.documentation.as_ref(),
+                                    origin_module_declaration_maybe_signature
+                                        .as_ref()
+                                        .and_then(|signature| {
+                                            signature
+                                                .type_
+                                                .as_ref()
+                                                .map(|node| &node.value)
+                                        }),
+                                ))
                             } else {
                                 None
                             }
                         }
                     }
-                })
+                })?;
+            Some(lsp_types::Hover {
+                contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
+                    kind: lsp_types::MarkupKind::Markdown,
+                    value: origin_declaration_info_markdown,
+                }),
+                range: Some(hovered_symbol_node.range),
+            })
         }
         ElmSyntaxSymbol::Type {
             qualification: hovered_qualification,
@@ -1073,11 +1041,8 @@ fn respond_to_hover(
                 hovered_project_module_state.project,
                 &origin_module_state.syntax,
             );
-            origin_module_state
-                .syntax
-                .declarations
-                .iter()
-                .find_map(|origin_module_declaration| {
+            let info_markdown: String = origin_module_state.syntax.declarations.iter().find_map(
+                |origin_module_declaration| {
                     let origin_module_declaration_node =
                         origin_module_declaration.declaration.as_ref()?;
                     match &origin_module_declaration_node.value {
@@ -1093,26 +1058,18 @@ fn respond_to_hover(
                                 .as_ref()
                                 .is_some_and(|name_node| &name_node.value == hovered_name)
                             {
-                                Some(lsp_types::Hover {
-                                    contents: lsp_types::HoverContents::Markup(
-                                        lsp_types::MarkupContent {
-                                            kind: lsp_types::MarkupKind::Markdown,
-                                            value: present_choice_type_declaration_info_markdown(
-                                                &module_origin_lookup,
-                                                hovered_module_origin,
-                                                hovered_name,
-                                                origin_module_declaration.documentation.as_ref(),
-                                                &origin_module_declaration_parameters,
-                                                maybe_origin_module_declaration_variant0_name_node
-                                                    .as_ref()
-                                                    .map(|node| node.value.as_str()),
-                                                &maybe_origin_module_declaration_variant0_values,
-                                                &origin_module_declaration_variant1_up,
-                                            ),
-                                        },
-                                    ),
-                                    range: Some(hovered_symbol_node.range),
-                                })
+                                Some(present_choice_type_declaration_info_markdown(
+                                    &module_origin_lookup,
+                                    hovered_module_origin,
+                                    hovered_name,
+                                    origin_module_declaration.documentation.as_ref(),
+                                    &origin_module_declaration_parameters,
+                                    maybe_origin_module_declaration_variant0_name_node
+                                        .as_ref()
+                                        .map(|node| node.value.as_str()),
+                                    &maybe_origin_module_declaration_variant0_values,
+                                    &origin_module_declaration_variant1_up,
+                                ))
                             } else {
                                 None
                             }
@@ -1130,29 +1087,29 @@ fn respond_to_hover(
                                 .as_ref()
                                 .is_some_and(|name_node| &name_node.value == hovered_name)
                             {
-                                Some(lsp_types::Hover {
-                                    contents: lsp_types::HoverContents::Markup(
-                                        lsp_types::MarkupContent {
-                                            kind: lsp_types::MarkupKind::Markdown,
-                                            value: present_type_alias_declaration_info_markdown(
-                                                &module_origin_lookup,
-                                                hovered_module_origin,
-                                                hovered_name,
-                                                origin_module_declaration.documentation.as_ref(),
-                                                &origin_module_declaration_parameters,
-                                                type_.as_ref().map(|node| &node.value),
-                                            ),
-                                        },
-                                    ),
-                                    range: Some(hovered_symbol_node.range),
-                                })
+                                Some(present_type_alias_declaration_info_markdown(
+                                    &module_origin_lookup,
+                                    hovered_module_origin,
+                                    hovered_name,
+                                    origin_module_declaration.documentation.as_ref(),
+                                    &origin_module_declaration_parameters,
+                                    type_.as_ref().map(|node| &node.value),
+                                ))
                             } else {
                                 None
                             }
                         }
                         ElmSyntaxDeclaration::Variable { .. } => None,
                     }
-                })
+                },
+            )?;
+            Some(lsp_types::Hover {
+                contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
+                    kind: lsp_types::MarkupKind::Markdown,
+                    value: info_markdown,
+                }),
+                range: Some(hovered_symbol_node.range),
+            })
         }
     }
 }
@@ -1821,23 +1778,23 @@ fn respond_to_rename(
                                 name: to_rename_name,
                             },
                         );
-                        lsp_types::Url::from_file_path(project_module.module_path)
-                            .ok()
-                            .map(|elm_module_uri| lsp_types::TextDocumentEdit {
-                                text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
-                                    uri: elm_module_uri,
-                                    version: None,
-                                },
-                                edits: all_uses_of_renamed_module_name
-                                    .into_iter()
-                                    .map(|use_range_of_renamed_module| {
-                                        lsp_types::OneOf::Left(lsp_types::TextEdit {
-                                            range: use_range_of_renamed_module,
-                                            new_text: rename_arguments.new_name.clone(),
-                                        })
+                        let elm_module_uri: lsp_types::Url =
+                            lsp_types::Url::from_file_path(project_module.module_path).ok()?;
+                        Some(lsp_types::TextDocumentEdit {
+                            text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
+                                uri: elm_module_uri,
+                                version: None,
+                            },
+                            edits: all_uses_of_renamed_module_name
+                                .into_iter()
+                                .map(|use_range_of_renamed_module| {
+                                    lsp_types::OneOf::Left(lsp_types::TextEdit {
+                                        range: use_range_of_renamed_module,
+                                        new_text: rename_arguments.new_name.clone(),
                                     })
-                                    .collect::<Vec<_>>(),
-                            })
+                                })
+                                .collect::<Vec<_>>(),
+                        })
                     })
                     .collect::<Vec<_>>()
             }
@@ -1872,10 +1829,8 @@ fn respond_to_rename(
                                                 value: ElmSyntaxType::Record(_),
                                                 range: _,
                                             }),
-                                        alias_keyword_range: _,
                                         name: Some(record_type_alias_name_node),
-                                        parameters: _,
-                                        equals_key_symbol_range: _,
+                                        ..
                                     } => record_type_alias_name_node.value == type_name_to_rename,
                                     _ => false,
                                 },
@@ -1883,7 +1838,8 @@ fn respond_to_rename(
                         },
                     )
                 });
-            let elm_declared_symbol_to_rename = if to_rename_is_record_type_alias {
+            let elm_declared_symbol_to_rename: ElmDeclaredSymbol = if to_rename_is_record_type_alias
+            {
                 ElmDeclaredSymbol::RecordTypeAlias {
                     module_origin: to_rename_module_origin,
                     name: type_name_to_rename,
