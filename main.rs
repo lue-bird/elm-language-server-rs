@@ -4326,6 +4326,7 @@ fn elm_syntax_module_header_find_reference_at_position<'a>(
         let exposing_specific_node: &ElmSyntaxNode<ElmSyntaxExposingSpecific> =
             exposing.specific.as_ref()?;
         elm_syntax_exposing_specific_from_module_find_reference_at_position(
+            "",
             elm_syntax_node_as_ref(exposing_specific_node),
             position,
         )
@@ -4364,6 +4365,13 @@ fn elm_syntax_import_find_reference_at_position<'a>(
             .and_then(|exposing| {
                 let exposing_specific = exposing.specific.as_ref()?;
                 elm_syntax_exposing_specific_from_module_find_reference_at_position(
+                    &elm_syntax_import_node
+                        .value
+                        .alias
+                        .as_ref()
+                        .and_then(|alias| alias.name.as_ref())
+                        .unwrap_or(module_name_node)
+                        .value,
                     elm_syntax_node_as_ref(exposing_specific),
                     position,
                 )
@@ -4372,6 +4380,9 @@ fn elm_syntax_import_find_reference_at_position<'a>(
 }
 
 fn elm_syntax_exposing_specific_from_module_find_reference_at_position<'a>(
+    // TODO adding qualification is more a band-aid
+    // for a deeper problem. Best solution is likely to add ElmSyntaxSymbol::Expose
+    qualification: &'a str,
     elm_syntax_exposing_specific_node: ElmSyntaxNode<&'a ElmSyntaxExposingSpecific>,
     position: lsp_types::Position,
 ) -> Option<ElmSyntaxNode<ElmSyntaxSymbol<'a>>> {
@@ -4388,7 +4399,7 @@ fn elm_syntax_exposing_specific_from_module_find_reference_at_position<'a>(
                         open_range: _,
                     } => Some(ElmSyntaxNode {
                         value: ElmSyntaxSymbol::Type {
-                            qualification: "",
+                            qualification: qualification,
                             name: &name.value,
                         },
                         range: expose_node.range,
@@ -4396,7 +4407,7 @@ fn elm_syntax_exposing_specific_from_module_find_reference_at_position<'a>(
                     ElmSyntaxExpose::Operator(maybe_symbol) => {
                         maybe_symbol.as_ref().map(|symbol_node| ElmSyntaxNode {
                             value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
-                                qualification: "",
+                                qualification: qualification,
                                 name: symbol_node.value,
                                 local_bindings: vec![],
                             },
@@ -4408,14 +4419,14 @@ fn elm_syntax_exposing_specific_from_module_find_reference_at_position<'a>(
                     }
                     ElmSyntaxExpose::Type(name) => Some(ElmSyntaxNode {
                         value: ElmSyntaxSymbol::Type {
-                            qualification: "",
+                            qualification: qualification,
                             name: name,
                         },
                         range: expose_node.range,
                     }),
                     ElmSyntaxExpose::Variable(name) => Some(ElmSyntaxNode {
                         value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
-                            qualification: "",
+                            qualification: qualification,
                             name: name,
                             local_bindings: vec![],
                         },
