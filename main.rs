@@ -8509,7 +8509,13 @@ fn parse_state_pop_indent(state: &mut ParseState) {
     state.indent = state.lower_indents_stack.pop().unwrap_or(0);
 }
 
+fn str_starts_with_linebreak(str: &str) -> bool {
+    // \r allowed because both \r and \r\n are counted as linebreak
+    // see EOL in https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocuments
+    str.starts_with("\n") || str.starts_with("\r")
+}
 fn parse_linebreak(state: &mut ParseState) -> bool {
+    // see EOL in https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocuments
     if state.source[state.offset_utf8..].starts_with("\n") {
         state.offset_utf8 += 1;
         state.position.line += 1;
@@ -8520,11 +8526,17 @@ fn parse_linebreak(state: &mut ParseState) -> bool {
         state.position.line += 1;
         state.position.character = 0;
         true
+    } else if state.source[state.offset_utf8..].starts_with("\r") {
+        state.offset_utf8 += 1;
+        state.position.line += 1;
+        state.position.character = 0;
+        true
     } else {
         false
     }
 }
 fn parse_linebreak_as_str<'a>(state: &mut ParseState<'a>) -> Option<&'a str> {
+    // see EOL in https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocuments
     if state.source[state.offset_utf8..].starts_with("\n") {
         state.offset_utf8 += 1;
         state.position.line += 1;
@@ -8535,6 +8547,11 @@ fn parse_linebreak_as_str<'a>(state: &mut ParseState<'a>) -> Option<&'a str> {
         state.position.line += 1;
         state.position.character = 0;
         Some("\r\n")
+    } else if state.source[state.offset_utf8..].starts_with("\r") {
+        state.offset_utf8 += 1;
+        state.position.line += 1;
+        state.position.character = 0;
+        Some("\r")
     } else {
         None
     }
@@ -8687,9 +8704,7 @@ fn parse_until_including_symbol_or_excluding_end_of_line(
     end_symbol: &'static str,
 ) {
     'until_including_symbol_or_excluding_end_of_line: while !parse_symbol(state, end_symbol) {
-        if state.source[state.offset_utf8..].starts_with("\n")
-            || state.source[state.offset_utf8..].starts_with("\r\n")
-        {
+        if str_starts_with_linebreak(&state.source[state.offset_utf8..]) {
             break 'until_including_symbol_or_excluding_end_of_line;
         } else if parse_any_guaranteed_non_linebreak_char(state) {
         } else {
@@ -9865,8 +9880,7 @@ fn parse_elm_string_single_quoted(state: &mut ParseState) -> Option<String> {
     }
     let mut result: String = String::new();
     while !(parse_symbol(state, "\"")
-        || state.source[state.offset_utf8..].starts_with("\n")
-        || state.source[state.offset_utf8..].starts_with("\r\n"))
+        || str_starts_with_linebreak(&state.source[state.offset_utf8..]))
     {
         match parse_elm_text_content_char(state) {
             Some(next_content_char) => {
@@ -9930,9 +9944,7 @@ fn parse_elm_text_content_char(state: &mut ParseState) -> Option<char> {
             }
         })
         .or_else(|| {
-            if state.source[state.offset_utf8..].starts_with("\n")
-                || state.source[state.offset_utf8..].starts_with("\r\n")
-            {
+            if str_starts_with_linebreak(&state.source[state.offset_utf8..]) {
                 None
             } else {
                 match state.source[state.offset_utf8..].chars().next() {
