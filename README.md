@@ -33,6 +33,7 @@ If you're using vs code (or forks) (which do not appear to have a built-in way t
 - your idea 👀
 
 ## TODO
+- provide actual suggestions in import exposings
 - add suggestions for import aliases when typing uppercase reference
 - add suggestions for expose-imported variables and types
 - after typing an import alias, suggest exposed members from its associated module

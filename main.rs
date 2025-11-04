@@ -916,25 +916,23 @@ fn respond_to_hover(
                                                 })
                                             },
                                         );
-                                let hover_markdown: String =
-                                    present_operator_declaration_info_markdown(
-                                        &origin_module_origin_lookup,
-                                        hovered_module_origin,
-                                        maybe_origin_module_declaration_operator
-                                            .as_ref()
-                                            .map(|node| node.value),
-                                        maybe_origin_operator_function_declaration,
-                                        origin_module_declaration.documentation.as_ref(),
-                                        maybe_origin_module_declaration_precedence
-                                            .map(|node| node.value),
-                                        maybe_origin_module_declaration_direction
-                                            .map(|node| node.value),
-                                    );
                                 Some(lsp_types::Hover {
                                     contents: lsp_types::HoverContents::Markup(
                                         lsp_types::MarkupContent {
                                             kind: lsp_types::MarkupKind::Markdown,
-                                            value: hover_markdown,
+                                            value: present_operator_declaration_info_markdown(
+                                                &origin_module_origin_lookup,
+                                                hovered_module_origin,
+                                                maybe_origin_module_declaration_operator
+                                                    .as_ref()
+                                                    .map(|node| node.value),
+                                                maybe_origin_operator_function_declaration,
+                                                origin_module_declaration.documentation.as_ref(),
+                                                maybe_origin_module_declaration_precedence
+                                                    .map(|node| node.value),
+                                                maybe_origin_module_declaration_direction
+                                                    .map(|node| node.value),
+                                            ),
                                         },
                                     ),
                                     range: Some(hovered_symbol_node.range),
@@ -1206,12 +1204,13 @@ fn respond_to_goto_definition(
             .text_document
             .uri,
     )?;
-    let goto_symbol_node = elm_syntax_module_find_symbol_at_position(
-        goto_project_module_state.module_syntax,
-        goto_definition_arguments
-            .text_document_position_params
-            .position,
-    )?;
+    let goto_symbol_node: ElmSyntaxNode<ElmSyntaxSymbol> =
+        elm_syntax_module_find_symbol_at_position(
+            goto_project_module_state.module_syntax,
+            goto_definition_arguments
+                .text_document_position_params
+                .position,
+        )?;
     match goto_symbol_node.value {
         ElmSyntaxSymbol::TypeVariable {
             scope_declaration,
@@ -1327,38 +1326,22 @@ fn respond_to_goto_definition(
                 && let Some((goto_local_binding_origin, _)) =
                     find_local_binding_scope_expression(&local_bindings, goto_name)
             {
-                return match goto_local_binding_origin {
-                    LocalBindingOrigin::PatternVariable(range) => Some(
-                        lsp_types::GotoDefinitionResponse::Scalar(lsp_types::Location {
-                            uri: goto_definition_arguments
-                                .text_document_position_params
-                                .text_document
-                                .uri,
-                            range: range,
-                        }),
-                    ),
-                    LocalBindingOrigin::PatternRecordField(range) => Some(
-                        lsp_types::GotoDefinitionResponse::Scalar(lsp_types::Location {
-                            uri: goto_definition_arguments
-                                .text_document_position_params
-                                .text_document
-                                .uri,
-                            range: range,
-                        }),
-                    ),
-                    LocalBindingOrigin::LetDeclaredVariable {
-                        signature_type: _,
-                        start_name_range,
-                    } => Some(lsp_types::GotoDefinitionResponse::Scalar(
-                        lsp_types::Location {
-                            uri: goto_definition_arguments
-                                .text_document_position_params
-                                .text_document
-                                .uri,
-                            range: start_name_range,
+                return Some(lsp_types::GotoDefinitionResponse::Scalar(
+                    lsp_types::Location {
+                        uri: goto_definition_arguments
+                            .text_document_position_params
+                            .text_document
+                            .uri,
+                        range: match goto_local_binding_origin {
+                            LocalBindingOrigin::PatternVariable(range) => range,
+                            LocalBindingOrigin::PatternRecordField(range) => range,
+                            LocalBindingOrigin::LetDeclaredVariable {
+                                signature_type: _,
+                                start_name_range,
+                            } => start_name_range,
                         },
-                    )),
-                };
+                    },
+                ));
             }
             let goto_module_origin: &str = look_up_origin_module(
                 &elm_syntax_module_create_origin_lookup(
@@ -1375,7 +1358,9 @@ fn respond_to_goto_definition(
                     goto_project_module_state.project,
                     goto_module_origin,
                 )?;
-            origin_module_state
+            let origin_module_file_url: lsp_types::Url =
+                lsp_types::Url::from_file_path(origin_module_file_path).ok()?;
+            let declaration_name_range: lsp_types::Range = origin_module_state
                 .syntax
                 .declarations
                 .iter()
@@ -1384,28 +1369,15 @@ fn respond_to_goto_definition(
                         origin_module_declaration.declaration.as_ref()?;
                     match &origin_module_declaration_node.value {
                         ElmSyntaxDeclaration::ChoiceType {
-                            name: _,
-                            parameters: _,
-                            equals_key_symbol_range: _,
                             variant0_name: maybe_origin_module_declaration_variant0_name_node,
-                            variant0_values: _,
                             variant1_up: origin_module_declaration_variant1_up,
+                            ..
                         } => {
                             if let Some(origin_module_declaration_variant0_name_node) =
                                 maybe_origin_module_declaration_variant0_name_node
                                 && &origin_module_declaration_variant0_name_node.value == goto_name
                             {
-                                lsp_types::Url::from_file_path(origin_module_file_path)
-                                    .ok()
-                                    .map(|origin_module_file_url| {
-                                        lsp_types::GotoDefinitionResponse::Scalar(
-                                            lsp_types::Location {
-                                                uri: origin_module_file_url,
-                                                range: origin_module_declaration_variant0_name_node
-                                                    .range,
-                                            },
-                                        )
-                                    })
+                                Some(origin_module_declaration_variant0_name_node.range)
                             } else {
                                 origin_module_declaration_variant1_up
                                     .iter()
@@ -1418,134 +1390,72 @@ fn respond_to_goto_definition(
                                             }
                                         })
                                     })
-                                    .and_then(|variant_name_range| {
-                                        lsp_types::Url::from_file_path(origin_module_file_path)
-                                            .ok()
-                                            .map(|origin_module_file_url| {
-                                                lsp_types::GotoDefinitionResponse::Scalar(
-                                                    lsp_types::Location {
-                                                        uri: origin_module_file_url,
-                                                        range: variant_name_range,
-                                                    },
-                                                )
-                                            })
-                                    })
                             }
                         }
                         ElmSyntaxDeclaration::Operator {
-                            direction: _,
-                            precedence: _,
                             operator: maybe_origin_module_declaration_operator,
-                            equals_key_symbol_range: _,
                             function: maybe_origin_module_declaration_function,
+                            ..
                         } => {
                             if let Some(origin_module_declaration_operator_node) =
                                 maybe_origin_module_declaration_operator
                                 && origin_module_declaration_operator_node.value == goto_name
                             {
-                                lsp_types::Url::from_file_path(origin_module_file_path)
-                                    .ok()
-                                    .map(|origin_module_file_url| {
-                                        lsp_types::GotoDefinitionResponse::Scalar(
-                                            lsp_types::Location {
-                                                uri: origin_module_file_url,
-                                                range: origin_module_declaration_operator_node
-                                                    .range,
-                                            },
-                                        )
-                                    })
+                                Some(origin_module_declaration_operator_node.range)
                             } else if let Some(origin_module_declaration_function_node) =
                                 maybe_origin_module_declaration_function
                                 && goto_name == &origin_module_declaration_function_node.value
                             {
-                                lsp_types::Url::from_file_path(origin_module_file_path)
-                                    .ok()
-                                    .map(|origin_module_file_url| {
-                                        lsp_types::GotoDefinitionResponse::Scalar(
-                                            lsp_types::Location {
-                                                uri: origin_module_file_url,
-                                                range: origin_module_declaration_function_node
-                                                    .range,
-                                            },
-                                        )
-                                    })
+                                Some(origin_module_declaration_function_node.range)
                             } else {
                                 None
                             }
                         }
                         ElmSyntaxDeclaration::Port {
                             name: maybe_origin_module_declaration_name,
-                            colon_key_symbol_range: _,
-                            type_: _,
+                            ..
                         } => {
                             if let Some(origin_module_declaration_name_node) =
                                 maybe_origin_module_declaration_name
                                 && &origin_module_declaration_name_node.value == goto_name
                             {
-                                lsp_types::Url::from_file_path(origin_module_file_path)
-                                    .ok()
-                                    .map(|origin_module_file_url| {
-                                        lsp_types::GotoDefinitionResponse::Scalar(
-                                            lsp_types::Location {
-                                                uri: origin_module_file_url,
-                                                range: origin_module_declaration_name_node.range,
-                                            },
-                                        )
-                                    })
+                                Some(origin_module_declaration_name_node.range)
                             } else {
                                 None
                             }
                         }
                         ElmSyntaxDeclaration::TypeAlias {
-                            alias_keyword_range: _,
                             name: maybe_origin_module_declaration_name,
-                            parameters: _,
-                            equals_key_symbol_range: _,
-                            type_: _,
+                            ..
                         } => {
                             // record type alias constructor function
                             if let Some(origin_module_declaration_name_node) =
                                 maybe_origin_module_declaration_name
                                 && &origin_module_declaration_name_node.value == goto_name
                             {
-                                lsp_types::Url::from_file_path(origin_module_file_path)
-                                    .ok()
-                                    .map(|origin_module_file_url| {
-                                        lsp_types::GotoDefinitionResponse::Scalar(
-                                            lsp_types::Location {
-                                                uri: origin_module_file_url,
-                                                range: origin_module_declaration_name_node.range,
-                                            },
-                                        )
-                                    })
+                                Some(origin_module_declaration_name_node.range)
                             } else {
                                 None
                             }
                         }
                         ElmSyntaxDeclaration::Variable {
                             start_name: origin_module_declaration_name_node,
-                            signature: _,
-                            parameters: _,
-                            equals_key_symbol_range: _,
-                            result: _,
+                            ..
                         } => {
                             if &origin_module_declaration_name_node.value == goto_name {
-                                lsp_types::Url::from_file_path(origin_module_file_path)
-                                    .ok()
-                                    .map(|origin_module_file_url| {
-                                        lsp_types::GotoDefinitionResponse::Scalar(
-                                            lsp_types::Location {
-                                                uri: origin_module_file_url,
-                                                range: origin_module_declaration_name_node.range,
-                                            },
-                                        )
-                                    })
+                                Some(origin_module_declaration_name_node.range)
                             } else {
                                 None
                             }
                         }
                     }
-                })
+                })?;
+            Some(lsp_types::GotoDefinitionResponse::Scalar(
+                lsp_types::Location {
+                    uri: origin_module_file_url,
+                    range: declaration_name_range,
+                },
+            ))
         }
         ElmSyntaxSymbol::Type {
             qualification: goto_qualification,
@@ -1566,70 +1476,52 @@ fn respond_to_goto_definition(
                     goto_project_module_state.project,
                     goto_module_origin,
                 )?;
-            origin_module_state
-                .syntax
-                .declarations
-                .iter()
-                .find_map(|origin_module_declaration| {
-                    let origin_module_declaration_node =
-                        origin_module_declaration.declaration.as_ref()?;
-                    match &origin_module_declaration_node.value {
-                        ElmSyntaxDeclaration::ChoiceType {
-                            name: maybe_origin_module_declaration_name,
-                            parameters: _,
-                            equals_key_symbol_range: _,
-                            variant0_name: _,
-                            variant0_values: _,
-                            variant1_up: _,
-                        } => {
-                            if let Some(origin_module_declaration_name_node) =
-                                maybe_origin_module_declaration_name
-                                && &origin_module_declaration_name_node.value == goto_name
-                            {
-                                lsp_types::Url::from_file_path(origin_module_file_path)
-                                    .ok()
-                                    .map(|origin_module_file_url| {
-                                        lsp_types::GotoDefinitionResponse::Scalar(
-                                            lsp_types::Location {
-                                                uri: origin_module_file_url,
-                                                range: origin_module_declaration_name_node.range,
-                                            },
-                                        )
-                                    })
-                            } else {
-                                None
+            let origin_module_file_url: lsp_types::Url =
+                lsp_types::Url::from_file_path(origin_module_file_path).ok()?;
+            let declaration_name_range: lsp_types::Range =
+                origin_module_state.syntax.declarations.iter().find_map(
+                    |origin_module_declaration| {
+                        let origin_module_declaration_node =
+                            origin_module_declaration.declaration.as_ref()?;
+                        match &origin_module_declaration_node.value {
+                            ElmSyntaxDeclaration::ChoiceType {
+                                name: maybe_origin_module_declaration_name,
+                                ..
+                            } => {
+                                if let Some(origin_module_declaration_name_node) =
+                                    maybe_origin_module_declaration_name
+                                    && &origin_module_declaration_name_node.value == goto_name
+                                {
+                                    Some(origin_module_declaration_name_node.range)
+                                } else {
+                                    None
+                                }
                             }
-                        }
-                        ElmSyntaxDeclaration::Operator { .. } => None,
-                        ElmSyntaxDeclaration::Port { .. } => None,
-                        ElmSyntaxDeclaration::TypeAlias {
-                            alias_keyword_range: _,
-                            name: maybe_origin_module_declaration_name,
-                            parameters: _,
-                            equals_key_symbol_range: _,
-                            type_: _,
-                        } => {
-                            if let Some(origin_module_declaration_name_node) =
-                                maybe_origin_module_declaration_name
-                                && &origin_module_declaration_name_node.value == goto_name
-                            {
-                                lsp_types::Url::from_file_path(origin_module_file_path)
-                                    .ok()
-                                    .map(|origin_module_file_url| {
-                                        lsp_types::GotoDefinitionResponse::Scalar(
-                                            lsp_types::Location {
-                                                uri: origin_module_file_url,
-                                                range: origin_module_declaration_name_node.range,
-                                            },
-                                        )
-                                    })
-                            } else {
-                                None
+                            ElmSyntaxDeclaration::Operator { .. } => None,
+                            ElmSyntaxDeclaration::Port { .. } => None,
+                            ElmSyntaxDeclaration::TypeAlias {
+                                name: maybe_origin_module_declaration_name,
+                                ..
+                            } => {
+                                if let Some(origin_module_declaration_name_node) =
+                                    maybe_origin_module_declaration_name
+                                    && &origin_module_declaration_name_node.value == goto_name
+                                {
+                                    Some(origin_module_declaration_name_node.range)
+                                } else {
+                                    None
+                                }
                             }
+                            ElmSyntaxDeclaration::Variable { .. } => None,
                         }
-                        ElmSyntaxDeclaration::Variable { .. } => None,
-                    }
-                })
+                    },
+                )?;
+            Some(lsp_types::GotoDefinitionResponse::Scalar(
+                lsp_types::Location {
+                    uri: origin_module_file_url,
+                    range: declaration_name_range,
+                },
+            ))
         }
     }
 }
@@ -1640,10 +1532,9 @@ fn respond_to_prepare_rename(
 ) -> Option<Result<lsp_types::PrepareRenameResponse, async_lsp::ResponseError>> {
     let project_module_state =
         state_get_project_module_by_lsp_url(state, &prepare_rename_arguments.text_document.uri)?;
-    let prepare_rename_module_syntax = project_module_state.module_syntax;
     let prepare_rename_symbol: ElmSyntaxNode<ElmSyntaxSymbol> =
         elm_syntax_module_find_symbol_at_position(
-            prepare_rename_module_syntax,
+            &project_module_state.module_syntax,
             prepare_rename_arguments.position,
         )?;
     Some(match prepare_rename_symbol.value {
@@ -4399,26 +4290,23 @@ fn elm_syntax_module_find_symbol_at_position<'a>(
             elm_syntax_module_header_find_reference_at_position(module_header, position)
         })
         .or_else(|| {
+            elm_syntax_module.imports.iter().find_map(|import_node| {
+                elm_syntax_import_find_reference_at_position(
+                    elm_syntax_node_as_ref(import_node),
+                    position,
+                )
+            })
+        })
+        .or_else(|| {
             elm_syntax_module
-                .imports
+                .declarations
                 .iter()
-                .find_map(|import_node| {
-                    elm_syntax_import_find_reference_at_position(
-                        elm_syntax_node_as_ref(import_node),
+                .find_map(|documented_declaration| {
+                    let declaration_node = documented_declaration.declaration.as_ref()?;
+                    elm_syntax_declaration_find_reference_at_position(
+                        elm_syntax_node_as_ref(declaration_node),
                         position,
                     )
-                })
-                .or_else(|| {
-                    elm_syntax_module
-                        .declarations
-                        .iter()
-                        .find_map(move |documented_declaration| {
-                            let declaration_node = documented_declaration.declaration.as_ref()?;
-                            elm_syntax_declaration_find_reference_at_position(
-                                elm_syntax_node_as_ref(declaration_node),
-                                position,
-                            )
-                        })
                 })
         })
 }
