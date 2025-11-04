@@ -124,7 +124,10 @@ async fn main() {
                             }),
                             ..lsp_types::ServerCapabilities::default()
                         },
-                        server_info: None,
+                        server_info: Some(lsp_types::ServerInfo {
+                            name: "elm-language-server-rs".to_string(),
+                            version: Some("pre-release".to_string())
+                        }),
                     })
                 }
             }
