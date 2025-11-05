@@ -33,9 +33,7 @@ If you're using vs code (or forks) (which do not appear to have a built-in way t
 - your idea 👀
 
 ## TODO
-- add suggestions for import aliases when typing uppercase reference
 - add suggestions for expose-imported variables and types
-- after typing an import alias, suggest exposed members from its associated module
 - incremental reparsing
 - show errors inline
 - support elm projects with non-root `elm.json`
