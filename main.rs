@@ -457,6 +457,7 @@ fn elm_make_message_segments_to_markdown(
                 color: maybe_color,
                 text,
             } => {
+                // https://github.com/microsoft/vscode/issues/54272
                 if let Some(_color) = maybe_color {
                     builder.push_str(text);
                 } else {
