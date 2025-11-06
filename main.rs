@@ -1253,8 +1253,8 @@ fn respond_to_hover(
                                         .documentation
                                         .as_ref()
                                         .map(|node| node.value.as_str()),
-                                    maybe_declaration_precedence.map(|node| node.value),
                                     maybe_declaration_direction.map(|node| node.value),
+                                    maybe_declaration_precedence.map(|node| node.value),
                                 ))
                             } else {
                                 None
@@ -1447,8 +1447,8 @@ fn respond_to_hover(
                             .map(|node| node.value),
                         maybe_origin_operator_function_declaration,
                         documentation,
-                        maybe_origin_module_declaration_precedence.map(|node| node.value),
                         maybe_origin_module_declaration_direction.map(|node| node.value),
+                        maybe_origin_module_declaration_precedence.map(|node| node.value),
                     )
                 }
                 ElmSyntaxDeclaration::Port {
@@ -1614,8 +1614,8 @@ fn respond_to_hover(
                                         .documentation
                                         .as_ref()
                                         .map(|node| node.value.as_str()),
-                                    maybe_declaration_precedence.map(|node| node.value),
                                     maybe_declaration_direction.map(|node| node.value),
+                                    maybe_declaration_precedence.map(|node| node.value),
                                 ))
                             } else {
                                 None
@@ -1845,9 +1845,9 @@ fn respond_to_hover(
                                         .documentation
                                         .as_ref()
                                         .map(|node| node.value.as_str()),
-                                    maybe_origin_module_declaration_precedence
-                                        .map(|node| node.value),
                                     maybe_origin_module_declaration_direction
+                                        .map(|node| node.value),
+                                    maybe_origin_module_declaration_precedence
                                         .map(|node| node.value),
                                 ))
                             } else {
@@ -3461,9 +3461,8 @@ fn present_operator_declaration_info_markdown(
         Option<&str>,
     )>,
     maybe_documentation: Option<&str>,
-    precedence: Option<i64>,
-    // TODO swap direction ad precedence
     maybe_direction: Option<ElmSyntaxInfixDirection>,
+    precedence: Option<i64>,
 ) -> String {
     match maybe_origin_operator_function_declaration {
         Some((
@@ -4090,8 +4089,8 @@ fn respond_to_completion(
                                             Some(operator_node.value),
                                             maybe_origin_operator_function_declaration,
                                             origin_module_declaration_documentation,
-                                            maybe_precedence.map(|node| node.value),
                                             maybe_direction.map(|node| node.value),
+                                            maybe_precedence.map(|node| node.value),
                                         ),
                                     },
                                 )),
