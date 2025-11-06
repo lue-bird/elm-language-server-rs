@@ -28,7 +28,7 @@ If you're using vs code (or forks) (which do not appear to have a built-in way t
 ## not sure (Please give me feedback on this)
 - configuring a custom elm compiler path. Is there an established way to set it, preferably something like an environment variable outside of LSP configuration? (If there is, I will support it)
 - switch to `position_encoding: Some(lsp_types::PositionEncodingKind::UTF8)`. This makes source edits and parsing easier and faster at the cost of compatibility with lsp clients below version 3.17.0. Is that acceptable? (leaning towards yes).
-  Also validate if elm --report region column
+  Also validate if elm --report region column is UTF-8 or UTF-16 (seems to be UTF-16 strangely)
 - adding necessary imports when autocompleting vs making it a separate code action vs nothing vs ? (leaning towards separate code action)
 - show function parameter names (leaning towards no, as they are often confusing if they are curried, reveal non-exposed variant patterns, have more parameters than the type suggests, are undescriptive etc)
 - add code actions like "expose (including variants)", "inline", "inline all uses" (leaning towards no as it is fairly complicated, though it it very useful for sure)
