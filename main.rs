@@ -1013,8 +1013,7 @@ fn project_state_get_module_with_name<'a>(
 struct ProjectModuleState<'a> {
     project_path: &'a std::path::Path,
     project: &'a ProjectState,
-    // TODO change to ModuleState
-    module_syntax: &'a ElmSyntaxModule,
+    module: &'a ModuleState,
 }
 
 fn state_get_project_module_by_lsp_url<'a>(
@@ -1030,7 +1029,7 @@ fn state_get_project_module_by_lsp_url<'a>(
             Some(ProjectModuleState {
                 project_path: project_path,
                 project: project_state,
-                module_syntax: &module_state.syntax,
+                module: module_state,
             })
         })
 }
@@ -1048,7 +1047,7 @@ fn respond_to_hover(
     )?;
     let hovered_symbol_node: ElmSyntaxNode<ElmSyntaxSymbol> =
         elm_syntax_module_find_symbol_at_position(
-            hovered_project_module_state.module_syntax,
+            &hovered_project_module_state.module.syntax,
             hover_arguments.text_document_position_params.position,
         )?;
     match hovered_symbol_node.value {
@@ -1082,7 +1081,8 @@ fn respond_to_hover(
             all_exposes: _,
         } => {
             let hovered_module_origin: &str = hovered_project_module_state
-                .module_syntax
+                .module
+                .syntax
                 .header
                 .as_ref()
                 .and_then(|header| header.module_name.as_ref())
@@ -1092,10 +1092,11 @@ fn respond_to_hover(
                 elm_syntax_module_create_origin_lookup(
                     state,
                     hovered_project_module_state.project,
-                    hovered_project_module_state.module_syntax,
+                    &hovered_project_module_state.module.syntax,
                 );
             let origin_declaration_info_markdown: String = hovered_project_module_state
-                .module_syntax
+                .module
+                .syntax
                 .declarations
                 .iter()
                 .find_map(|documented_declaration| {
@@ -1150,7 +1151,8 @@ fn respond_to_hover(
                                     maybe_declaration_function.as_ref().and_then(
                                         |origin_module_declaration_function_node| {
                                             hovered_project_module_state
-                                                .module_syntax
+                                                .module
+                                                .syntax
                                                 .declarations
                                                 .iter()
                                                 .find_map(|origin_module_declaration| {
@@ -1286,7 +1288,8 @@ fn respond_to_hover(
             declaration,
         } => {
             let hovered_module_origin: &str = hovered_project_module_state
-                .module_syntax
+                .module
+                .syntax
                 .header
                 .as_ref()
                 .and_then(|header| header.module_name.as_ref())
@@ -1296,7 +1299,7 @@ fn respond_to_hover(
                 elm_syntax_module_create_origin_lookup(
                     state,
                     hovered_project_module_state.project,
-                    hovered_project_module_state.module_syntax,
+                    &hovered_project_module_state.module.syntax,
                 );
             let origin_declaration_info_markdown: String = match &declaration.value {
                 ElmSyntaxDeclaration::ChoiceType {
@@ -1346,7 +1349,8 @@ fn respond_to_hover(
                         maybe_origin_module_declaration_function.as_ref().and_then(
                             |origin_module_declaration_function_node| {
                                 hovered_project_module_state
-                                    .module_syntax
+                                    .module
+                                    .syntax
                                     .declarations
                                     .iter()
                                     .find_map(|origin_module_declaration| {
@@ -1665,7 +1669,7 @@ fn respond_to_hover(
                 &elm_syntax_module_create_origin_lookup(
                     state,
                     hovered_project_module_state.project,
-                    &hovered_project_module_state.module_syntax,
+                    &hovered_project_module_state.module.syntax,
                 ),
                 hovered_qualification,
                 hovered_name,
@@ -1887,7 +1891,7 @@ fn respond_to_hover(
                 &elm_syntax_module_create_origin_lookup(
                     state,
                     hovered_project_module_state.project,
-                    &hovered_project_module_state.module_syntax,
+                    &hovered_project_module_state.module.syntax,
                 ),
                 hovered_qualification,
                 hovered_name,
@@ -2018,7 +2022,7 @@ fn local_binding_info_markdown(
                         &elm_syntax_module_create_origin_lookup(
                             state,
                             hovered_project_module_state.project,
-                            hovered_project_module_state.module_syntax
+                            &hovered_project_module_state.module.syntax
                         ),
                         hovered_local_binding_signature,
                     )
@@ -2041,7 +2045,7 @@ fn respond_to_goto_definition(
     )?;
     let goto_symbol_node: ElmSyntaxNode<ElmSyntaxSymbol> =
         elm_syntax_module_find_symbol_at_position(
-            goto_project_module_state.module_syntax,
+            &goto_project_module_state.module.syntax,
             goto_definition_arguments
                 .text_document_position_params
                 .position,
@@ -2161,7 +2165,8 @@ fn respond_to_goto_definition(
             all_exposes: _,
         } => {
             let declaration_name_range: lsp_types::Range = goto_project_module_state
-                .module_syntax
+                .module
+                .syntax
                 .declarations
                 .iter()
                 .find_map(|origin_module_declaration| {
@@ -2370,7 +2375,7 @@ fn respond_to_goto_definition(
                 &elm_syntax_module_create_origin_lookup(
                     state,
                     goto_project_module_state.project,
-                    &goto_project_module_state.module_syntax,
+                    &goto_project_module_state.module.syntax,
                 ),
                 goto_qualification,
                 goto_name,
@@ -2488,7 +2493,7 @@ fn respond_to_goto_definition(
                 &elm_syntax_module_create_origin_lookup(
                     state,
                     goto_project_module_state.project,
-                    &goto_project_module_state.module_syntax,
+                    &goto_project_module_state.module.syntax,
                 ),
                 goto_qualification,
                 goto_name,
@@ -2557,7 +2562,7 @@ fn respond_to_prepare_rename(
         state_get_project_module_by_lsp_url(state, &prepare_rename_arguments.text_document.uri)?;
     let prepare_rename_symbol_node: ElmSyntaxNode<ElmSyntaxSymbol> =
         elm_syntax_module_find_symbol_at_position(
-            &project_module_state.module_syntax,
+            &project_module_state.module.syntax,
             prepare_rename_arguments.position,
         )?;
     Some(match prepare_rename_symbol_node.value {
@@ -2688,7 +2693,7 @@ fn respond_to_rename(
     )?;
     let symbol_to_rename_node: ElmSyntaxNode<ElmSyntaxSymbol> =
         elm_syntax_module_find_symbol_at_position(
-            to_rename_project_module_state.module_syntax,
+            &to_rename_project_module_state.module.syntax,
             rename_arguments.text_document_position.position,
         )?;
     Some(match symbol_to_rename_node.value {
@@ -2701,7 +2706,7 @@ fn respond_to_rename(
                 &mut all_uses_of_renamed_module_name,
                 state,
                 to_rename_project_module_state.project,
-                to_rename_project_module_state.module_syntax,
+                &to_rename_project_module_state.module.syntax,
                 ElmDeclaredSymbol::ImportAlias {
                     module_origin: import_alias_to_rename_module_origin,
                     alias_name: import_alias_to_rename,
@@ -2731,7 +2736,8 @@ fn respond_to_rename(
             elm_syntax_declaration_uses_of_reference_into(
                 &mut all_uses_of_renamed_module_name,
                 to_rename_project_module_state
-                    .module_syntax
+                    .module
+                    .syntax
                     .header
                     .as_ref()
                     .and_then(|header| header.module_name.as_ref())
@@ -2740,7 +2746,7 @@ fn respond_to_rename(
                 &elm_syntax_module_create_origin_lookup(
                     state,
                     to_rename_project_module_state.project,
-                    to_rename_project_module_state.module_syntax,
+                    &to_rename_project_module_state.module.syntax,
                 ),
                 scope_declaration,
                 ElmDeclaredSymbol::TypeVariable(type_variable_to_rename),
@@ -2802,7 +2808,8 @@ fn respond_to_rename(
             all_exposes: _,
         } => {
             let to_rename_module_origin: &str = to_rename_project_module_state
-                .module_syntax
+                .module
+                .syntax
                 .header
                 .as_ref()
                 .and_then(|header| header.module_name.as_ref())
@@ -2812,7 +2819,8 @@ fn respond_to_rename(
                 .starts_with(char::is_uppercase)
             {
                 let to_rename_is_record_type_alias: bool = to_rename_project_module_state
-                    .module_syntax
+                    .module
+                    .syntax
                     .declarations
                     .iter()
                     .any(|documented_declaration| {
@@ -2888,7 +2896,8 @@ fn respond_to_rename(
             let elm_declared_symbol_to_rename: ElmDeclaredSymbol =
                 if to_rename_import_expose_name.starts_with(char::is_uppercase) {
                     let to_rename_is_record_type_alias: bool = to_rename_project_module_state
-                        .module_syntax
+                        .module
+                        .syntax
                         .declarations
                         .iter()
                         .any(|documented_declaration| {
@@ -2974,7 +2983,7 @@ fn respond_to_rename(
                     &elm_syntax_module_create_origin_lookup(
                         state,
                         to_rename_project_module_state.project,
-                        to_rename_project_module_state.module_syntax,
+                        &to_rename_project_module_state.module.syntax,
                     ),
                     &[ElmLocalBinding {
                         name: to_rename_name,
@@ -3014,7 +3023,7 @@ fn respond_to_rename(
                     &elm_syntax_module_create_origin_lookup(
                         state,
                         to_rename_project_module_state.project,
-                        &to_rename_project_module_state.module_syntax,
+                        &to_rename_project_module_state.module.syntax,
                     ),
                     to_rename_qualification,
                     to_rename_name,
@@ -3061,7 +3070,7 @@ fn respond_to_rename(
                 &elm_syntax_module_create_origin_lookup(
                     state,
                     to_rename_project_module_state.project,
-                    &to_rename_project_module_state.module_syntax,
+                    &to_rename_project_module_state.module.syntax,
                 ),
                 to_rename_qualification,
                 type_name_to_rename,
@@ -3144,7 +3153,7 @@ fn respond_to_semantic_tokens_full(
     let project_module_state =
         state_get_project_module_by_lsp_url(state, &semantic_tokens_arguments.text_document.uri)?;
     let mut highlighting: Vec<ElmSyntaxNode<ElmSyntaxHighlightKind>> = Vec::new();
-    elm_syntax_highlight_module_into(&mut highlighting, project_module_state.module_syntax);
+    elm_syntax_highlight_module_into(&mut highlighting, &project_module_state.module.syntax);
     Some(lsp_types::SemanticTokensResult::Tokens(
         lsp_types::SemanticTokens {
             result_id: None,
@@ -3475,7 +3484,7 @@ fn respond_to_completion(
     )?;
     let symbol_to_complete: ElmSyntaxNode<ElmSyntaxSymbol> =
         elm_syntax_module_find_symbol_at_position(
-            completion_project_module.module_syntax,
+            &completion_project_module.module.syntax,
             completion_arguments.text_document_position.position,
         )?;
     let maybe_completion_items: Option<Vec<lsp_types::CompletionItem>> = match symbol_to_complete
@@ -3492,7 +3501,8 @@ fn respond_to_completion(
                 &[],
                 module_name,
                 completion_project_module
-                    .module_syntax
+                    .module
+                    .syntax
                     .header
                     .as_ref()
                     .and_then(|header| header.module_name.as_ref())
@@ -3516,12 +3526,14 @@ fn respond_to_completion(
                 } => {
                     // find previous signature
                     completion_project_module
-                        .module_syntax
+                        .module
+                        .syntax
                         .declarations
                         .iter()
                         .zip(
                             completion_project_module
-                                .module_syntax
+                                .module
+                                .syntax
                                 .declarations
                                 .iter()
                                 .skip(1),
@@ -3566,7 +3578,8 @@ fn respond_to_completion(
             all_exposes,
         } => {
             let module_origin: &str = completion_project_module
-                .module_syntax
+                .module
+                .syntax
                 .header
                 .as_ref()
                 .and_then(|header| header.module_name.as_ref())
@@ -3575,7 +3588,7 @@ fn respond_to_completion(
             let module_origin_lookup: ModuleOriginLookup = elm_syntax_module_create_origin_lookup(
                 state,
                 completion_project_module.project,
-                completion_project_module.module_syntax,
+                &completion_project_module.module.syntax,
             );
             let existing_expose_names: std::collections::HashSet<&str> = all_exposes
                 .iter()
@@ -3601,7 +3614,8 @@ fn respond_to_completion(
             let mut completion_items: Vec<lsp_types::CompletionItem> = Vec::new();
             for (origin_module_declaration_node, origin_module_declaration_documentation) in
                 completion_project_module
-                    .module_syntax
+                    .module
+                    .syntax
                     .declarations
                     .iter()
                     .filter_map(|documented_declaration| {
@@ -4036,7 +4050,8 @@ fn respond_to_completion(
             local_bindings,
         } => {
             let maybe_completion_module_name: Option<&str> = completion_project_module
-                .module_syntax
+                .module
+                .syntax
                 .header
                 .as_ref()
                 .and_then(|header| header.module_name.as_ref())
@@ -4048,7 +4063,7 @@ fn respond_to_completion(
             };
             let to_complete_module_import_alias_origin_lookup: Vec<ElmImportAliasAndModuleOrigin> =
                 elm_syntax_imports_create_import_alias_origin_lookup(
-                    &completion_project_module.module_syntax.imports,
+                    &completion_project_module.module.syntax.imports,
                 );
             let mut completion_items: Vec<lsp_types::CompletionItem> = if (to_complete_name
                 .is_empty())
@@ -4322,7 +4337,8 @@ fn respond_to_completion(
             name: to_complete_name,
         } => {
             let maybe_completion_module_name: Option<&str> = completion_project_module
-                .module_syntax
+                .module
+                .syntax
                 .header
                 .as_ref()
                 .and_then(|header| header.module_name.as_ref())
@@ -4335,7 +4351,7 @@ fn respond_to_completion(
             };
             let to_complete_module_import_alias_origin_lookup: Vec<ElmImportAliasAndModuleOrigin> =
                 elm_syntax_imports_create_import_alias_origin_lookup(
-                    &completion_project_module.module_syntax.imports,
+                    &completion_project_module.module.syntax.imports,
                 );
             let mut completion_items: Vec<lsp_types::CompletionItem> =
                 project_module_name_completions_for_except(
