@@ -6428,9 +6428,10 @@ fn elm_syntax_declaration_find_reference_at_position<'a>(
                     && lsp_range_includes_position(name_node.range, position)
                 {
                     Some(ElmSyntaxNode {
-                        value: ElmSyntaxSymbol::Type {
-                            qualification: "",
+                        value: ElmSyntaxSymbol::ModuleMemberDeclarationName {
                             name: &name_node.value,
+                            declaration: elm_syntax_declaration_node,
+                            documentation: maybe_documentation,
                         },
                         range: name_node.range,
                     })
