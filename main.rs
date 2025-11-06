@@ -14,6 +14,12 @@ struct ProjectState {
     modules: std::collections::HashMap<std::path::PathBuf, ModuleState>,
     dependency_exposed_module_names: std::collections::HashMap<String, ProjectModuleOrigin>,
     elm_make_errors: Vec<ElmMakeFileCompileError>,
+    kind: ElmProjectKind,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ElmProjectKind {
+    Package,
+    Application,
 }
 #[derive(Debug)]
 struct ProjectModuleOrigin {
@@ -32,7 +38,8 @@ async fn main() {
             projects: std::collections::HashMap::new(),
         });
         router.request::<lsp_types::request::Initialize, _>({
-            |state, initialize_arguments| {
+            let client = client.clone();
+            move |state, initialize_arguments| {
                 initialize_state_for_workspace_directories_into(state, initialize_arguments);
                 let file_watch_registration_options: lsp_types::DidChangeWatchedFilesRegistrationOptions =
                     lsp_types::DidChangeWatchedFilesRegistrationOptions {
@@ -58,74 +65,31 @@ async fn main() {
                             })
                             .collect::<Vec<lsp_types::FileSystemWatcher>>(),
                     };
-                match serde_json::to_value(file_watch_registration_options) {
-                    Err(encode_error) => {
-                        eprintln!(
-                            "failed to register file watchers because encoding the request \
-                            options failed: {encode_error}"
-                        );
-                    }
-                    Ok(file_watch_registration_options_json) => {
-                        let _ = state.client_socket.request::<lsp_types::request::RegisterCapability>(
-                            lsp_types::RegistrationParams {
-                                registrations: vec![lsp_types::Registration {
-                                    id: "file-watch".to_string(),
-                                    method: <lsp_types::notification::DidChangeWatchedFiles as lsp_types::notification::Notification>::METHOD
-                                        .to_string(),
-                                    register_options: Some(file_watch_registration_options_json),
-                                }],
-                            },
-                        );
-                    }
-                }
+                let mut client = client.clone();
                 async move {
+                    match serde_json::to_value(file_watch_registration_options) {
+                        Err(encode_error) => {
+                            eprintln!(
+                                "failed to register file watchers because encoding the request \
+                                options failed: {encode_error}"
+                            );
+                        }
+                        Ok(file_watch_registration_options_json) => {
+                            let _: Result<(), async_lsp::Error> = async_lsp::LanguageClient::register_capability(
+                                &mut client,
+                                lsp_types::RegistrationParams {
+                                    registrations: vec![lsp_types::Registration {
+                                        id: "file-watch".to_string(),
+                                        method: <lsp_types::notification::DidChangeWatchedFiles as lsp_types::notification::Notification>::METHOD
+                                            .to_string(),
+                                        register_options: Some(file_watch_registration_options_json),
+                                    }],
+                                },
+                            ).await;
+                        }
+                    }
                     Ok(lsp_types::InitializeResult {
-                        capabilities: lsp_types::ServerCapabilities {
-                            hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
-                            definition_provider: Some(lsp_types::OneOf::Left(true)),
-                            semantic_tokens_provider: Some(
-                                lsp_types::SemanticTokensServerCapabilities::SemanticTokensOptions(
-                                    lsp_types::SemanticTokensOptions {
-                                        work_done_progress_options:
-                                            lsp_types::WorkDoneProgressOptions {
-                                                work_done_progress: None,
-                                            },
-                                        legend: lsp_types::SemanticTokensLegend {
-                                            token_modifiers: Vec::new(),
-                                            token_types: Vec::from(token_types),
-                                        },
-                                        range: None,
-                                        full: Some(lsp_types::SemanticTokensFullOptions::Bool(
-                                            true,
-                                        )),
-                                    },
-                                ),
-                            ),
-                            text_document_sync: Some(lsp_types::TextDocumentSyncCapability::Kind(
-                                lsp_types::TextDocumentSyncKind::FULL,
-                            )),
-                            rename_provider: Some(lsp_types::OneOf::Right(
-                                lsp_types::RenameOptions {
-                                    prepare_provider: Some(true),
-                                    work_done_progress_options:
-                                        lsp_types::WorkDoneProgressOptions {
-                                            work_done_progress: None,
-                                        },
-                                },
-                            )),
-                            completion_provider: Some(lsp_types::CompletionOptions {
-                                resolve_provider: Some(false),
-                                trigger_characters: Some(vec![".".to_string()]),
-                                all_commit_characters: None,
-                                work_done_progress_options: lsp_types::WorkDoneProgressOptions {
-                                    work_done_progress: None,
-                                },
-                                completion_item: Some(lsp_types::CompletionOptionsCompletionItem {
-                                    label_details_support: None,
-                                }),
-                            }),
-                            ..lsp_types::ServerCapabilities::default()
-                        },
+                        capabilities: server_capabilities(),
                         server_info: Some(lsp_types::ServerInfo {
                             name: "elm-language-server-rs".to_string(),
                             version: Some("pre-release".to_string())
@@ -194,7 +158,8 @@ async fn main() {
             // ?
             async { Ok(()) }
         });
-        router.notification::<lsp_types::notification::Initialized>(|_state, _| {
+        router.notification::<lsp_types::notification::Initialized>(|state, _| {
+            publish_and_initialize_state_for_diagnostics_for_application_projects(state);
             std::ops::ControlFlow::Continue(())
         });
         router.notification::<lsp_types::notification::DidOpenTextDocument>(|_state, _| {
@@ -275,7 +240,7 @@ async fn main() {
         );
         router.notification::<lsp_types::notification::DidSaveTextDocument>(
             |state, did_save_text_document_arguments| {
-                update_state_and_publish_diagnostics_for_document(
+                publish_and_update_state_for_diagnostics_for_document(
                     state,
                     &did_save_text_document_arguments.text_document.uri,
                 );
@@ -312,7 +277,95 @@ async fn main() {
     server.run_buffered(stdin, stdout).await.unwrap();
 }
 
-fn update_state_and_publish_diagnostics_for_document(
+fn server_capabilities() -> lsp_types::ServerCapabilities {
+    lsp_types::ServerCapabilities {
+        hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
+        definition_provider: Some(lsp_types::OneOf::Left(true)),
+        semantic_tokens_provider: Some(
+            lsp_types::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                lsp_types::SemanticTokensOptions {
+                    work_done_progress_options: lsp_types::WorkDoneProgressOptions {
+                        work_done_progress: None,
+                    },
+                    legend: lsp_types::SemanticTokensLegend {
+                        token_modifiers: Vec::new(),
+                        token_types: Vec::from(token_types),
+                    },
+                    range: None,
+                    full: Some(lsp_types::SemanticTokensFullOptions::Bool(true)),
+                },
+            ),
+        ),
+        text_document_sync: Some(lsp_types::TextDocumentSyncCapability::Kind(
+            lsp_types::TextDocumentSyncKind::FULL,
+        )),
+        rename_provider: Some(lsp_types::OneOf::Right(lsp_types::RenameOptions {
+            prepare_provider: Some(true),
+            work_done_progress_options: lsp_types::WorkDoneProgressOptions {
+                work_done_progress: None,
+            },
+        })),
+        completion_provider: Some(lsp_types::CompletionOptions {
+            resolve_provider: Some(false),
+            trigger_characters: Some(vec![".".to_string()]),
+            all_commit_characters: None,
+            work_done_progress_options: lsp_types::WorkDoneProgressOptions {
+                work_done_progress: None,
+            },
+            completion_item: Some(lsp_types::CompletionOptionsCompletionItem {
+                label_details_support: None,
+            }),
+        }),
+        ..lsp_types::ServerCapabilities::default()
+    }
+}
+
+fn publish_and_initialize_state_for_diagnostics_for_application_projects(state: &mut State) {
+    for (application_project_path, application_project_state) in state
+        .projects
+        .iter_mut()
+        .filter(|(_, project)| project.kind == ElmProjectKind::Application)
+    {
+        match compute_diagnostics(application_project_path, application_project_state) {
+            Ok(elm_make_errors) => {
+                let diagnostics_to_publish: Vec<lsp_types::PublishDiagnosticsParams> =
+                    elm_make_errors
+                        .iter()
+                        .filter_map(|elm_make_file_error| {
+                            if let Ok(url) =
+                                lsp_types::Url::from_file_path(&elm_make_file_error.path)
+                            {
+                                let diagnostics: Vec<lsp_types::Diagnostic> = elm_make_file_error
+                                    .problems
+                                    .iter()
+                                    .map(elm_make_file_problem_to_diagnostic)
+                                    .collect::<Vec<_>>();
+                                Some(lsp_types::PublishDiagnosticsParams {
+                                    uri: url,
+                                    diagnostics: diagnostics,
+                                    version: None,
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                for file_diagnostics_to_publish in diagnostics_to_publish {
+                    let _ = async_lsp::LanguageClient::publish_diagnostics(
+                        &mut state.client_socket,
+                        file_diagnostics_to_publish,
+                    );
+                }
+                application_project_state.elm_make_errors = elm_make_errors;
+            }
+            Err(error) => {
+                eprintln!("{error}");
+            }
+        }
+    }
+}
+
+fn publish_and_update_state_for_diagnostics_for_document(
     state: &mut State,
     document_url: &lsp_types::Url,
 ) {
@@ -787,6 +840,11 @@ fn initialize_state_for_project_into(
     state.projects.insert(
         project_path,
         ProjectState {
+            kind: match &maybe_elm_json {
+                None => ElmProjectKind::Application,
+                Some(ElmJson::Application { .. }) => ElmProjectKind::Application,
+                Some(ElmJson::Package { .. }) => ElmProjectKind::Package,
+            },
             source_directories: elm_json_source_directories,
             modules: module_states,
             dependency_exposed_module_names,

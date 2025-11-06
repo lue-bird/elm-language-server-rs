@@ -37,7 +37,6 @@ If you're using vs code (or forks) (which do not appear to have a built-in way t
 - your idea 👀
 
 ## TODO
-- prepare errors inline on init
 - correctly parse markdown code blocks with unindented blank lines in the middle
 - add suggestions for expose-imported variables and types
 - do not suggest exposed/module-declared members when local module-declared/binding has the same name
