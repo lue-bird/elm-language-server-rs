@@ -32,12 +32,12 @@ If you're using vs code (or forks) (which do not appear to have a built-in way t
 - adding necessary imports when autocompleting vs making it a separate code action vs nothing vs ? (leaning towards separate code action)
 - show function parameter names (leaning towards no, as they are often confusing if they are curried, reveal non-exposed variant patterns, have more parameters than the type suggests, are undescriptive etc)
 - add code actions like "expose (including variants)", "inline", "inline all uses" (leaning towards no as it is fairly complicated, though it it very useful for sure)
+- when showing module documentation inline actual info for `@docs` members (these are not super easy to parse but would be useful, only if I have time and there is interest)
 - show all module exposes when hovering `(..)` (only if I have time and there is interest)
 - support when the `elm.json` changes (only if I have time and there is interest)
 - your idea 👀
 
 ## TODO
-- correctly parse markdown code blocks with unindented blank lines in the middle
 - add suggestions for expose-imported variables and types
 - do not suggest exposed/module-declared members when local module-declared/binding has the same name
 - incremental reparsing

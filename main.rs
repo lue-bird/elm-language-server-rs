@@ -4790,37 +4790,41 @@ fn markdown_convert_unspecific_fenced_code_blocks_to_elm(markdown_source: &str) 
 fn markdown_convert_indented_code_blocks_to_elm(markdown_source: &str) -> String {
     let mut result_builder: String = String::new();
     let mut current_indent: usize = 0;
-    let mut is_in_code_block = false;
+    let mut is_in_code_block: bool = false;
     for source_line in markdown_source.lines() {
-        let current_line_indent = source_line
-            .chars()
-            .take_while(|c| c.is_ascii_whitespace())
-            .count();
-        if current_line_indent == source_line.len() {
-            // ignore blank line
-            result_builder.push_str(source_line);
+        if source_line.is_empty() {
             result_builder.push('\n');
-        } else if current_line_indent >= current_indent + 4 {
-            is_in_code_block = true;
-            current_indent = current_line_indent;
-            result_builder.push_str("```elm\n");
-            result_builder.push_str(&source_line[current_line_indent..]);
-            result_builder.push('\n');
-        } else if is_in_code_block {
-            if current_line_indent <= current_indent - 4 {
-                is_in_code_block = false;
-                current_indent = current_line_indent;
-                result_builder.push_str("```\n");
+        } else {
+            let current_line_indent: usize = source_line
+                .chars()
+                .take_while(|c| c.is_ascii_whitespace())
+                .count();
+            if current_line_indent == source_line.len() {
+                // ignore blank line
                 result_builder.push_str(source_line);
                 result_builder.push('\n');
+            } else if is_in_code_block {
+                if current_line_indent <= current_indent - 4 {
+                    is_in_code_block = false;
+                    current_indent = current_line_indent;
+                    result_builder.push_str("```\n");
+                    result_builder.push_str(source_line);
+                    result_builder.push('\n');
+                } else {
+                    result_builder.push_str(&source_line[current_indent..]);
+                    result_builder.push('\n');
+                }
+            } else if current_line_indent >= current_indent + 4 {
+                is_in_code_block = true;
+                current_indent = current_line_indent;
+                result_builder.push_str("```elm\n");
+                result_builder.push_str(&source_line[current_line_indent..]);
+                result_builder.push('\n');
             } else {
-                result_builder.push_str(&source_line[current_indent..]);
+                current_indent = current_line_indent;
+                result_builder.push_str(source_line);
                 result_builder.push('\n');
             }
-        } else {
-            current_indent = current_line_indent;
-            result_builder.push_str(source_line);
-            result_builder.push('\n');
         }
     }
     if is_in_code_block {
