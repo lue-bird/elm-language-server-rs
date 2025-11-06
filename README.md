@@ -33,18 +33,19 @@ If you're using vs code (or forks) (which do not appear to have a built-in way t
 - show function parameter names (leaning towards no, as they are often confusing if they are curried, reveal non-exposed variant patterns, have more parameters than the type suggests, are undescriptive etc)
 - add code actions like "expose (including variants)", "inline", "inline all uses" (leaning towards no as it is fairly complicated, though it it very useful for sure)
 - show all module exposes when hovering `(..)` (only if I have time and there is interest)
+- support when the `elm.json` changes (only if I have time and there is interest)
 - your idea 👀
 
 ## TODO
-- be more graceful around string and char content highlighting
-- prepare errors inline on request and init
+- prepare errors inline on init
+- correctly parse markdown code blocks with unindented blank lines in the middle
 - add suggestions for expose-imported variables and types
 - do not suggest exposed/module-declared members when local module-declared/binding has the same name
 - incremental reparsing
 - support elm projects with non-root `elm.json`
 - support `tests/`
-- support when the `elm.json` changes
-- do not support goto definition on let declaration name
+- do not support goto definition on let declaration name and choice type
+- remove `.elm-testing` support
 
 ## setup for developing
 Rebuild the project with

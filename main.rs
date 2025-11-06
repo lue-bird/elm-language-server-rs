@@ -2,6 +2,7 @@
 #![allow(non_upper_case_globals)]
 
 struct State {
+    client_socket: async_lsp::ClientSocket,
     projects: std::collections::HashMap<
         /* path to directory containing elm.json */ std::path::PathBuf,
         ProjectState,
@@ -27,11 +28,11 @@ struct ModuleState {
 async fn main() {
     let (server, _client_socket) = async_lsp::MainLoop::new_server(|client| {
         let mut router: async_lsp::router::Router<State> = async_lsp::router::Router::new(State {
+            client_socket: client.clone(),
             projects: std::collections::HashMap::new(),
         });
         router.request::<lsp_types::request::Initialize, _>({
-            let client = client.clone();
-            move |state, initialize_arguments| {
+            |state, initialize_arguments| {
                 initialize_state_for_workspace_directories_into(state, initialize_arguments);
                 let file_watch_registration_options: lsp_types::DidChangeWatchedFilesRegistrationOptions =
                     lsp_types::DidChangeWatchedFilesRegistrationOptions {
@@ -65,7 +66,7 @@ async fn main() {
                         );
                     }
                     Ok(file_watch_registration_options_json) => {
-                        let _ = client.request::<lsp_types::request::RegisterCapability>(
+                        let _ = state.client_socket.request::<lsp_types::request::RegisterCapability>(
                             lsp_types::RegistrationParams {
                                 registrations: vec![lsp_types::Registration {
                                     id: "file-watch".to_string(),
@@ -123,26 +124,6 @@ async fn main() {
                                     label_details_support: None,
                                 }),
                             }),
-                            diagnostic_provider: Some(lsp_types::DiagnosticServerCapabilities::RegistrationOptions(lsp_types::DiagnosticRegistrationOptions {
-                                text_document_registration_options: lsp_types::TextDocumentRegistrationOptions {
-                                    document_selector: Some(vec![lsp_types::DocumentFilter {
-                                        language: None, // Some("elm".to_string()),
-                                        scheme: Some("file".to_string()),
-                                        pattern: Some("**/*.elm".to_string())
-                                    }])
-                                },
-                                static_registration_options: lsp_types::StaticRegistrationOptions {
-                                    id: Some("elm".to_string())
-                                },
-                                diagnostic_options: lsp_types::DiagnosticOptions {
-                                    identifier: Some("elm".to_string()),
-                                    inter_file_dependencies: true,
-                                    workspace_diagnostics: false,
-                                    work_done_progress_options: lsp_types::WorkDoneProgressOptions {
-                                        work_done_progress: None,
-                                    }
-                                },
-                            })),
                             ..lsp_types::ServerCapabilities::default()
                         },
                         server_info: Some(lsp_types::ServerInfo {
@@ -207,24 +188,6 @@ async fn main() {
                 let maybe_completions: Option<lsp_types::CompletionResponse> =
                     respond_to_completion(state, completion_arguments);
                 async { Ok(maybe_completions) }
-            },
-        );
-        router.request::<lsp_types::request::DocumentDiagnosticRequest, _>(
-            |state, document_diagnostics_arguments: lsp_types::DocumentDiagnosticParams| {
-                let maybe_diagnostics: Option<lsp_types::RelatedFullDocumentDiagnosticReport> =
-                    respond_to_diagnostics(state, document_diagnostics_arguments);
-                async {
-                    Ok(match maybe_diagnostics {
-                        Some(diagnostics) => lsp_types::DocumentDiagnosticReportResult::Report(
-                            lsp_types::DocumentDiagnosticReport::Full(diagnostics),
-                        ),
-                        None => lsp_types::DocumentDiagnosticReportResult::Partial(
-                            lsp_types::DocumentDiagnosticReportPartialResult {
-                                related_documents: None,
-                            },
-                        ),
-                    })
-                }
             },
         );
         router.request::<lsp_types::request::Shutdown, _>(|_state, ()| {
@@ -312,10 +275,10 @@ async fn main() {
         );
         router.notification::<lsp_types::notification::DidSaveTextDocument>(
             |state, did_save_text_document_arguments| {
-                match respond_to_did_save_text_document(state, did_save_text_document_arguments) {
-                    Ok(()) => {}
-                    Err(error) => eprintln!("{error}"),
-                }
+                update_state_and_publish_diagnostics_for_document(
+                    state,
+                    &did_save_text_document_arguments.text_document.uri,
+                );
                 std::ops::ControlFlow::Continue(())
             },
         );
@@ -349,32 +312,91 @@ async fn main() {
     server.run_buffered(stdin, stdout).await.unwrap();
 }
 
-fn respond_to_did_save_text_document(
+fn update_state_and_publish_diagnostics_for_document(
     state: &mut State,
-    did_save_text_document_arguments: lsp_types::DidSaveTextDocumentParams,
-) -> Result<(), String> {
-    if let Some(saved_project_module_state) = state_get_project_module_by_lsp_url(
-        state,
-        &did_save_text_document_arguments.text_document.uri,
-    ) {
-        // if there is a better way, please open an issue <3
-        let sink_path: &str = match std::env::consts::FAMILY {
-            "windows" => "NUL",
-            _ => "/dev/null",
-        };
-        let elm_make_process: std::process::Child = std::process::Command::new("elm")
+    document_url: &lsp_types::Url,
+) {
+    if let Some(saved_project_module) = state_get_project_module_by_lsp_url(state, document_url) {
+        match compute_diagnostics(
+            saved_project_module.project_path,
+            saved_project_module.project,
+        ) {
+            Ok(elm_make_errors) => {
+                let saved_project_path_buf = saved_project_module.project_path.to_path_buf();
+                let mut updated_diagnostics_to_publish = Vec::new();
+                for elm_make_file_error in saved_project_module.project.modules.keys() {
+                    // O(modules*errors), might be problematic in large projects
+                    let maybe_new = elm_make_errors
+                        .iter()
+                        .find(|&file_error| &file_error.path == elm_make_file_error);
+                    let maybe_updated_diagnostics = match maybe_new {
+                        Some(new) => {
+                            let diagnostics: Vec<lsp_types::Diagnostic> = new
+                                .problems
+                                .iter()
+                                .map(elm_make_file_problem_to_diagnostic)
+                                .collect::<Vec<_>>();
+                            Some(diagnostics)
+                        }
+                        None => {
+                            let was_error = saved_project_module
+                                .project
+                                .elm_make_errors
+                                .iter()
+                                .any(|file_error| &file_error.path == elm_make_file_error);
+                            if was_error { Some(vec![]) } else { None }
+                        }
+                    };
+                    if let Some(updated_diagnostics) = maybe_updated_diagnostics
+                        && let Ok(url) = lsp_types::Url::from_file_path(elm_make_file_error)
+                    {
+                        updated_diagnostics_to_publish.push(lsp_types::PublishDiagnosticsParams {
+                            uri: url,
+                            diagnostics: updated_diagnostics,
+                            version: None,
+                        });
+                    }
+                }
+                for updated_file_diagnostics_to_publish in updated_diagnostics_to_publish {
+                    let _ = async_lsp::LanguageClient::publish_diagnostics(
+                        &mut state.client_socket,
+                        updated_file_diagnostics_to_publish,
+                    );
+                }
+                if let Some(mut_saved_project_state) =
+                    state.projects.get_mut(&saved_project_path_buf)
+                {
+                    mut_saved_project_state.elm_make_errors = elm_make_errors;
+                }
+            }
+            Err(error) => {
+                eprintln!("{error}");
+            }
+        }
+    }
+}
+
+fn compute_diagnostics(
+    project_path: &std::path::Path,
+    project_state: &ProjectState,
+) -> Result<Vec<ElmMakeFileCompileError>, String> {
+    // if there is a better way, please open an issue <3
+    let sink_path: &str = match std::env::consts::FAMILY {
+        "windows" => "NUL",
+        _ => "/dev/null",
+    };
+    let elm_make_process: std::process::Child = std::process::Command::new("elm")
             .args(
                 std::iter::once("make")
                     .chain(
-                        saved_project_module_state
-                            .project
+                        project_state
                             .modules
                             .keys()
                             .filter_map(|path| path.to_str()),
                     )
                     .chain(["--report", "json", "--output", sink_path]),
             )
-            .current_dir(saved_project_module_state.project_path)
+            .current_dir(project_path)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -383,26 +405,20 @@ fn respond_to_did_save_text_document(
                     "I tried to run elm make but it failed: {error}. Try installing elm via `npm install -g elm`."
                 )
             })?;
-        let elm_make_output: std::process::Output = elm_make_process
-            .wait_with_output()
-            .map_err(|error| format!("I wasn't able to read the output of elm make: {error}"))?;
-        let elm_make_report: Vec<ElmMakeFileCompileError>;
-        if elm_make_output.stderr.is_empty() {
-            elm_make_report = vec![];
-        } else {
-            let elm_make_report_json: serde_json::Value =
-                serde_json::from_slice(&elm_make_output.stderr).map_err(|parse_error| {
-                    format!("failed to parse elm make report json: {parse_error}")
-                })?;
-            elm_make_report = parse_elm_make_report(&elm_make_report_json)?;
-            eprintln!("{:?}", elm_make_report); // TODO remove
-        }
-        let saved_project_path = saved_project_module_state.project_path.to_path_buf();
-        if let Some(project_with_errors) = state.projects.get_mut(saved_project_path.as_path()) {
-            project_with_errors.elm_make_errors = elm_make_report
-        }
+    let elm_make_output: std::process::Output = elm_make_process
+        .wait_with_output()
+        .map_err(|error| format!("I wasn't able to read the output of elm make: {error}"))?;
+    let elm_make_report: Vec<ElmMakeFileCompileError>;
+    if elm_make_output.stderr.is_empty() {
+        elm_make_report = vec![];
+    } else {
+        let elm_make_report_json: serde_json::Value =
+            serde_json::from_slice(&elm_make_output.stderr).map_err(|parse_error| {
+                format!("failed to parse elm make report json: {parse_error}")
+            })?;
+        elm_make_report = parse_elm_make_report(&elm_make_report_json)?;
     }
-    Ok(())
+    Ok(elm_make_report)
 }
 #[derive(Debug)]
 struct ElmMakeFileCompileError {
@@ -442,14 +458,11 @@ fn elm_make_message_segments_to_markdown(
                 text,
             } => {
                 if let Some(_color) = maybe_color {
-                    // TODO wrap in svg?
                     builder.push_str(text);
                 } else {
                     if bold {
-                        // TODO wrap in svg?
                         builder.push_str(&text.to_ascii_uppercase());
                     } else if underline {
-                        // TODO wrap in svg?
                         builder.push_str(&text.to_ascii_uppercase());
                     } else {
                         // suspicious, would have expected ::Plain
@@ -4469,85 +4482,19 @@ fn respond_to_completion(
     maybe_completion_items.map(lsp_types::CompletionResponse::Array)
 }
 
-fn respond_to_diagnostics(
-    state: &State,
-    document_diagnostics_arguments: lsp_types::DocumentDiagnosticParams,
-) -> Option<lsp_types::RelatedFullDocumentDiagnosticReport> {
-    let to_diagnose_project_module = state_get_project_module_by_lsp_url(
-        state,
-        &document_diagnostics_arguments.text_document.uri,
-    )?;
-    let path_to_diagnose: std::path::PathBuf = document_diagnostics_arguments
-        .text_document
-        .uri
-        .to_file_path()
-        .ok()?;
-    let path_to_diagnose_str: &str = path_to_diagnose.to_str()?;
-    if let Some(to_diagnose_module_problems) = to_diagnose_project_module
-        .project
-        .elm_make_errors
-        .iter()
-        .find_map(|error| {
-            if &error.path == path_to_diagnose_str {
-                Some(&error.problems)
-            } else {
-                None
-            }
-        })
-    {
-        Some(lsp_types::RelatedFullDocumentDiagnosticReport {
-            related_documents: Some(
-                to_diagnose_project_module
-                    .project
-                    .elm_make_errors
-                    .iter()
-                    .filter_map(|error| {
-                        let error_path = std::path::PathBuf::from(&error.path);
-                        let error_url: lsp_types::Url =
-                            lsp_types::Url::from_file_path(error_path).ok()?;
-                        Some((
-                            error_url,
-                            lsp_types::DocumentDiagnosticReportKind::Full(
-                                elm_make_file_problems_to_full_document_diagnostic_report(
-                                    &error.problems,
-                                ),
-                            ),
-                        ))
-                    })
-                    .collect::<std::collections::HashMap<
-                        lsp_types::Url,
-                        lsp_types::DocumentDiagnosticReportKind,
-                    >>(),
-            ),
-            full_document_diagnostic_report:
-                elm_make_file_problems_to_full_document_diagnostic_report(
-                    to_diagnose_module_problems,
-                ),
-        })
-    } else {
-        eprintln!("---------------------- did not provide diagnostics for {path_to_diagnose_str}");
-        None
-    }
-}
-fn elm_make_file_problems_to_full_document_diagnostic_report(
-    problems: &[ElmMakeFileInternalCompileProblem],
-) -> lsp_types::FullDocumentDiagnosticReport {
-    lsp_types::FullDocumentDiagnosticReport {
-        result_id: None,
-        items: problems
-            .iter()
-            .map(|problem| lsp_types::Diagnostic {
-                range: problem.range,
-                severity: Some(lsp_types::DiagnosticSeverity::ERROR),
-                code: None,
-                code_description: None,
-                source: None,
-                message: format!("--- {} ---\n{}", &problem.title, &problem.message_markdown),
-                related_information: None,
-                tags: None,
-                data: None,
-            })
-            .collect::<Vec<_>>(),
+fn elm_make_file_problem_to_diagnostic(
+    problem: &ElmMakeFileInternalCompileProblem,
+) -> lsp_types::Diagnostic {
+    lsp_types::Diagnostic {
+        range: problem.range,
+        severity: Some(lsp_types::DiagnosticSeverity::ERROR),
+        code: None,
+        code_description: None,
+        source: None,
+        message: format!("--- {} ---\n{}", &problem.title, &problem.message_markdown),
+        related_information: None,
+        tags: None,
+        data: None,
     }
 }
 
@@ -5131,7 +5078,7 @@ enum ElmSyntaxExpression {
         record: ElmSyntaxNode<Box<ElmSyntaxExpression>>,
         field: Option<ElmSyntaxNode<String>>,
     },
-    RecordAccessFunction(Option<String>),
+    RecordAccessFunction(Option<ElmSyntaxNode<String>>),
     RecordUpdate {
         record_variable: Option<ElmSyntaxNode<String>>,
         bar_key_symbol_range: lsp_types::Range,
@@ -9251,14 +9198,13 @@ fn elm_syntax_highlight_exposing_into(
                             });
                         }
                     }
-                    ElmSyntaxExpose::Operator(_) => {
-                        highlighted_so_far.push(ElmSyntaxNode {
-                            range: lsp_types::Range {
-                                start: lsp_position_add_characters(expose_node.range.start, 1),
-                                end: lsp_position_add_characters(expose_node.range.end, -1),
-                            },
-                            value: ElmSyntaxHighlightKind::KeySymbol,
-                        });
+                    ElmSyntaxExpose::Operator(maybe_operator) => {
+                        if let Some(operator_node) = maybe_operator {
+                            highlighted_so_far.push(ElmSyntaxNode {
+                                range: operator_node.range,
+                                value: ElmSyntaxHighlightKind::KeySymbol,
+                            });
+                        }
                     }
                     ElmSyntaxExpose::Type(_) => {
                         highlighted_so_far.push(ElmSyntaxNode {
@@ -9575,10 +9521,7 @@ fn elm_syntax_highlight_pattern_into(
         }
         ElmSyntaxPattern::Char(_) => {
             highlighted_so_far.push(ElmSyntaxNode {
-                range: lsp_types::Range {
-                    start: lsp_position_add_characters(elm_syntax_pattern_node.range.start, 1),
-                    end: lsp_position_add_characters(elm_syntax_pattern_node.range.end, -1),
-                },
+                range: elm_syntax_pattern_node.range,
                 value: ElmSyntaxHighlightKind::String,
             });
         }
@@ -9637,19 +9580,10 @@ fn elm_syntax_highlight_pattern_into(
         }
         ElmSyntaxPattern::String {
             content: _,
-            quoting_style,
+            quoting_style: _,
         } => {
             highlighted_so_far.push(ElmSyntaxNode {
-                range: match quoting_style {
-                    ElmSyntaxStringQuotingStyle::SingleQuoted => lsp_types::Range {
-                        start: lsp_position_add_characters(elm_syntax_pattern_node.range.start, 1),
-                        end: lsp_position_add_characters(elm_syntax_pattern_node.range.end, -1),
-                    },
-                    ElmSyntaxStringQuotingStyle::TripleQuoted => lsp_types::Range {
-                        start: lsp_position_add_characters(elm_syntax_pattern_node.range.start, 3),
-                        end: lsp_position_add_characters(elm_syntax_pattern_node.range.end, -3),
-                    },
-                },
+                range: elm_syntax_pattern_node.range,
                 value: ElmSyntaxHighlightKind::String,
             });
         }
@@ -9954,10 +9888,7 @@ fn elm_syntax_highlight_expression_into(
         }
         ElmSyntaxExpression::Char(_) => {
             highlighted_so_far.push(ElmSyntaxNode {
-                range: lsp_types::Range {
-                    start: lsp_position_add_characters(elm_syntax_expression_node.range.start, 1),
-                    end: lsp_position_add_characters(elm_syntax_expression_node.range.end, -1),
-                },
+                range: elm_syntax_expression_node.range,
                 value: ElmSyntaxHighlightKind::String,
             });
         }
@@ -10113,12 +10044,9 @@ fn elm_syntax_highlight_expression_into(
                 );
             }
         }
-        ElmSyntaxExpression::OperatorFunction(_) => {
+        ElmSyntaxExpression::OperatorFunction(operator_node) => {
             highlighted_so_far.push(ElmSyntaxNode {
-                range: lsp_types::Range {
-                    start: lsp_position_add_characters(elm_syntax_expression_node.range.start, 1),
-                    end: lsp_position_add_characters(elm_syntax_expression_node.range.end, -1),
-                },
+                range: operator_node.range,
                 value: ElmSyntaxHighlightKind::KeySymbol,
             });
         }
@@ -10171,7 +10099,7 @@ fn elm_syntax_highlight_expression_into(
             }
         }
         ElmSyntaxExpression::RecordAccessFunction(_) => {
-            let field_name_start_position =
+            let field_name_start_position: lsp_types::Position =
                 lsp_position_add_characters(elm_syntax_expression_node.range.start, 1);
             highlighted_so_far.push(ElmSyntaxNode {
                 range: lsp_types::Range {
@@ -10244,25 +10172,10 @@ fn elm_syntax_highlight_expression_into(
         }
         ElmSyntaxExpression::String {
             content: _,
-            quoting_style,
+            quoting_style: _,
         } => {
             highlighted_so_far.push(ElmSyntaxNode {
-                range: match quoting_style {
-                    ElmSyntaxStringQuotingStyle::SingleQuoted => lsp_types::Range {
-                        start: lsp_position_add_characters(
-                            elm_syntax_expression_node.range.start,
-                            1,
-                        ),
-                        end: lsp_position_add_characters(elm_syntax_expression_node.range.end, -1),
-                    },
-                    ElmSyntaxStringQuotingStyle::TripleQuoted => lsp_types::Range {
-                        start: lsp_position_add_characters(
-                            elm_syntax_expression_node.range.start,
-                            3,
-                        ),
-                        end: lsp_position_add_characters(elm_syntax_expression_node.range.end, -3),
-                    },
-                },
+                range: elm_syntax_expression_node.range,
                 value: ElmSyntaxHighlightKind::String,
             });
         }
@@ -12006,7 +11919,7 @@ fn parse_elm_syntax_expression_record_access_function(
         return None;
     }
     Some(ElmSyntaxExpression::RecordAccessFunction(
-        parse_elm_lowercase_as_string(state),
+        parse_elm_lowercase_as_node(state),
     ))
 }
 fn parse_elm_syntax_expression_negation(state: &mut ParseState) -> Option<ElmSyntaxExpression> {
