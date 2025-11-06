@@ -12,6 +12,7 @@ struct ProjectState {
     source_directories: Vec<std::path::PathBuf>,
     modules: std::collections::HashMap<std::path::PathBuf, ModuleState>,
     dependency_exposed_module_names: std::collections::HashMap<String, ProjectModuleOrigin>,
+    elm_make_errors: Vec<ElmMakeFileCompileError>,
 }
 #[derive(Debug)]
 struct ProjectModuleOrigin {
@@ -122,6 +123,26 @@ async fn main() {
                                     label_details_support: None,
                                 }),
                             }),
+                            diagnostic_provider: Some(lsp_types::DiagnosticServerCapabilities::RegistrationOptions(lsp_types::DiagnosticRegistrationOptions {
+                                text_document_registration_options: lsp_types::TextDocumentRegistrationOptions {
+                                    document_selector: Some(vec![lsp_types::DocumentFilter {
+                                        language: None, // Some("elm".to_string()),
+                                        scheme: Some("file".to_string()),
+                                        pattern: Some("**/*.elm".to_string())
+                                    }])
+                                },
+                                static_registration_options: lsp_types::StaticRegistrationOptions {
+                                    id: Some("elm".to_string())
+                                },
+                                diagnostic_options: lsp_types::DiagnosticOptions {
+                                    identifier: Some("elm".to_string()),
+                                    inter_file_dependencies: true,
+                                    workspace_diagnostics: false,
+                                    work_done_progress_options: lsp_types::WorkDoneProgressOptions {
+                                        work_done_progress: None,
+                                    }
+                                },
+                            })),
                             ..lsp_types::ServerCapabilities::default()
                         },
                         server_info: Some(lsp_types::ServerInfo {
@@ -186,6 +207,24 @@ async fn main() {
                 let maybe_completions: Option<lsp_types::CompletionResponse> =
                     respond_to_completion(state, completion_arguments);
                 async { Ok(maybe_completions) }
+            },
+        );
+        router.request::<lsp_types::request::DocumentDiagnosticRequest, _>(
+            |state, document_diagnostics_arguments: lsp_types::DocumentDiagnosticParams| {
+                let maybe_diagnostics: Option<lsp_types::RelatedFullDocumentDiagnosticReport> =
+                    respond_to_diagnostics(state, document_diagnostics_arguments);
+                async {
+                    Ok(match maybe_diagnostics {
+                        Some(diagnostics) => lsp_types::DocumentDiagnosticReportResult::Report(
+                            lsp_types::DocumentDiagnosticReport::Full(diagnostics),
+                        ),
+                        None => lsp_types::DocumentDiagnosticReportResult::Partial(
+                            lsp_types::DocumentDiagnosticReportPartialResult {
+                                related_documents: None,
+                            },
+                        ),
+                    })
+                }
             },
         );
         router.request::<lsp_types::request::Shutdown, _>(|_state, ()| {
@@ -271,9 +310,15 @@ async fn main() {
                 std::ops::ControlFlow::Continue(())
             },
         );
-        router.notification::<lsp_types::notification::DidSaveTextDocument>(|_state, _| {
-            std::ops::ControlFlow::Continue(())
-        });
+        router.notification::<lsp_types::notification::DidSaveTextDocument>(
+            |state, did_save_text_document_arguments| {
+                match respond_to_did_save_text_document(state, did_save_text_document_arguments) {
+                    Ok(()) => {}
+                    Err(error) => eprintln!("{error}"),
+                }
+                std::ops::ControlFlow::Continue(())
+            },
+        );
         router.notification::<lsp_types::notification::DidCloseTextDocument>(|_state, _| {
             std::ops::ControlFlow::Continue(())
         });
@@ -302,6 +347,239 @@ async fn main() {
         tokio_util::compat::TokioAsyncWriteCompatExt::compat_write(tokio::io::stdout()),
     );
     server.run_buffered(stdin, stdout).await.unwrap();
+}
+
+fn respond_to_did_save_text_document(
+    state: &mut State,
+    did_save_text_document_arguments: lsp_types::DidSaveTextDocumentParams,
+) -> Result<(), String> {
+    if let Some(saved_project_module_state) = state_get_project_module_by_lsp_url(
+        state,
+        &did_save_text_document_arguments.text_document.uri,
+    ) {
+        // if there is a better way, please open an issue <3
+        let sink_path: &str = match std::env::consts::FAMILY {
+            "windows" => "NUL",
+            _ => "/dev/null",
+        };
+        let elm_make_process: std::process::Child = std::process::Command::new("elm")
+            .args(
+                std::iter::once("make")
+                    .chain(
+                        saved_project_module_state
+                            .project
+                            .modules
+                            .keys()
+                            .filter_map(|path| path.to_str()),
+                    )
+                    .chain(["--report", "json", "--output", sink_path]),
+            )
+            .current_dir(saved_project_module_state.project_path)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn().map_err(|error| {
+                format!(
+                    "I tried to run elm make but it failed: {error}. Try installing elm via `npm install -g elm`."
+                )
+            })?;
+        let elm_make_output: std::process::Output = elm_make_process
+            .wait_with_output()
+            .map_err(|error| format!("I wasn't able to read the output of elm make: {error}"))?;
+        let elm_make_report: Vec<ElmMakeFileCompileError>;
+        if elm_make_output.stderr.is_empty() {
+            elm_make_report = vec![];
+        } else {
+            let elm_make_report_json: serde_json::Value =
+                serde_json::from_slice(&elm_make_output.stderr).map_err(|parse_error| {
+                    format!("failed to parse elm make report json: {parse_error}")
+                })?;
+            elm_make_report = parse_elm_make_report(&elm_make_report_json)?;
+            eprintln!("{:?}", elm_make_report); // TODO remove
+        }
+        let saved_project_path = saved_project_module_state.project_path.to_path_buf();
+        if let Some(project_with_errors) = state.projects.get_mut(saved_project_path.as_path()) {
+            project_with_errors.elm_make_errors = elm_make_report
+        }
+    }
+    Ok(())
+}
+#[derive(Debug)]
+struct ElmMakeFileCompileError {
+    path: String,
+    problems: Vec<ElmMakeFileInternalCompileProblem>,
+}
+#[derive(Debug)]
+struct ElmMakeFileInternalCompileProblem {
+    title: String,
+    range: lsp_types::Range,
+    message_markdown: String,
+}
+#[derive(Debug, Clone, Copy)]
+enum ElmMakeMessageSegment<'a> {
+    Plain(&'a str),
+    Colored {
+        underline: bool,
+        bold: bool,
+        color: Option<&'a str>,
+        text: &'a str,
+    },
+}
+
+fn elm_make_message_segments_to_markdown(
+    elm_make_message_segments: Vec<ElmMakeMessageSegment>,
+) -> String {
+    let mut builder: String = String::new();
+    for elm_make_message_segment in elm_make_message_segments {
+        match elm_make_message_segment {
+            ElmMakeMessageSegment::Plain(text) => {
+                builder.push_str(text);
+            }
+            ElmMakeMessageSegment::Colored {
+                underline,
+                bold,
+                color: maybe_color,
+                text,
+            } => {
+                if let Some(_color) = maybe_color {
+                    // TODO wrap in svg?
+                    builder.push_str(text);
+                } else {
+                    if bold {
+                        // TODO wrap in svg?
+                        builder.push_str(&text.to_ascii_uppercase());
+                    } else if underline {
+                        // TODO wrap in svg?
+                        builder.push_str(&text.to_ascii_uppercase());
+                    } else {
+                        // suspicious, would have expected ::Plain
+                        builder.push_str(text);
+                    }
+                }
+            }
+        }
+    }
+    builder
+}
+
+fn parse_elm_make_report(json: &serde_json::Value) -> Result<Vec<ElmMakeFileCompileError>, String> {
+    match json.get("type").and_then(serde_json::Value::as_str) {
+        Some("compile-errors") => match json.get("errors") {
+            Some(serde_json::Value::Array(file_error_jsons)) => file_error_jsons
+                .into_iter()
+                .map(|file_error_json| parse_elm_make_file_compile_error(file_error_json))
+                .collect::<Result<Vec<_>, String>>(),
+            _ => Err(format!("field errors must be array")),
+        },
+        Some(unknown_type) => Err(format!("unknown report type {unknown_type}")),
+        None => Err(format!("report type must exist as a string")),
+    }
+}
+fn parse_elm_make_file_compile_error(
+    json: &serde_json::Value,
+) -> Result<ElmMakeFileCompileError, String> {
+    let path: &str = json
+        .get("path")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("report file path must be string")?;
+    let problems: Vec<ElmMakeFileInternalCompileProblem> = json
+        .get("problems")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "field problems must exist as array")?
+        .iter()
+        .map(|problem_json| parse_elm_make_file_internal_compile_problem(problem_json))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ElmMakeFileCompileError {
+        path: path.to_string(),
+        problems: problems,
+    })
+}
+fn parse_elm_make_file_internal_compile_problem(
+    json: &serde_json::Value,
+) -> Result<ElmMakeFileInternalCompileProblem, String> {
+    let title: &str = json
+        .get("title")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("report file path must be string")?;
+    let range: lsp_types::Range = json
+        .get("region")
+        .ok_or_else(|| "report file region must be string".to_string())
+        .and_then(parse_elm_make_region_as_lsp_range)?;
+    let message_segments: Vec<ElmMakeMessageSegment> = json
+        .get("message")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "report file message must be an array".to_string())?
+        .iter()
+        .map(|segment_json| parse_elm_make_message_segment(segment_json))
+        .collect::<Result<Vec<ElmMakeMessageSegment>, _>>()?;
+    Ok(ElmMakeFileInternalCompileProblem {
+        title: title.to_string(),
+        range: range,
+        message_markdown: elm_make_message_segments_to_markdown(message_segments),
+    })
+}
+fn parse_elm_make_region_as_lsp_range(
+    json: &serde_json::Value,
+) -> Result<lsp_types::Range, String> {
+    let start: lsp_types::Position = json
+        .get("start")
+        .ok_or_else(|| "file region must have start".to_string())
+        .and_then(parse_elm_make_position_as_lsp_position)?;
+    let end: lsp_types::Position = json
+        .get("end")
+        .ok_or_else(|| "file region must have end".to_string())
+        .and_then(parse_elm_make_position_as_lsp_position)?;
+    Ok(lsp_types::Range {
+        start: start,
+        end: end,
+    })
+}
+fn parse_elm_make_position_as_lsp_position(
+    json: &serde_json::Value,
+) -> Result<lsp_types::Position, String> {
+    let line_1_based: i64 = json
+        .get("line")
+        .and_then(serde_json::Value::as_i64)
+        .ok_or_else(|| "file region line must be integer")?;
+    let column_1_based: i64 = json
+        .get("column")
+        .and_then(serde_json::Value::as_i64)
+        .ok_or_else(|| "file region column must be integer")?;
+    Ok(lsp_types::Position {
+        line: (line_1_based - 1) as u32,
+        character: (column_1_based - 1) as u32,
+    })
+}
+fn parse_elm_make_message_segment<'a>(
+    json: &'a serde_json::Value,
+) -> Result<ElmMakeMessageSegment<'a>, String> {
+    match json {
+        serde_json::Value::String(plain) => Ok(ElmMakeMessageSegment::Plain(plain)),
+        serde_json::Value::Object(fields_json) => {
+            let text: &str = fields_json
+                .get("string")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| format!("report file problem message segment string must be string, all fields: {json}"))?;
+            let color: Option<&str> = fields_json.get("color").and_then(serde_json::Value::as_str);
+            let underline: bool = fields_json
+                .get("underline")
+                .and_then(serde_json::Value::as_bool)
+                .ok_or("report file problem message segment underline must be string")?;
+            let bold: bool = fields_json
+                .get("bold")
+                .and_then(serde_json::Value::as_bool)
+                .ok_or("report file problem message segment bold must be string")?;
+            Ok(ElmMakeMessageSegment::Colored {
+                underline: underline,
+                bold: bold,
+                color: color,
+                text: text,
+            })
+        }
+        _ => Err(format!(
+            "unknown report file problem message segment {json}"
+        )),
+    }
 }
 
 fn initialize_state_for_workspace_directories_into(
@@ -498,6 +776,7 @@ fn initialize_state_for_project_into(
             source_directories: elm_json_source_directories,
             modules: module_states,
             dependency_exposed_module_names,
+            elm_make_errors: vec![],
         },
     );
 }
@@ -719,6 +998,7 @@ fn project_state_get_module_with_name<'a>(
 }
 #[derive(Clone, Copy)]
 struct ProjectModuleState<'a> {
+    project_path: &'a std::path::Path,
     project: &'a ProjectState,
     // TODO change to ModuleState
     module_syntax: &'a ElmSyntaxModule,
@@ -729,13 +1009,17 @@ fn state_get_project_module_by_lsp_url<'a>(
     uri: &lsp_types::Url,
 ) -> Option<ProjectModuleState<'a>> {
     let file_path: std::path::PathBuf = uri.to_file_path().ok()?;
-    state.projects.values().find_map(|project_state| {
-        let module_state = project_state.modules.get(&file_path)?;
-        Some(ProjectModuleState {
-            project: project_state,
-            module_syntax: &module_state.syntax,
+    state
+        .projects
+        .iter()
+        .find_map(|(project_path, project_state)| {
+            let module_state = project_state.modules.get(&file_path)?;
+            Some(ProjectModuleState {
+                project_path: project_path,
+                project: project_state,
+                module_syntax: &module_state.syntax,
+            })
         })
-    })
 }
 
 fn respond_to_hover(
@@ -768,14 +1052,15 @@ fn respond_to_hover(
             )?;
             // also show list of exports maybe?
             Some(lsp_types::Hover {
-                contents: lsp_types::HoverContents::Scalar(lsp_types::MarkedString::String(
-                    match origin_module_state.syntax.documentation {
+                contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
+                    kind: lsp_types::MarkupKind::Markdown,
+                    value: match origin_module_state.syntax.documentation {
                         None => "_module has no documentation comment_".to_string(),
                         Some(ref module_documentation) => {
                             documentation_comment_to_markdown(&module_documentation.value)
                         }
                     },
-                )),
+                }),
                 range: Some(hovered_symbol_node.range),
             })
         }
@@ -1351,14 +1636,15 @@ fn respond_to_hover(
                     find_local_binding_scope_expression(&local_bindings, hovered_name)
             {
                 return Some(lsp_types::Hover {
-                    contents: lsp_types::HoverContents::Scalar(lsp_types::MarkedString::String(
-                        local_binding_info_markdown(
+                    contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
+                        kind: lsp_types::MarkupKind::Markdown,
+                        value: local_binding_info_markdown(
                             state,
                             hovered_project_module_state,
                             hovered_name,
                             hovered_local_binding_origin,
                         ),
-                    )),
+                    }),
                     range: Some(hovered_symbol_node.range),
                 });
             }
@@ -4181,6 +4467,88 @@ fn respond_to_completion(
         }
     };
     maybe_completion_items.map(lsp_types::CompletionResponse::Array)
+}
+
+fn respond_to_diagnostics(
+    state: &State,
+    document_diagnostics_arguments: lsp_types::DocumentDiagnosticParams,
+) -> Option<lsp_types::RelatedFullDocumentDiagnosticReport> {
+    let to_diagnose_project_module = state_get_project_module_by_lsp_url(
+        state,
+        &document_diagnostics_arguments.text_document.uri,
+    )?;
+    let path_to_diagnose: std::path::PathBuf = document_diagnostics_arguments
+        .text_document
+        .uri
+        .to_file_path()
+        .ok()?;
+    let path_to_diagnose_str: &str = path_to_diagnose.to_str()?;
+    if let Some(to_diagnose_module_problems) = to_diagnose_project_module
+        .project
+        .elm_make_errors
+        .iter()
+        .find_map(|error| {
+            if &error.path == path_to_diagnose_str {
+                Some(&error.problems)
+            } else {
+                None
+            }
+        })
+    {
+        Some(lsp_types::RelatedFullDocumentDiagnosticReport {
+            related_documents: Some(
+                to_diagnose_project_module
+                    .project
+                    .elm_make_errors
+                    .iter()
+                    .filter_map(|error| {
+                        let error_path = std::path::PathBuf::from(&error.path);
+                        let error_url: lsp_types::Url =
+                            lsp_types::Url::from_file_path(error_path).ok()?;
+                        Some((
+                            error_url,
+                            lsp_types::DocumentDiagnosticReportKind::Full(
+                                elm_make_file_problems_to_full_document_diagnostic_report(
+                                    &error.problems,
+                                ),
+                            ),
+                        ))
+                    })
+                    .collect::<std::collections::HashMap<
+                        lsp_types::Url,
+                        lsp_types::DocumentDiagnosticReportKind,
+                    >>(),
+            ),
+            full_document_diagnostic_report:
+                elm_make_file_problems_to_full_document_diagnostic_report(
+                    to_diagnose_module_problems,
+                ),
+        })
+    } else {
+        eprintln!("---------------------- did not provide diagnostics for {path_to_diagnose_str}");
+        None
+    }
+}
+fn elm_make_file_problems_to_full_document_diagnostic_report(
+    problems: &[ElmMakeFileInternalCompileProblem],
+) -> lsp_types::FullDocumentDiagnosticReport {
+    lsp_types::FullDocumentDiagnosticReport {
+        result_id: None,
+        items: problems
+            .iter()
+            .map(|problem| lsp_types::Diagnostic {
+                range: problem.range,
+                severity: Some(lsp_types::DiagnosticSeverity::ERROR),
+                code: None,
+                code_description: None,
+                source: None,
+                message: format!("--- {} ---\n{}", &problem.title, &problem.message_markdown),
+                related_information: None,
+                tags: None,
+                data: None,
+            })
+            .collect::<Vec<_>>(),
+    }
 }
 
 fn project_module_name_completions_for_except(
@@ -12551,7 +12919,10 @@ fn parse_elm_syntax_declaration_variable_node(
                     return Some(ElmSyntaxNode {
                         range: lsp_types::Range {
                             start: start_name_node.range.start,
-                            end: colon_key_symbol_range.end,
+                            end: maybe_type
+                                .as_ref()
+                                .map(|node| node.range.end)
+                                .unwrap_or_else(|| colon_key_symbol_range.end),
                         },
                         value: ElmSyntaxDeclaration::Variable {
                             start_name: start_name_node,

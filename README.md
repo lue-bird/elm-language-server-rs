@@ -26,19 +26,25 @@ If you're using vs code (or forks) (which do not appear to have a built-in way t
 - inline GLSL blocks
 
 ## not sure (Please give me feedback on this)
-- switch to `position_encoding: Some(lsp_types::PositionEncodingKind::UTF8)`. This makes source edits and parsing easier and faster at the cost of compatibility with lsp clients below version 3.17.0. Is that acceptable? (leaning towards yes)
+- configuring a custom elm compiler path. Is there an established way to set it, preferably something like an environment variable outside of LSP configuration? (If there is, I will support it)
+- switch to `position_encoding: Some(lsp_types::PositionEncodingKind::UTF8)`. This makes source edits and parsing easier and faster at the cost of compatibility with lsp clients below version 3.17.0. Is that acceptable? (leaning towards yes).
+  Also validate if elm --report region column
 - adding necessary imports when autocompleting vs making it a separate code action vs nothing vs ? (leaning towards separate code action)
 - show function parameter names (leaning towards no, as they are often confusing if they are curried, reveal non-exposed variant patterns, have more parameters than the type suggests, are undescriptive etc)
 - add code actions like "expose (including variants)", "inline", "inline all uses" (leaning towards no as it is fairly complicated, though it it very useful for sure)
+- show all module exposes when hovering `(..)` (only if I have time and there is interest)
 - your idea 👀
 
 ## TODO
+- be more graceful around string and char content highlighting
+- prepare errors inline on request and init
 - add suggestions for expose-imported variables and types
+- do not suggest exposed/module-declared members when local module-declared/binding has the same name
 - incremental reparsing
-- show errors inline
 - support elm projects with non-root `elm.json`
 - support `tests/`
 - support when the `elm.json` changes
+- do not support goto definition on let declaration name
 
 ## setup for developing
 Rebuild the project with
