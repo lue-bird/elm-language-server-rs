@@ -155,6 +155,10 @@ async fn main() {
                 async { Ok(maybe_completions) }
             },
         );
+        router.request::<lsp_types::request::Formatting, _>(|state, formatting_arguments| {
+            let maybe_edits = respond_to_document_formatting(state, &formatting_arguments);
+            async { Ok(maybe_edits) }
+        });
         router.request::<lsp_types::request::Shutdown, _>(|_state, ()| {
             // ?
             async { Ok(()) }
@@ -289,6 +293,7 @@ fn server_capabilities() -> lsp_types::ServerCapabilities {
                 label_details_support: None,
             }),
         }),
+        document_formatting_provider: Some(lsp_types::OneOf::Left(true)),
         ..lsp_types::ServerCapabilities::default()
     }
 }
@@ -463,25 +468,25 @@ fn compute_diagnostics(
         _ => "/dev/null",
     };
     let elm_make_process: std::process::Child = std::process::Command::new("elm")
-            .args(
-                std::iter::once("make")
-                    .chain(
-                        project_state
-                            .modules
-                            .keys()
-                            .filter_map(|path| path.to_str()),
-                    )
-                    .chain(["--report", "json", "--output", sink_path]),
-            )
-            .current_dir(project_path)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn().map_err(|error| {
-                format!(
-                    "I tried to run elm make but it failed: {error}. Try installing elm via `npm install -g elm`."
+        .args(
+            std::iter::once("make")
+                .chain(
+                    project_state
+                        .modules
+                        .keys()
+                        .filter_map(|path| path.to_str()),
                 )
-            })?;
+                .chain(["--report", "json", "--output", sink_path]),
+        )
+        .current_dir(project_path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn().map_err(|error| {
+            format!(
+                "I tried to run elm make but it failed: {error}. Try installing elm via `npm install -g elm`."
+            )
+        })?;
     let elm_make_output: std::process::Output = elm_make_process
         .wait_with_output()
         .map_err(|error| format!("I wasn't able to read the output of elm make: {error}"))?;
@@ -1108,11 +1113,17 @@ fn state_get_project_module_by_lsp_url<'a>(
     uri: &lsp_types::Url,
 ) -> Option<ProjectModuleState<'a>> {
     let file_path: std::path::PathBuf = uri.to_file_path().ok()?;
+    state_get_project_module_by_path(state, &file_path)
+}
+fn state_get_project_module_by_path<'a>(
+    state: &'a State,
+    file_path: &std::path::PathBuf,
+) -> Option<ProjectModuleState<'a>> {
     state
         .projects
         .iter()
         .find_map(|(project_path, project_state)| {
-            let module_state = project_state.modules.get(&file_path)?;
+            let module_state = project_state.modules.get(file_path)?;
             Some(ProjectModuleState {
                 project_path: project_path,
                 project: project_state,
@@ -1120,7 +1131,6 @@ fn state_get_project_module_by_lsp_url<'a>(
             })
         })
 }
-
 fn respond_to_hover(
     state: &State,
     hover_arguments: lsp_types::HoverParams,
@@ -4582,6 +4592,77 @@ fn respond_to_completion(
         }
     };
     maybe_completion_items.map(lsp_types::CompletionResponse::Array)
+}
+
+fn respond_to_document_formatting(
+    state: &State,
+    formatting_arguments: &lsp_types::DocumentFormattingParams,
+) -> Option<Vec<lsp_types::TextEdit>> {
+    let document_path: std::path::PathBuf =
+        formatting_arguments.text_document.uri.to_file_path().ok()?;
+    let to_format_project_module = state_get_project_module_by_path(state, &document_path)?;
+    let mut elm_format_cmd = std::process::Command::new("elm-format");
+    elm_format_cmd
+        .args(["--stdin", "--elm-version", "0.19", "--yes"])
+        .current_dir(to_format_project_module.project_path)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut elm_format_process: std::process::Child =
+        elm_format_cmd
+        .spawn().map_err(|error| {
+            eprintln!(
+                "running elm-format failed: {error}. Try installing elm-format via `npm install -g elm-format`."
+            )
+        }).ok()?;
+    {
+        // explicit block is necessary to close writing input before blocking for output
+        // (otherwise both processes wait, quite the footgun in honestly)
+        let mut stdin: std::process::ChildStdin =
+            elm_format_process.stdin.take().or_else(|| {
+                eprintln!("couldn't open elm-format stdin");
+                let _ = elm_format_process.wait();
+                None
+            })?;
+        std::io::Write::write_all(
+            &mut stdin,
+            to_format_project_module.module.source.as_bytes(),
+        )
+        .map_err(|error| {
+            eprintln!("couldn't write to elm-format stdin: {error}");
+            let _ = elm_format_process.wait();
+        })
+        .ok()?;
+    }
+    let output: std::process::Output = elm_format_process
+        .wait_with_output()
+        .map_err(|error| {
+            eprintln!("couldn't read from elm-format stdout: {error}");
+        })
+        .ok()?; // ignore output in case of parse errors
+    if !output.stderr.is_empty() {
+        // parse error, not worth logging
+        return None;
+    }
+    let formatted: String = String::from_utf8(output.stdout)
+        .map_err(|error| {
+            eprintln!("couldn't read from elm-format stdout as UTF-8 string: {error}");
+        })
+        .ok()?;
+    // diffing does not seem to be needed here. But maybe it's faster?
+    Some(vec![lsp_types::TextEdit {
+        range: lsp_types::Range {
+            start: lsp_types::Position {
+                line: 0,
+                character: 0,
+            },
+            end: lsp_types::Position {
+                line: 1000_000_000, // to_format_project_module.module.source.lines().count() as u32 + 1
+                character: 0,
+            },
+        },
+        new_text: formatted,
+    }])
 }
 
 fn elm_make_file_problem_to_diagnostic(
