@@ -36,6 +36,7 @@ Works with [`elm-format`, install it](https://github.com/avh4/elm-format?tab=rea
 - support when the `elm.json` changes (only if I have time and there is interest)
 - It is possible that an elm module belongs to multiple projects when source directory paths overlap between projects. This throws a wrench in pretty much all existing code (likely internal document source desync and a more limited lsp feature range in one of the containing projects). This situation is, I assume, fixable by special-casing their storage and handling but it would require a _lot_ of work
 - add a vs code extension as glue (would prefer not to, especially because I dislike distributing binaries. But open to the idea, as it would enable syntax highlighting inside doc comments and make installing easier)
+- add support for using [elm-dev](https://github.com/mdgriffith/elm-dev) as the compiler to speed up compile times and retrieve type info (I assume integrating it is hard and to me it seems kind of bloated with MCP bs etc, currently leaning towards no)
 - your idea 👀
 
 ## TODO
