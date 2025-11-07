@@ -28,6 +28,7 @@ struct ProjectModuleOrigin {
 }
 struct ModuleState {
     syntax: ElmSyntaxModule,
+    source: String,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -172,28 +173,42 @@ async fn main() {
                     .uri
                     .to_file_path()
                     .ok();
-                if let Some(changed_file_path) = maybe_changed_file_path {
-                    let maybe_changed_file_source = did_change_text_document
-                        .content_changes
-                        .into_iter()
-                        .find_map(|change| {
-                            // range: None, range_length: None marks full new document content
+                if let Some(changed_file_path) = maybe_changed_file_path
+                    && let Some(project_module_state) = state_get_project_module_by_lsp_url(
+                        state,
+                        &did_change_text_document.text_document.uri,
+                    )
+                {
+                    let maybe_full_or_changed_file_source: Option<String> = {
+                        let mut source: std::borrow::Cow<str> =
+                            // optimization: remove module, reuse the string, then insert
+                            // avoids a full source clone and the cow wrapper
+                            std::borrow::Cow::Borrowed(&project_module_state.module.source);
+                        for change in did_change_text_document.content_changes {
                             match (change.range, change.range_length) {
-                                (None, None) => Some(change.text),
-                                (Some(_), _) | (_, Some(_)) => None,
+                                (None, None) => {
+                                    source = std::borrow::Cow::Owned(change.text);
+                                    break;
+                                }
+                                (Some(range), Some(range_length)) => {
+                                    string_replace_lsp_range(
+                                        source.to_mut(),
+                                        range,
+                                        range_length as usize,
+                                        &change.text,
+                                    );
+                                }
+                                (None, _) | (_, None) => {}
                             }
-                        });
-                    match maybe_changed_file_source {
-                        None => {
-                            // bug in client. full document should be sent
                         }
-                        Some(changed_file_source) => {
-                            state_update_source_at_path(
-                                state,
-                                &changed_file_path,
-                                changed_file_source,
-                            );
-                        }
+                        Some(source.into_owned())
+                    };
+                    if let Some(full_or_changed_file_source) = maybe_full_or_changed_file_source {
+                        state_update_source_at_path(
+                            state,
+                            &changed_file_path,
+                            full_or_changed_file_source,
+                        );
                     }
                 }
                 std::ops::ControlFlow::Continue(())
@@ -297,7 +312,7 @@ fn server_capabilities() -> lsp_types::ServerCapabilities {
             ),
         ),
         text_document_sync: Some(lsp_types::TextDocumentSyncCapability::Kind(
-            lsp_types::TextDocumentSyncKind::FULL,
+            lsp_types::TextDocumentSyncKind::INCREMENTAL,
         )),
         rename_provider: Some(lsp_types::OneOf::Right(lsp_types::RenameOptions {
             prepare_provider: Some(true),
@@ -780,6 +795,7 @@ fn initialize_state_for_project_into(
             module_path,
             ModuleState {
                 syntax: parse_elm_syntax_module(&module_source),
+                source: module_source,
             },
         );
     }
@@ -4700,7 +4716,7 @@ fn state_update_source_at_path(
     changed_path: &std::path::PathBuf,
     changed_source: String,
 ) {
-    for project_state in state.projects.values_mut() {
+    'updating: for project_state in state.projects.values_mut() {
         if project_state.modules.contains_key(changed_path)
             || project_state
                 .source_directories
@@ -4711,10 +4727,10 @@ fn state_update_source_at_path(
                 changed_path.clone(),
                 ModuleState {
                     syntax: parse_elm_syntax_module(&changed_source),
+                    source: changed_source,
                 },
             );
-            // we do not break out of the loop because
-            // source directories can be (partially) shared between applications
+            break 'updating;
         }
     }
 }
@@ -13058,4 +13074,75 @@ fn parse_elm_syntax_module(module_source: &str) -> ElmSyntaxModule {
         imports: imports,
         declarations: declarations,
     }
+}
+
+fn string_replace_lsp_range(
+    string: &mut String,
+    range: lsp_types::Range,
+    range_length: usize,
+    replacement: &str,
+) {
+    let start_line_offset: usize =
+        str_offset_after_n_lsp_linebreaks(&string, range.start.line as usize);
+    let start_offset: usize = start_line_offset
+        + str_starting_utf8_length_for_utf16_length(
+            &string[start_line_offset..],
+            range.start.character as usize,
+        );
+    let range_length_utf8: usize =
+        str_starting_utf8_length_for_utf16_length(&string[start_offset..], range_length);
+    string.replace_range(
+        start_offset..(start_offset + range_length_utf8),
+        replacement,
+    );
+}
+fn str_offset_after_n_lsp_linebreaks(str: &str, linebreak_count_to_skip: usize) -> usize {
+    if linebreak_count_to_skip <= 0 {
+        0
+    } else
+    // linebreak_count_to_skip >= 1
+    {
+        let mut offset_after_n_linebreaks: usize = 0;
+        let mut encountered_linebreaks: usize = 0;
+        'finding_after_n_linebreaks_offset: loop {
+            if str[offset_after_n_linebreaks..].starts_with("\r\n") {
+                encountered_linebreaks += 1;
+                offset_after_n_linebreaks += 2;
+                if encountered_linebreaks >= linebreak_count_to_skip {
+                    break 'finding_after_n_linebreaks_offset;
+                }
+            } else {
+                match str[offset_after_n_linebreaks..].chars().next() {
+                    None => {
+                        break 'finding_after_n_linebreaks_offset;
+                    }
+                    // see EOL in https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocuments
+                    Some('\r') | Some('\n') => {
+                        encountered_linebreaks += 1;
+                        offset_after_n_linebreaks += 1;
+                        if encountered_linebreaks >= linebreak_count_to_skip {
+                            break 'finding_after_n_linebreaks_offset;
+                        }
+                    }
+                    Some(next_char) => {
+                        offset_after_n_linebreaks += next_char.len_utf8();
+                    }
+                }
+            }
+        }
+        offset_after_n_linebreaks
+    }
+}
+fn str_starting_utf8_length_for_utf16_length(slice: &str, starting_utf16_length: usize) -> usize {
+    let mut utf8_length: usize = 0;
+    let mut so_far_length_utf16: usize = 0;
+    'traversing_utf16_length: for char in slice.chars() {
+        if so_far_length_utf16 >= starting_utf16_length {
+            break 'traversing_utf16_length;
+        } else {
+            utf8_length += char.len_utf8();
+            so_far_length_utf16 += char.len_utf16()
+        }
+    }
+    utf8_length
 }

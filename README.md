@@ -35,6 +35,7 @@ If you're using vs code (or forks) (which do not appear to have a built-in way t
 - when showing module documentation inline actual info for `@docs` members (these are not super easy to parse but would be useful, only if I have time and there is interest)
 - show all module exposes when hovering `(..)` (only if I have time and there is interest)
 - support when the `elm.json` changes (only if I have time and there is interest)
+- It is possible that an elm module belongs to multiple projects when source directory paths overlap between projects. This throws a wrench in pretty much all existing code (likely internal document source desync and a more limited lsp feature range in one of the containing projects). This situation is, I assume, fixable by special-casing their storage and handling but it would require a _lot_ of work
 - your idea 👀
 
 ## TODO
@@ -42,7 +43,7 @@ If you're using vs code (or forks) (which do not appear to have a built-in way t
 - do not suggest exposed/module-declared members when local module-declared/binding has the same name
 - incremental reparsing
 - support elm projects with non-root `elm.json`
-- support `tests/`
+- support `tests/` (dev hint: just add the tests directory as a source file and test dependencies as dependencies to the regular project state, do not add it to a separate project state to avoid module state syncing issues)
 - do not support goto definition on let declaration name and choice type
 - remove `.elm-testing` support
 
