@@ -6,7 +6,9 @@ To use, [install rust](https://rust-lang.org/tools/install/) and
 cargo install --git https://github.com/lue-bird/elm-language-server-rs
 ```
 Then point your editor to `elm-language-server-rs`.
-If you're using vs code (or forks) (which do not appear to have a built-in way to just integrate a language server) you can use extensions like https://github.com/mjmorales/vscode-generic-lsp-proxy
+To use in vs code (or forks) (which appear to have no built-in language server bridge) use extensions like [vscode-generic-lsp-proxy](https://github.com/mjmorales/vscode-generic-lsp-proxy).
+
+Works with [`elm-format`, install it](https://github.com/avh4/elm-format?tab=readme-ov-file#installation-) if you haven't already.
 
 ## goals
 - fast
@@ -34,6 +36,7 @@ If you're using vs code (or forks) (which do not appear to have a built-in way t
 - show all module exposes when hovering `(..)` (only if I have time and there is interest)
 - support when the `elm.json` changes (only if I have time and there is interest)
 - It is possible that an elm module belongs to multiple projects when source directory paths overlap between projects. This throws a wrench in pretty much all existing code (likely internal document source desync and a more limited lsp feature range in one of the containing projects). This situation is, I assume, fixable by special-casing their storage and handling but it would require a _lot_ of work
+- add a vs code extension as glue (would prefer not to, especially because I dislike distributing binaries. But open to the idea, as it would enable syntax highlighting inside doc comments and make installing easier)
 - your idea 👀
 
 ## TODO
@@ -50,4 +53,4 @@ Rebuild the project with
 cargo build
 ```
 Now you can point your editor to the created `target/release/elm-language-server-rs`.
-If you're using vs code (or forks) (which do not appear to have a built-in way to just integrate a language server) you can use extensions like https://github.com/mjmorales/vscode-generic-lsp-proxy
+If you're using vs code (or forks) (which do not appear to have a built-in way to just integrate a language server) you can use extensions like [vscode-generic-lsp-proxy](https://github.com/mjmorales/vscode-generic-lsp-proxy)
