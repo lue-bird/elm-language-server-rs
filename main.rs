@@ -38,67 +38,16 @@ async fn main() {
             client_socket: client.clone(),
             projects: std::collections::HashMap::new(),
         });
-        router.request::<lsp_types::request::Initialize, _>({
-            let client = client.clone();
-            move |state, initialize_arguments| {
-                initialize_state_for_workspace_directories_into(state, initialize_arguments);
-                let file_watch_registration_options: lsp_types::DidChangeWatchedFilesRegistrationOptions =
-                    lsp_types::DidChangeWatchedFilesRegistrationOptions {
-                        watchers: state
-                            .projects
-                            .values()
-                            .flat_map(|project| &project.source_directories)
-                            .filter_map(|source_directory_path| {
-                                lsp_types::Url::from_directory_path(source_directory_path).ok()
-                            })
-                            .map(|source_directory_url| lsp_types::FileSystemWatcher {
-                                glob_pattern: lsp_types::GlobPattern::Relative(
-                                    lsp_types::RelativePattern {
-                                        base_uri: lsp_types::OneOf::Right(source_directory_url),
-                                        pattern: "**/*.elm".to_string(),
-                                    },
-                                ),
-                                kind: Some(
-                                    lsp_types::WatchKind::Create
-                                        | lsp_types::WatchKind::Change
-                                        | lsp_types::WatchKind::Delete,
-                                ),
-                            })
-                            .collect::<Vec<lsp_types::FileSystemWatcher>>(),
-                    };
-                let mut client = client.clone();
-                async move {
-                    match serde_json::to_value(file_watch_registration_options) {
-                        Err(encode_error) => {
-                            eprintln!(
-                                "failed to register file watchers because encoding the request \
-                                options failed: {encode_error}"
-                            );
-                        }
-                        Ok(file_watch_registration_options_json) => {
-                            if let Err(file_watch_register_result) = async_lsp::LanguageClient::register_capability(
-                                &mut client,
-                                lsp_types::RegistrationParams {
-                                    registrations: vec![lsp_types::Registration {
-                                        id: "file-watch".to_string(),
-                                        method: <lsp_types::notification::DidChangeWatchedFiles as lsp_types::notification::Notification>::METHOD
-                                            .to_string(),
-                                        register_options: Some(file_watch_registration_options_json),
-                                    }],
-                                },
-                            ).await {
-                                eprintln!("LSP client failed to register file watching: {:?}", file_watch_register_result);
-                            }
-                        }
-                    }
-                    Ok(lsp_types::InitializeResult {
-                        capabilities: server_capabilities(),
-                        server_info: Some(lsp_types::ServerInfo {
-                            name: "elm-language-server-rs".to_string(),
-                            version: Some("pre-release".to_string())
-                        }),
-                    })
-                }
+        router.request::<lsp_types::request::Initialize, _>(|state, initialize_arguments| {
+            initialize_state_for_workspace_directories_into(state, initialize_arguments);
+            async move {
+                Ok(lsp_types::InitializeResult {
+                    capabilities: server_capabilities(),
+                    server_info: Some(lsp_types::ServerInfo {
+                        name: "elm-language-server-rs".to_string(),
+                        version: Some("pre-release".to_string()),
+                    }),
+                })
             }
         });
         router.request::<lsp_types::request::HoverRequest, _>(
@@ -165,9 +114,62 @@ async fn main() {
             // ?
             async { Ok(()) }
         });
-        router.notification::<lsp_types::notification::Initialized>(|state, _| {
-            publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(state);
-            std::ops::ControlFlow::Continue(())
+        router.notification::<lsp_types::notification::Initialized>({
+            let client = client.clone();
+            move |state, _| {
+                publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(state);
+                let file_watch_registration_options: lsp_types::DidChangeWatchedFilesRegistrationOptions =
+                    lsp_types::DidChangeWatchedFilesRegistrationOptions {
+                        watchers: state
+                            .projects
+                            .values()
+                            .flat_map(|project| &project.source_directories)
+                            .filter_map(|source_directory_path| {
+                                lsp_types::Url::from_directory_path(source_directory_path).ok()
+                            })
+                            .map(|source_directory_url| lsp_types::FileSystemWatcher {
+                                glob_pattern: lsp_types::GlobPattern::Relative(
+                                    lsp_types::RelativePattern {
+                                        base_uri: lsp_types::OneOf::Right(source_directory_url),
+                                        pattern: "**/*.elm".to_string(),
+                                    },
+                                ),
+                                kind: Some(
+                                    lsp_types::WatchKind::Create
+                                        | lsp_types::WatchKind::Change
+                                        | lsp_types::WatchKind::Delete,
+                                ),
+                            })
+                            .collect::<Vec<lsp_types::FileSystemWatcher>>(),
+                    };
+                let mut client = client.clone();
+                tokio::spawn(async move {
+                    match serde_json::to_value(file_watch_registration_options) {
+                        Err(encode_error) => {
+                            eprintln!(
+                                "failed to register file watchers because encoding the request \
+                                options failed: {encode_error}"
+                            );
+                        }
+                        Ok(file_watch_registration_options_json) => {
+                            if let Err(file_watch_register_result) = async_lsp::LanguageClient::register_capability(
+                                &mut client,
+                                lsp_types::RegistrationParams {
+                                    registrations: vec![lsp_types::Registration {
+                                        id: "file-watch".to_string(),
+                                        method: <lsp_types::notification::DidChangeWatchedFiles as lsp_types::notification::Notification>::METHOD
+                                            .to_string(),
+                                        register_options: Some(file_watch_registration_options_json),
+                                    }],
+                                },
+                            ).await {
+                                eprintln!("LSP client failed to register file watching: {:?}", file_watch_register_result);
+                            }
+                        }
+                    }
+                });
+                std::ops::ControlFlow::Continue(())
+            }
         });
         router.notification::<lsp_types::notification::DidOpenTextDocument>(|_state, _| {
             std::ops::ControlFlow::Continue(())
