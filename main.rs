@@ -18,8 +18,8 @@ struct ProjectState {
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ElmProjectKind {
-    Package,
-    Application,
+    Dependency,
+    InWorkspace,
 }
 #[derive(Debug)]
 struct ProjectModuleOrigin {
@@ -347,12 +347,15 @@ fn update_state_on_did_change_text_document(
 }
 
 fn publish_and_initialize_state_for_diagnostics_for_application_projects(state: &mut State) {
-    for (application_project_path, application_project_state) in state
+    for (in_workspace_project_path, in_workspace_project_state) in state
         .projects
         .iter_mut()
-        .filter(|(_, project)| project.kind == ElmProjectKind::Application)
+        .filter(|(_, project)| project.kind == ElmProjectKind::InWorkspace)
     {
-        match compute_diagnostics(application_project_path, application_project_state) {
+        match compute_diagnostics(in_workspace_project_path, in_workspace_project_state) {
+            Err(error) => {
+                eprintln!("{error}");
+            }
             Ok(elm_make_errors) => {
                 let diagnostics_to_publish: Vec<lsp_types::PublishDiagnosticsParams> =
                     elm_make_errors
@@ -382,10 +385,7 @@ fn publish_and_initialize_state_for_diagnostics_for_application_projects(state: 
                         file_diagnostics_to_publish,
                     );
                 }
-                application_project_state.elm_make_errors = elm_make_errors;
-            }
-            Err(error) => {
-                eprintln!("{error}");
+                in_workspace_project_state.elm_make_errors = elm_make_errors;
             }
         }
     }
@@ -710,6 +710,7 @@ accordingly so that tools like the elm compiler and language server can find the
     let _modules_exposed_from_workspace_packages = initialize_state_for_projects_into(
         state,
         &elm_home_path,
+        ElmProjectKind::InWorkspace,
         // improvement possibility: search for elm.json in subdirectories
         workspace_directory_paths,
     );
@@ -719,6 +720,7 @@ accordingly so that tools like the elm compiler and language server can find the
 fn initialize_state_for_projects_into(
     state: &mut State,
     elm_home_path: &std::path::PathBuf,
+    project_kind: ElmProjectKind,
     project_paths: impl Iterator<Item = std::path::PathBuf>,
 ) -> std::collections::HashMap<String, ProjectModuleOrigin> {
     let mut dependency_exposed_module_names: std::collections::HashMap<
@@ -729,6 +731,7 @@ fn initialize_state_for_projects_into(
         initialize_state_for_project_into(
             state,
             &mut dependency_exposed_module_names,
+            project_kind,
             elm_home_path,
             project_path,
         );
@@ -741,6 +744,7 @@ fn initialize_state_for_project_into(
         String,
         ProjectModuleOrigin,
     >,
+    project_kind: ElmProjectKind,
     elm_home_path: &std::path::PathBuf,
     project_path: std::path::PathBuf,
 ) {
@@ -857,6 +861,7 @@ fn initialize_state_for_project_into(
     let dependency_exposed_module_names = initialize_state_for_projects_into(
         state,
         elm_home_path,
+        ElmProjectKind::Dependency,
         direct_dependencies.map(|(package_name, package_version)| {
             std::path::Path::join(
                 &elm_home_path,
@@ -867,11 +872,7 @@ fn initialize_state_for_project_into(
     state.projects.insert(
         project_path,
         ProjectState {
-            kind: match &maybe_elm_json {
-                None => ElmProjectKind::Application,
-                Some(ElmJson::Application { .. }) => ElmProjectKind::Application,
-                Some(ElmJson::Package { .. }) => ElmProjectKind::Package,
-            },
+            kind: project_kind,
             source_directories: elm_json_source_directories,
             modules: module_states,
             dependency_exposed_module_names,
