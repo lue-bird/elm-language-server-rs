@@ -55,7 +55,7 @@ async fn main() {
                                 glob_pattern: lsp_types::GlobPattern::Relative(
                                     lsp_types::RelativePattern {
                                         base_uri: lsp_types::OneOf::Right(source_directory_url),
-                                        pattern: "**/*.{elm,elm-testing}".to_string(),
+                                        pattern: "**/*.elm".to_string(),
                                     },
                                 ),
                                 kind: Some(
@@ -4960,7 +4960,7 @@ fn list_elm_files_in_source_directory_at_path_into(
         match path.extension() {
             Option::None => {}
             Option::Some(file_type) => {
-                if (file_type == "elm") || (file_type == "elm-testing") {
+                if file_type == "elm" {
                     let file_content: String = std::fs::read_to_string(&path)?;
                     so_far.push((path, file_content));
                 }
