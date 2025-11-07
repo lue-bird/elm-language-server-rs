@@ -9005,22 +9005,27 @@ fn elm_syntax_highlight_module_into(
         elm_syntax_highlight_module_header_into(highlighted_so_far, module_header);
     }
     if let Some(documentation_node) = &elm_syntax_module.documentation {
-        highlighted_so_far.extend(elm_syntax_highlight_and_comment(
-            elm_syntax_node_as_ref(documentation_node),
-            3,
-            2,
-        ));
+        highlighted_so_far.extend(
+            elm_syntax_highlight_multi_line(elm_syntax_node_as_ref(documentation_node), 3, 2).map(
+                |range| ElmSyntaxNode {
+                    range: range,
+                    value: ElmSyntaxHighlightKind::Comment,
+                },
+            ),
+        );
     }
     for import_node in elm_syntax_module.imports.iter() {
         elm_syntax_highlight_import_into(highlighted_so_far, elm_syntax_node_as_ref(import_node));
     }
     for documented_declaration in elm_syntax_module.declarations.iter() {
         if let Some(documentation_node) = &documented_declaration.documentation {
-            highlighted_so_far.extend(elm_syntax_highlight_and_comment(
-                elm_syntax_node_as_ref(documentation_node),
-                3,
-                2,
-            ));
+            highlighted_so_far.extend(
+                elm_syntax_highlight_multi_line(elm_syntax_node_as_ref(documentation_node), 3, 2)
+                    .map(|range| ElmSyntaxNode {
+                        range: range,
+                        value: ElmSyntaxHighlightKind::Comment,
+                    }),
+            );
         }
         if let Some(declaration_node) = &documented_declaration.declaration {
             elm_syntax_highlight_declaration_into(
@@ -9163,23 +9168,27 @@ fn elm_syntax_highlight_and_place_comment_into(
         ElmSyntaxCommentKind::Block => {
             highlighted_so_far.splice(
                 insert_index..insert_index,
-                elm_syntax_highlight_and_comment(
+                elm_syntax_highlight_multi_line(
                     ElmSyntaxNode {
                         range: elm_syntax_comment_node.range,
                         value: &elm_syntax_comment_node.value.content,
                     },
                     2,
                     2,
-                ),
+                )
+                .map(|range| ElmSyntaxNode {
+                    range: range,
+                    value: ElmSyntaxHighlightKind::Comment,
+                }),
             );
         }
     }
 }
-fn elm_syntax_highlight_and_comment(
+fn elm_syntax_highlight_multi_line(
     elm_syntax_comment_node: ElmSyntaxNode<&String>,
     characters_before_content: usize,
     characters_after_content: usize,
-) -> impl Iterator<Item = ElmSyntaxNode<ElmSyntaxHighlightKind>> {
+) -> impl Iterator<Item = lsp_types::Range> {
     let content_does_not_break_line: bool =
         elm_syntax_comment_node.range.start.line == elm_syntax_comment_node.range.end.line;
     elm_syntax_comment_node
@@ -9197,38 +9206,35 @@ fn elm_syntax_highlight_and_comment(
         .map(move |(inner_line, inner_line_str)| {
             let line: u32 = elm_syntax_comment_node.range.start.line + (inner_line as u32);
             let line_length_utf16: usize = inner_line_str.encode_utf16().count();
-            ElmSyntaxNode {
-                range: if inner_line == 0 {
-                    lsp_types::Range {
-                        start: elm_syntax_comment_node.range.start,
-                        end: lsp_position_add_characters(
-                            elm_syntax_comment_node.range.start,
-                            (characters_before_content
-                                + line_length_utf16
-                                + if content_does_not_break_line {
-                                    characters_after_content
-                                } else {
-                                    0
-                                }) as i32,
-                        ),
-                    }
-                } else {
-                    lsp_types::Range {
-                        start: lsp_types::Position {
+            if inner_line == 0 {
+                lsp_types::Range {
+                    start: elm_syntax_comment_node.range.start,
+                    end: lsp_position_add_characters(
+                        elm_syntax_comment_node.range.start,
+                        (characters_before_content
+                            + line_length_utf16
+                            + if content_does_not_break_line {
+                                characters_after_content
+                            } else {
+                                0
+                            }) as i32,
+                    ),
+                }
+            } else {
+                lsp_types::Range {
+                    start: lsp_types::Position {
+                        line: line,
+                        character: 0,
+                    },
+                    end: if line == elm_syntax_comment_node.range.end.line {
+                        elm_syntax_comment_node.range.end
+                    } else {
+                        lsp_types::Position {
                             line: line,
-                            character: 0,
-                        },
-                        end: if line == elm_syntax_comment_node.range.end.line {
-                            elm_syntax_comment_node.range.end
-                        } else {
-                            lsp_types::Position {
-                                line: line,
-                                character: (line_length_utf16 + characters_after_content) as u32,
-                            }
-                        },
-                    }
-                },
-                value: ElmSyntaxHighlightKind::Comment,
+                            character: (line_length_utf16 + characters_after_content) as u32,
+                        }
+                    },
+                }
             }
         })
 }
@@ -10278,13 +10284,27 @@ fn elm_syntax_highlight_expression_into(
             );
         }
         ElmSyntaxExpression::String {
-            content: _,
-            quoting_style: _,
+            content: content,
+            quoting_style,
         } => {
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: elm_syntax_expression_node.range,
-                value: ElmSyntaxHighlightKind::String,
-            });
+            let quote_count: usize = match quoting_style {
+                ElmSyntaxStringQuotingStyle::SingleQuoted => 1,
+                ElmSyntaxStringQuotingStyle::TripleQuoted => 3,
+            };
+            highlighted_so_far.extend(
+                elm_syntax_highlight_multi_line(
+                    ElmSyntaxNode {
+                        range: elm_syntax_expression_node.range,
+                        value: content,
+                    },
+                    quote_count,
+                    quote_count,
+                )
+                .map(|range| ElmSyntaxNode {
+                    range: range,
+                    value: ElmSyntaxHighlightKind::String,
+                }),
+            );
         }
         ElmSyntaxExpression::Triple {
             part0: maybe_part0,
