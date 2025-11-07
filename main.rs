@@ -5023,7 +5023,7 @@ fn elm_syntax_highlight_kind_to_lsp_semantic_token_type(
         ElmSyntaxHighlightKind::Type => lsp_types::SemanticTokenType::TYPE,
         ElmSyntaxHighlightKind::Variable => lsp_types::SemanticTokenType::VARIABLE,
         ElmSyntaxHighlightKind::Variant => lsp_types::SemanticTokenType::ENUM_MEMBER,
-        ElmSyntaxHighlightKind::VariableDeclaration => lsp_types::SemanticTokenType::FUNCTION,
+        ElmSyntaxHighlightKind::DeclaredVariable => lsp_types::SemanticTokenType::FUNCTION,
         ElmSyntaxHighlightKind::Comment => lsp_types::SemanticTokenType::COMMENT,
         ElmSyntaxHighlightKind::Number => lsp_types::SemanticTokenType::NUMBER,
         ElmSyntaxHighlightKind::String => lsp_types::SemanticTokenType::STRING,
@@ -9074,7 +9074,7 @@ enum ElmSyntaxHighlightKind {
     Comment,
     String,
     Number,
-    VariableDeclaration,
+    DeclaredVariable,
     KeySymbol,
 }
 
@@ -9184,7 +9184,7 @@ fn elm_syntax_highlight_module_header_into(
                 });
                 highlighted_so_far.push(ElmSyntaxNode {
                     range: command_node.value_type_name.range,
-                    value: ElmSyntaxHighlightKind::VariableDeclaration,
+                    value: ElmSyntaxHighlightKind::DeclaredVariable,
                 });
             }
             if let Some(subscription_node) = maybe_subscription {
@@ -9198,7 +9198,7 @@ fn elm_syntax_highlight_module_header_into(
                 });
                 highlighted_so_far.push(ElmSyntaxNode {
                     range: subscription_node.value_type_name.range,
-                    value: ElmSyntaxHighlightKind::VariableDeclaration,
+                    value: ElmSyntaxHighlightKind::DeclaredVariable,
                 });
             }
         }
@@ -9409,7 +9409,7 @@ fn elm_syntax_highlight_exposing_into(
                     ElmSyntaxExpose::Variable(_) => {
                         highlighted_so_far.push(ElmSyntaxNode {
                             range: expose_node.range,
-                            value: ElmSyntaxHighlightKind::VariableDeclaration,
+                            value: ElmSyntaxHighlightKind::DeclaredVariable,
                         });
                     }
                 }
@@ -9432,7 +9432,7 @@ fn elm_syntax_highlight_declaration_into(
         } => {
             highlighted_so_far.push(ElmSyntaxNode {
                 range: start_name_node.range,
-                value: ElmSyntaxHighlightKind::VariableDeclaration,
+                value: ElmSyntaxHighlightKind::DeclaredVariable,
             });
             if let Some(signature) = maybe_signature {
                 highlighted_so_far.push(ElmSyntaxNode {
@@ -9448,7 +9448,7 @@ fn elm_syntax_highlight_declaration_into(
                 if let Some(implementation_name_range) = signature.implementation_name_range {
                     highlighted_so_far.push(ElmSyntaxNode {
                         range: implementation_name_range,
-                        value: ElmSyntaxHighlightKind::VariableDeclaration,
+                        value: ElmSyntaxHighlightKind::DeclaredVariable,
                     });
                 }
             }
@@ -9465,8 +9465,16 @@ fn elm_syntax_highlight_declaration_into(
                 });
             }
             if let Some(result_node) = maybe_result {
+                let mut local_bindings: Vec<ElmLocalBinding> = Vec::new();
+                for parameter_node in parameters {
+                    elm_syntax_pattern_bindings_into(
+                        &mut local_bindings,
+                        elm_syntax_node_as_ref(parameter_node),
+                    );
+                }
                 elm_syntax_highlight_expression_into(
                     highlighted_so_far,
+                    &local_bindings,
                     elm_syntax_node_as_ref(result_node),
                 );
             }
@@ -9576,7 +9584,7 @@ fn elm_syntax_highlight_declaration_into(
             if let Some(function_name_node) = maybe_function_name {
                 highlighted_so_far.push(ElmSyntaxNode {
                     range: function_name_node.range,
-                    value: ElmSyntaxHighlightKind::VariableDeclaration,
+                    value: ElmSyntaxHighlightKind::DeclaredVariable,
                 });
             }
         }
@@ -9595,7 +9603,7 @@ fn elm_syntax_highlight_declaration_into(
             if let Some(name_node) = maybe_name {
                 highlighted_so_far.push(ElmSyntaxNode {
                     range: name_node.range,
-                    value: ElmSyntaxHighlightKind::VariableDeclaration,
+                    value: ElmSyntaxHighlightKind::DeclaredVariable,
                 });
             }
             if let &Some(colon_key_symbol_range) = maybe_colon_key_symbol_range {
@@ -10017,6 +10025,7 @@ fn elm_syntax_highlight_type_into(
 
 fn elm_syntax_highlight_expression_into(
     highlighted_so_far: &mut Vec<ElmSyntaxNode<ElmSyntaxHighlightKind>>,
+    local_bindings: &[ElmLocalBinding],
     elm_syntax_expression_node: ElmSyntaxNode<&ElmSyntaxExpression>,
 ) {
     match elm_syntax_expression_node.value {
@@ -10025,14 +10034,20 @@ fn elm_syntax_highlight_expression_into(
             argument0,
             argument1_up,
         } => {
-            elm_syntax_highlight_expression_into(highlighted_so_far, elm_syntax_node_unbox(called));
             elm_syntax_highlight_expression_into(
                 highlighted_so_far,
+                local_bindings,
+                elm_syntax_node_unbox(called),
+            );
+            elm_syntax_highlight_expression_into(
+                highlighted_so_far,
+                local_bindings,
                 elm_syntax_node_unbox(argument0),
             );
             for argument_node in argument1_up {
                 elm_syntax_highlight_expression_into(
                     highlighted_so_far,
+                    local_bindings,
                     elm_syntax_node_as_ref(argument_node),
                 );
             }
@@ -10052,6 +10067,7 @@ fn elm_syntax_highlight_expression_into(
             if let Some(matched_node) = maybe_matched {
                 elm_syntax_highlight_expression_into(
                     highlighted_so_far,
+                    local_bindings,
                     elm_syntax_node_unbox(matched_node),
                 );
             }
@@ -10073,8 +10089,14 @@ fn elm_syntax_highlight_expression_into(
                     });
                 }
                 if let Some(result_node) = &case.result {
+                    let mut local_bindings: Vec<ElmLocalBinding> = local_bindings.to_vec();
+                    elm_syntax_pattern_bindings_into(
+                        &mut local_bindings,
+                        elm_syntax_node_as_ref(&case.pattern),
+                    );
                     elm_syntax_highlight_expression_into(
                         highlighted_so_far,
+                        &local_bindings,
                         elm_syntax_node_as_ref(result_node),
                     );
                 }
@@ -10109,6 +10131,7 @@ fn elm_syntax_highlight_expression_into(
             if let Some(condition_node) = maybe_condition {
                 elm_syntax_highlight_expression_into(
                     highlighted_so_far,
+                    local_bindings,
                     elm_syntax_node_unbox(condition_node),
                 );
             }
@@ -10121,6 +10144,7 @@ fn elm_syntax_highlight_expression_into(
             if let Some(on_true_node) = maybe_on_true {
                 elm_syntax_highlight_expression_into(
                     highlighted_so_far,
+                    local_bindings,
                     elm_syntax_node_unbox(on_true_node),
                 );
             }
@@ -10133,6 +10157,7 @@ fn elm_syntax_highlight_expression_into(
             if let Some(on_false_node) = maybe_on_false {
                 elm_syntax_highlight_expression_into(
                     highlighted_so_far,
+                    local_bindings,
                     elm_syntax_node_unbox(on_false_node),
                 );
             }
@@ -10142,7 +10167,11 @@ fn elm_syntax_highlight_expression_into(
             operator: operator_node,
             right: maybe_right,
         } => {
-            elm_syntax_highlight_expression_into(highlighted_so_far, elm_syntax_node_unbox(left));
+            elm_syntax_highlight_expression_into(
+                highlighted_so_far,
+                local_bindings,
+                elm_syntax_node_unbox(left),
+            );
             highlighted_so_far.push(ElmSyntaxNode {
                 range: operator_node.range,
                 value: ElmSyntaxHighlightKind::KeySymbol,
@@ -10150,6 +10179,7 @@ fn elm_syntax_highlight_expression_into(
             if let Some(right_node) = maybe_right {
                 elm_syntax_highlight_expression_into(
                     highlighted_so_far,
+                    local_bindings,
                     elm_syntax_node_unbox(right_node),
                 );
             }
@@ -10185,8 +10215,16 @@ fn elm_syntax_highlight_expression_into(
                 });
             }
             if let Some(result_node) = maybe_result {
+                let mut local_bindings: Vec<ElmLocalBinding> = local_bindings.to_vec();
+                for parameter_node in parameters {
+                    elm_syntax_pattern_bindings_into(
+                        &mut local_bindings,
+                        elm_syntax_node_as_ref(parameter_node),
+                    );
+                }
                 elm_syntax_highlight_expression_into(
                     highlighted_so_far,
+                    &local_bindings,
                     elm_syntax_node_unbox(result_node),
                 );
             }
@@ -10203,9 +10241,17 @@ fn elm_syntax_highlight_expression_into(
                 },
                 value: ElmSyntaxHighlightKind::KeySymbol,
             });
+            let mut local_bindings: Vec<ElmLocalBinding> = local_bindings.to_vec();
+            for let_declaration_node in declarations {
+                elm_syntax_let_declaration_introduced_bindings_into(
+                    &mut local_bindings,
+                    &let_declaration_node.value,
+                );
+            }
             for let_declaration_node in declarations {
                 elm_syntax_highlight_let_declaration_into(
                     highlighted_so_far,
+                    &local_bindings,
                     elm_syntax_node_as_ref(let_declaration_node),
                 );
             }
@@ -10218,6 +10264,7 @@ fn elm_syntax_highlight_expression_into(
             if let Some(result_node) = maybe_result {
                 elm_syntax_highlight_expression_into(
                     highlighted_so_far,
+                    &local_bindings,
                     elm_syntax_node_unbox(result_node),
                 );
             }
@@ -10226,6 +10273,7 @@ fn elm_syntax_highlight_expression_into(
             for element_node in elements {
                 elm_syntax_highlight_expression_into(
                     highlighted_so_far,
+                    local_bindings,
                     elm_syntax_node_as_ref(element_node),
                 );
             }
@@ -10234,6 +10282,7 @@ fn elm_syntax_highlight_expression_into(
             if let Some(in_negation_node) = maybe_in_negation {
                 elm_syntax_highlight_expression_into(
                     highlighted_so_far,
+                    local_bindings,
                     elm_syntax_node_unbox(in_negation_node),
                 );
             }
@@ -10247,6 +10296,7 @@ fn elm_syntax_highlight_expression_into(
         ElmSyntaxExpression::Parenthesized(in_parens) => {
             elm_syntax_highlight_expression_into(
                 highlighted_so_far,
+                local_bindings,
                 elm_syntax_node_unbox(in_parens),
             );
         }
@@ -10265,6 +10315,7 @@ fn elm_syntax_highlight_expression_into(
                 if let Some(value_node) = &field.value {
                     elm_syntax_highlight_expression_into(
                         highlighted_so_far,
+                        local_bindings,
                         elm_syntax_node_as_ref(value_node),
                     );
                 }
@@ -10276,6 +10327,7 @@ fn elm_syntax_highlight_expression_into(
         } => {
             elm_syntax_highlight_expression_into(
                 highlighted_so_far,
+                local_bindings,
                 elm_syntax_node_unbox(record_node),
             );
             highlighted_so_far.push(ElmSyntaxNode {
@@ -10339,6 +10391,7 @@ fn elm_syntax_highlight_expression_into(
                 if let Some(value_node) = &field.value {
                     elm_syntax_highlight_expression_into(
                         highlighted_so_far,
+                        local_bindings,
                         elm_syntax_node_as_ref(value_node),
                     );
                 }
@@ -10348,21 +10401,40 @@ fn elm_syntax_highlight_expression_into(
             qualification,
             name,
         } => {
-            elm_syntax_highlight_qualified_into(
-                highlighted_so_far,
-                ElmSyntaxNode {
+            if qualification.is_empty()
+                && let Some(origin_binding) = local_bindings
+                    .iter()
+                    .find(|bind| bind.name == name.as_str())
+            {
+                highlighted_so_far.push(ElmSyntaxNode {
                     range: elm_syntax_expression_node.range,
-                    value: ElmQualified {
-                        qualification: qualification.as_str(),
-                        name: name.as_str(),
+                    value: match origin_binding.origin {
+                        LocalBindingOrigin::PatternVariable(_) => ElmSyntaxHighlightKind::Variable,
+                        LocalBindingOrigin::PatternRecordField(_) => {
+                            ElmSyntaxHighlightKind::Variable
+                        }
+                        LocalBindingOrigin::LetDeclaredVariable { .. } => {
+                            ElmSyntaxHighlightKind::DeclaredVariable
+                        }
                     },
-                },
-                if name.starts_with(|c: char| c.is_uppercase()) {
-                    ElmSyntaxHighlightKind::Variant
-                } else {
-                    ElmSyntaxHighlightKind::Variable
-                },
-            );
+                })
+            } else {
+                elm_syntax_highlight_qualified_into(
+                    highlighted_so_far,
+                    ElmSyntaxNode {
+                        range: elm_syntax_expression_node.range,
+                        value: ElmQualified {
+                            qualification: qualification.as_str(),
+                            name: name.as_str(),
+                        },
+                    },
+                    if name.starts_with(|c: char| c.is_uppercase()) {
+                        ElmSyntaxHighlightKind::Variant
+                    } else {
+                        ElmSyntaxHighlightKind::DeclaredVariable
+                    },
+                );
+            }
         }
         ElmSyntaxExpression::String {
             content: content,
@@ -10395,18 +10467,21 @@ fn elm_syntax_highlight_expression_into(
             if let Some(part0_node) = maybe_part0 {
                 elm_syntax_highlight_expression_into(
                     highlighted_so_far,
+                    local_bindings,
                     elm_syntax_node_unbox(part0_node),
                 );
             }
             if let Some(part1_node) = maybe_part1 {
                 elm_syntax_highlight_expression_into(
                     highlighted_so_far,
+                    local_bindings,
                     elm_syntax_node_unbox(part1_node),
                 );
             }
             if let Some(part2_node) = maybe_part2 {
                 elm_syntax_highlight_expression_into(
                     highlighted_so_far,
+                    local_bindings,
                     elm_syntax_node_unbox(part2_node),
                 );
             }
@@ -10418,12 +10493,14 @@ fn elm_syntax_highlight_expression_into(
             if let Some(part0_node) = maybe_part0 {
                 elm_syntax_highlight_expression_into(
                     highlighted_so_far,
+                    local_bindings,
                     elm_syntax_node_unbox(part0_node),
                 );
             }
             if let Some(part1_node) = maybe_part1 {
                 elm_syntax_highlight_expression_into(
                     highlighted_so_far,
+                    local_bindings,
                     elm_syntax_node_unbox(part1_node),
                 );
             }
@@ -10439,6 +10516,7 @@ fn elm_syntax_highlight_expression_into(
 
 fn elm_syntax_highlight_let_declaration_into(
     highlighted_so_far: &mut Vec<ElmSyntaxNode<ElmSyntaxHighlightKind>>,
+    local_bindings: &[ElmLocalBinding],
     elm_syntax_let_declaration_node: ElmSyntaxNode<&ElmSyntaxLetDeclaration>,
 ) {
     match elm_syntax_let_declaration_node.value {
@@ -10460,6 +10538,7 @@ fn elm_syntax_highlight_let_declaration_into(
             if let Some(destructured_expression_node) = maybe_destructured_expression {
                 elm_syntax_highlight_expression_into(
                     highlighted_so_far,
+                    local_bindings,
                     elm_syntax_node_as_ref(destructured_expression_node),
                 );
             }
@@ -10473,7 +10552,7 @@ fn elm_syntax_highlight_let_declaration_into(
         } => {
             highlighted_so_far.push(ElmSyntaxNode {
                 range: start_name_node.range,
-                value: ElmSyntaxHighlightKind::VariableDeclaration,
+                value: ElmSyntaxHighlightKind::DeclaredVariable,
             });
             if let Some(signature) = maybe_signature {
                 highlighted_so_far.push(ElmSyntaxNode {
@@ -10489,7 +10568,7 @@ fn elm_syntax_highlight_let_declaration_into(
                 if let Some(implementation_name_range) = signature.implementation_name_range {
                     highlighted_so_far.push(ElmSyntaxNode {
                         range: implementation_name_range,
-                        value: ElmSyntaxHighlightKind::VariableDeclaration,
+                        value: ElmSyntaxHighlightKind::DeclaredVariable,
                     });
                 }
             }
@@ -10506,8 +10585,16 @@ fn elm_syntax_highlight_let_declaration_into(
                 });
             }
             if let Some(result_node) = maybe_result {
+                let mut local_bindings: Vec<ElmLocalBinding> = local_bindings.to_vec();
+                for parameter_node in parameters {
+                    elm_syntax_pattern_bindings_into(
+                        &mut local_bindings,
+                        elm_syntax_node_as_ref(parameter_node),
+                    );
+                }
                 elm_syntax_highlight_expression_into(
                     highlighted_so_far,
+                    &local_bindings,
                     elm_syntax_node_as_ref(result_node),
                 );
             }
@@ -12793,7 +12880,7 @@ fn parse_elm_syntax_declaration_node(
 fn parse_elm_syntax_declaration_port_node(
     state: &mut ParseState,
 ) -> Option<ElmSyntaxNode<ElmSyntaxDeclaration>> {
-    let port_keyword_range: lsp_types::Range = parse_symbol_as_range(state, "port")?;
+    let port_keyword_range: lsp_types::Range = parse_elm_keyword_as_range(state, "port")?;
     parse_elm_whitespace_and_comments(state);
     let maybe_name: Option<ElmSyntaxNode<String>> = parse_elm_lowercase_as_node(state);
     parse_elm_whitespace_and_comments(state);
@@ -12822,7 +12909,7 @@ fn parse_elm_syntax_declaration_port_node(
 fn parse_elm_syntax_declaration_operator_node(
     state: &mut ParseState,
 ) -> Option<ElmSyntaxNode<ElmSyntaxDeclaration>> {
-    let infix_keyword_range: lsp_types::Range = parse_symbol_as_range(state, "infix")?;
+    let infix_keyword_range: lsp_types::Range = parse_elm_keyword_as_range(state, "infix")?;
     parse_elm_whitespace_and_comments(state);
     let maybe_direction: Option<ElmSyntaxNode<ElmSyntaxInfixDirection>> =
         parse_elm_syntax_infix_declaration_node(state);
@@ -12886,7 +12973,7 @@ fn parse_elm_syntax_infix_declaration_node(
 fn parse_elm_syntax_declaration_choice_type_or_type_alias_node(
     state: &mut ParseState,
 ) -> Option<ElmSyntaxNode<ElmSyntaxDeclaration>> {
-    let type_keyword_range: lsp_types::Range = parse_symbol_as_range(state, "type")?;
+    let type_keyword_range: lsp_types::Range = parse_elm_keyword_as_range(state, "type")?;
     parse_elm_whitespace_and_comments(state);
     let maybe_alias_keyword_range: Option<lsp_types::Range> = parse_symbol_as_range(state, "alias");
     parse_elm_whitespace_and_comments(state);
