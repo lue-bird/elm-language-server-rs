@@ -76,7 +76,7 @@ async fn main() {
                             );
                         }
                         Ok(file_watch_registration_options_json) => {
-                            let _: Result<(), async_lsp::Error> = async_lsp::LanguageClient::register_capability(
+                            if let Err(file_watch_register_result) = async_lsp::LanguageClient::register_capability(
                                 &mut client,
                                 lsp_types::RegistrationParams {
                                     registrations: vec![lsp_types::Registration {
@@ -86,7 +86,9 @@ async fn main() {
                                         register_options: Some(file_watch_registration_options_json),
                                     }],
                                 },
-                            ).await;
+                            ).await {
+                                eprintln!("LSP client failed to register file watching: {:?}", file_watch_register_result);
+                            }
                         }
                     }
                     Ok(lsp_types::InitializeResult {
@@ -164,7 +166,7 @@ async fn main() {
             async { Ok(()) }
         });
         router.notification::<lsp_types::notification::Initialized>(|state, _| {
-            publish_and_initialize_state_for_diagnostics_for_application_projects(state);
+            publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(state);
             std::ops::ControlFlow::Continue(())
         });
         router.notification::<lsp_types::notification::DidOpenTextDocument>(|_state, _| {
@@ -178,38 +180,64 @@ async fn main() {
         );
         router.notification::<lsp_types::notification::DidChangeWatchedFiles>(
             |state, did_change_watched_files| {
-                for file_change_event in did_change_watched_files.changes {
-                    match file_change_event.uri.to_file_path() {
-                        Err(()) => {}
-                        Ok(changed_file_path) => match file_change_event.typ {
-                            lsp_types::FileChangeType::DELETED => {
-                                'removing_module: for project_state in state.projects.values_mut() {
-                                    if project_state.modules.contains_key(&changed_file_path) {
-                                        project_state.modules.remove(&changed_file_path);
-                                        break 'removing_module;
+                for (project_path, project_state) in state.projects.iter_mut() {
+                    let mut project_was_updated: bool = false;
+                    let mut removed_paths: Vec<lsp_types::Url> = Vec::new();
+                    'updating_project: for file_change_event in &did_change_watched_files.changes {
+                        match file_change_event.uri.to_file_path() {
+                            Err(()) => {}
+                            Ok(changed_file_path) => {
+                                if !changed_file_path
+                                    .extension()
+                                    .is_some_and(|ext| ext == "elm")
+                                    || !project_state
+                                        .source_directories
+                                        .iter()
+                                        .any(|dir| changed_file_path.starts_with(dir))
+                                {
+                                    continue 'updating_project;
+                                }
+                                match file_change_event.typ {
+                                    lsp_types::FileChangeType::DELETED => {
+                                        if let Some(_) =
+                                            project_state.modules.remove(&changed_file_path)
+                                        {
+                                            project_was_updated = true;
+                                            removed_paths.push(file_change_event.uri.clone());
+                                        }
+                                    }
+                                    lsp_types::FileChangeType::CREATED
+                                    | lsp_types::FileChangeType::CHANGED => {
+                                        match std::fs::read_to_string(&changed_file_path) {
+                                            Err(_) => {}
+                                            Ok(changed_file_source) => {
+                                                project_was_updated = true;
+                                                project_state.modules.insert(
+                                                    changed_file_path,
+                                                    initialize_module_state_from_source(
+                                                        changed_file_source,
+                                                    ),
+                                                );
+                                            }
+                                        }
+                                    }
+                                    unknown_file_change_type => {
+                                        eprintln!(
+                                            "unknown file change type sent by LSP client: {:?}",
+                                            unknown_file_change_type
+                                        )
                                     }
                                 }
                             }
-                            lsp_types::FileChangeType::CREATED
-                            | lsp_types::FileChangeType::CHANGED => {
-                                match std::fs::read_to_string(&changed_file_path) {
-                                    Err(_) => {}
-                                    Ok(changed_file_source) => {
-                                        state_update_source_at_path(
-                                            state,
-                                            &changed_file_path,
-                                            changed_file_source,
-                                        );
-                                    }
-                                }
-                            }
-                            unknown_file_change_type => {
-                                eprintln!(
-                                    "unknown file change type sent by LSP client: {:?}",
-                                    unknown_file_change_type
-                                )
-                            }
-                        },
+                        }
+                    }
+                    if project_was_updated {
+                        publish_and_update_state_for_diagnostics_for_document(
+                            &mut state.client_socket,
+                            project_path.to_path_buf(),
+                            project_state,
+                            removed_paths.into_iter(),
+                        );
                     }
                 }
                 std::ops::ControlFlow::Continue(())
@@ -217,10 +245,20 @@ async fn main() {
         );
         router.notification::<lsp_types::notification::DidSaveTextDocument>(
             |state, did_save_text_document_arguments| {
-                publish_and_update_state_for_diagnostics_for_document(
-                    state,
-                    &did_save_text_document_arguments.text_document.uri,
-                );
+                if let Ok(saved_path) = &did_save_text_document_arguments
+                    .text_document
+                    .uri
+                    .to_file_path()
+                    && let Some((saved_project_path, saved_project_state)) =
+                        state_get_mut_project_by_module_path(&mut state.projects, saved_path)
+                {
+                    publish_and_update_state_for_diagnostics_for_document(
+                        &mut state.client_socket,
+                        saved_project_path.to_path_buf(),
+                        saved_project_state,
+                        std::iter::empty(),
+                    );
+                }
                 std::ops::ControlFlow::Continue(())
             },
         );
@@ -346,7 +384,7 @@ fn update_state_on_did_change_text_document(
     }
 }
 
-fn publish_and_initialize_state_for_diagnostics_for_application_projects(state: &mut State) {
+fn publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(state: &mut State) {
     for (in_workspace_project_path, in_workspace_project_state) in state
         .projects
         .iter_mut()
@@ -361,22 +399,18 @@ fn publish_and_initialize_state_for_diagnostics_for_application_projects(state: 
                     elm_make_errors
                         .iter()
                         .filter_map(|elm_make_file_error| {
-                            if let Ok(url) =
-                                lsp_types::Url::from_file_path(&elm_make_file_error.path)
-                            {
-                                let diagnostics: Vec<lsp_types::Diagnostic> = elm_make_file_error
-                                    .problems
-                                    .iter()
-                                    .map(elm_make_file_problem_to_diagnostic)
-                                    .collect::<Vec<_>>();
-                                Some(lsp_types::PublishDiagnosticsParams {
-                                    uri: url,
-                                    diagnostics: diagnostics,
-                                    version: None,
-                                })
-                            } else {
-                                None
-                            }
+                            let url: lsp_types::Url =
+                                lsp_types::Url::from_file_path(&elm_make_file_error.path).ok()?;
+                            let diagnostics: Vec<lsp_types::Diagnostic> = elm_make_file_error
+                                .problems
+                                .iter()
+                                .map(elm_make_file_problem_to_diagnostic)
+                                .collect::<Vec<_>>();
+                            Some(lsp_types::PublishDiagnosticsParams {
+                                uri: url,
+                                diagnostics: diagnostics,
+                                version: None,
+                            })
                         })
                         .collect::<Vec<_>>();
                 for file_diagnostics_to_publish in diagnostics_to_publish {
@@ -392,24 +426,18 @@ fn publish_and_initialize_state_for_diagnostics_for_application_projects(state: 
 }
 
 fn publish_and_update_state_for_diagnostics_for_document(
-    state: &mut State,
-    document_url: &lsp_types::Url,
+    client_socket: &mut async_lsp::ClientSocket,
+    project_path: std::path::PathBuf,
+    project: &mut ProjectState,
+    removed_paths: impl Iterator<Item = lsp_types::Url>,
 ) {
-    let saved_project_module = if let Some(saved_project_module) =
-        state_get_project_module_by_lsp_url(state, document_url)
-    {
-        saved_project_module
-    } else {
-        return;
-    };
-    match compute_diagnostics(
-        saved_project_module.project_path,
-        saved_project_module.project,
-    ) {
+    match compute_diagnostics(&project_path, project) {
+        Err(error) => {
+            eprintln!("{error}");
+        }
         Ok(elm_make_errors) => {
-            let saved_project_path_buf = saved_project_module.project_path.to_path_buf();
             let mut updated_diagnostics_to_publish = Vec::new();
-            for elm_make_file_error in saved_project_module.project.modules.keys() {
+            for elm_make_file_error in project.modules.keys() {
                 // O(modules*errors), might be problematic in large projects
                 let maybe_new = elm_make_errors
                     .iter()
@@ -424,8 +452,7 @@ fn publish_and_update_state_for_diagnostics_for_document(
                         Some(diagnostics)
                     }
                     None => {
-                        let was_error = saved_project_module
-                            .project
+                        let was_error: bool = project
                             .elm_make_errors
                             .iter()
                             .any(|file_error| &file_error.path == elm_make_file_error);
@@ -442,18 +469,20 @@ fn publish_and_update_state_for_diagnostics_for_document(
                     });
                 }
             }
+            for removed_url in removed_paths {
+                updated_diagnostics_to_publish.push(lsp_types::PublishDiagnosticsParams {
+                    uri: removed_url,
+                    diagnostics: vec![],
+                    version: None,
+                });
+            }
             for updated_file_diagnostics_to_publish in updated_diagnostics_to_publish {
                 let _ = async_lsp::LanguageClient::publish_diagnostics(
-                    &mut state.client_socket,
+                    client_socket,
                     updated_file_diagnostics_to_publish,
                 );
             }
-            if let Some(mut_saved_project_state) = state.projects.get_mut(&saved_project_path_buf) {
-                mut_saved_project_state.elm_make_errors = elm_make_errors;
-            }
-        }
-        Err(error) => {
-            eprintln!("{error}");
+            project.elm_make_errors = elm_make_errors;
         }
     }
 }
@@ -496,7 +525,10 @@ fn compute_diagnostics(
     } else {
         let elm_make_report_json: serde_json::Value =
             serde_json::from_slice(&elm_make_output.stderr).map_err(|parse_error| {
-                format!("failed to parse elm make report json: {parse_error}")
+                format!(
+                    "failed to parse elm make report json: {parse_error}, full text: {}",
+                    str::from_utf8(&elm_make_output.stderr).unwrap_or("")
+                )
             })?;
         elm_make_report = parse_elm_make_report(&elm_make_report_json)?;
     }
@@ -1130,6 +1162,20 @@ fn state_get_project_module_by_path<'a>(
                 project: project_state,
                 module: module_state,
             })
+        })
+}
+fn state_get_mut_project_by_module_path<'a>(
+    projects: &'a mut std::collections::HashMap<std::path::PathBuf, ProjectState>,
+    file_path: &std::path::PathBuf,
+) -> Option<(&'a std::path::PathBuf, &'a mut ProjectState)> {
+    projects
+        .iter_mut()
+        .find_map(|(project_path, project_state)| {
+            if project_state.modules.contains_key(file_path) {
+                Some((project_path, project_state))
+            } else {
+                None
+            }
         })
 }
 fn respond_to_hover(
@@ -4803,27 +4849,6 @@ fn project_module_name_completions_for_except(
             },
         )
         .collect::<Vec<_>>()
-}
-
-fn state_update_source_at_path(
-    state: &mut State,
-    changed_path: &std::path::PathBuf,
-    changed_source: String,
-) {
-    'updating: for project_state in state.projects.values_mut() {
-        if project_state.modules.contains_key(changed_path)
-            || project_state
-                .source_directories
-                .iter()
-                .any(|source_directory_path| changed_path.starts_with(source_directory_path))
-        {
-            project_state.modules.insert(
-                changed_path.clone(),
-                initialize_module_state_from_source(changed_source),
-            );
-            break 'updating;
-        }
-    }
 }
 
 fn documentation_comment_to_markdown(documentation: &str) -> String {
