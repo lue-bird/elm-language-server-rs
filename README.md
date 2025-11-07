@@ -11,7 +11,7 @@ To use in vs code (or forks) (which appear to have no built-in language server b
 Works with [`elm-format`, install it](https://github.com/avh4/elm-format?tab=readme-ov-file#installation-) if you haven't already.
 
 ## goals
-- fast
+- fast (e.g. rename must be instant no matter the project size)
 - reliable (e.g. work well with code that only partially parses)
 - getting to know the language server protocol :)
 
