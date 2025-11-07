@@ -12318,7 +12318,7 @@ fn parse_elm_syntax_expression_field(state: &mut ParseState) -> Option<ElmSyntax
 fn parse_elm_syntax_expression_if_then_else(
     state: &mut ParseState,
 ) -> Option<ElmSyntaxNode<ElmSyntaxExpression>> {
-    let if_keyword_range: lsp_types::Range = parse_symbol_as_range(state, "if")?;
+    let if_keyword_range: lsp_types::Range = parse_elm_keyword_as_range(state, "if")?;
     parse_elm_whitespace_and_comments(state);
     let maybe_condition: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
         parse_elm_syntax_expression_space_separated_node(state);
@@ -12425,7 +12425,7 @@ fn parse_elm_syntax_expression_lambda(
 fn parse_elm_syntax_expression_case_of(
     state: &mut ParseState,
 ) -> Option<ElmSyntaxNode<ElmSyntaxExpression>> {
-    let case_keyword_range: lsp_types::Range = parse_symbol_as_range(state, "case")?;
+    let case_keyword_range: lsp_types::Range = parse_elm_keyword_as_range(state, "case")?;
     parse_elm_whitespace_and_comments(state);
     let maybe_matched: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
         parse_elm_syntax_expression_space_separated_node(state);
@@ -12517,7 +12517,7 @@ fn parse_elm_syntax_expression_case(state: &mut ParseState) -> Option<ElmSyntaxE
 fn parse_elm_syntax_expression_let_in(
     state: &mut ParseState,
 ) -> Option<ElmSyntaxNode<ElmSyntaxExpression>> {
-    let let_keyword_range: lsp_types::Range = parse_symbol_as_range(state, "let")?;
+    let let_keyword_range: lsp_types::Range = parse_elm_keyword_as_range(state, "let")?;
     parse_elm_whitespace_and_comments(state);
     Some(if state.position.character <= state.indent as u32 {
         ElmSyntaxNode {
