@@ -46,7 +46,6 @@ If you're using vs code (or forks) (which do not appear to have a built-in way t
 - support elm projects with non-root `elm.json`
 - support `tests/` (dev hint: just add the tests directory as a source file and test dependencies as dependencies to the regular project state, do not add it to a separate project state to avoid module state syncing issues)
 - do not support goto definition on let declaration name and choice type
-- remove `.elm-testing` support
 
 ## setup for developing
 Rebuild the project with
