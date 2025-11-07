@@ -167,50 +167,8 @@ async fn main() {
             std::ops::ControlFlow::Continue(())
         });
         router.notification::<lsp_types::notification::DidChangeTextDocument>(
-            |state, did_change_text_document| {
-                let maybe_changed_file_path: Option<std::path::PathBuf> = did_change_text_document
-                    .text_document
-                    .uri
-                    .to_file_path()
-                    .ok();
-                if let Some(changed_file_path) = maybe_changed_file_path
-                    && let Some(project_module_state) = state_get_project_module_by_lsp_url(
-                        state,
-                        &did_change_text_document.text_document.uri,
-                    )
-                {
-                    let maybe_full_or_changed_file_source: Option<String> = {
-                        let mut source: std::borrow::Cow<str> =
-                            // optimization: remove module, reuse the string, then insert
-                            // avoids a full source clone and the cow wrapper
-                            std::borrow::Cow::Borrowed(&project_module_state.module.source);
-                        for change in did_change_text_document.content_changes {
-                            match (change.range, change.range_length) {
-                                (None, None) => {
-                                    source = std::borrow::Cow::Owned(change.text);
-                                    break;
-                                }
-                                (Some(range), Some(range_length)) => {
-                                    string_replace_lsp_range(
-                                        source.to_mut(),
-                                        range,
-                                        range_length as usize,
-                                        &change.text,
-                                    );
-                                }
-                                (None, _) | (_, None) => {}
-                            }
-                        }
-                        Some(source.into_owned())
-                    };
-                    if let Some(full_or_changed_file_source) = maybe_full_or_changed_file_source {
-                        state_update_source_at_path(
-                            state,
-                            &changed_file_path,
-                            full_or_changed_file_source,
-                        );
-                    }
-                }
+            |state, did_change_text_document: lsp_types::DidChangeTextDocumentParams| {
+                update_state_on_did_change_text_document(state, did_change_text_document);
                 std::ops::ControlFlow::Continue(())
             },
         );
@@ -335,6 +293,54 @@ fn server_capabilities() -> lsp_types::ServerCapabilities {
     }
 }
 
+fn update_state_on_did_change_text_document(
+    state: &mut State,
+    did_change_text_document: lsp_types::DidChangeTextDocumentParams,
+) {
+    let changed_file_path: std::path::PathBuf = if let Some(changed_file_path) =
+        did_change_text_document
+            .text_document
+            .uri
+            .to_file_path()
+            .ok()
+    {
+        changed_file_path
+    } else {
+        return;
+    };
+    for project_state in state.projects.values_mut() {
+        if let Some(module_state) = project_state.modules.remove(&changed_file_path) {
+            let mut changed_source: String = module_state.source;
+            for change in did_change_text_document.content_changes {
+                match (change.range, change.range_length) {
+                    (None, None) => {
+                        // means full replacement
+                        project_state.modules.insert(
+                            changed_file_path,
+                            initialize_module_state_from_source(change.text),
+                        );
+                        return;
+                    }
+                    (Some(range), Some(range_length)) => {
+                        string_replace_lsp_range(
+                            &mut changed_source,
+                            range,
+                            range_length as usize,
+                            &change.text,
+                        );
+                    }
+                    (None, _) | (_, None) => {}
+                }
+            }
+            project_state.modules.insert(
+                changed_file_path,
+                initialize_module_state_from_source(changed_source),
+            );
+            break;
+        }
+    }
+}
+
 fn publish_and_initialize_state_for_diagnostics_for_application_projects(state: &mut State) {
     for (application_project_path, application_project_state) in state
         .projects
@@ -384,62 +390,65 @@ fn publish_and_update_state_for_diagnostics_for_document(
     state: &mut State,
     document_url: &lsp_types::Url,
 ) {
-    if let Some(saved_project_module) = state_get_project_module_by_lsp_url(state, document_url) {
-        match compute_diagnostics(
-            saved_project_module.project_path,
-            saved_project_module.project,
-        ) {
-            Ok(elm_make_errors) => {
-                let saved_project_path_buf = saved_project_module.project_path.to_path_buf();
-                let mut updated_diagnostics_to_publish = Vec::new();
-                for elm_make_file_error in saved_project_module.project.modules.keys() {
-                    // O(modules*errors), might be problematic in large projects
-                    let maybe_new = elm_make_errors
-                        .iter()
-                        .find(|&file_error| &file_error.path == elm_make_file_error);
-                    let maybe_updated_diagnostics = match maybe_new {
-                        Some(new) => {
-                            let diagnostics: Vec<lsp_types::Diagnostic> = new
-                                .problems
-                                .iter()
-                                .map(elm_make_file_problem_to_diagnostic)
-                                .collect::<Vec<_>>();
-                            Some(diagnostics)
-                        }
-                        None => {
-                            let was_error = saved_project_module
-                                .project
-                                .elm_make_errors
-                                .iter()
-                                .any(|file_error| &file_error.path == elm_make_file_error);
-                            if was_error { Some(vec![]) } else { None }
-                        }
-                    };
-                    if let Some(updated_diagnostics) = maybe_updated_diagnostics
-                        && let Ok(url) = lsp_types::Url::from_file_path(elm_make_file_error)
-                    {
-                        updated_diagnostics_to_publish.push(lsp_types::PublishDiagnosticsParams {
-                            uri: url,
-                            diagnostics: updated_diagnostics,
-                            version: None,
-                        });
+    let saved_project_module = if let Some(saved_project_module) =
+        state_get_project_module_by_lsp_url(state, document_url)
+    {
+        saved_project_module
+    } else {
+        return;
+    };
+    match compute_diagnostics(
+        saved_project_module.project_path,
+        saved_project_module.project,
+    ) {
+        Ok(elm_make_errors) => {
+            let saved_project_path_buf = saved_project_module.project_path.to_path_buf();
+            let mut updated_diagnostics_to_publish = Vec::new();
+            for elm_make_file_error in saved_project_module.project.modules.keys() {
+                // O(modules*errors), might be problematic in large projects
+                let maybe_new = elm_make_errors
+                    .iter()
+                    .find(|&file_error| &file_error.path == elm_make_file_error);
+                let maybe_updated_diagnostics = match maybe_new {
+                    Some(new) => {
+                        let diagnostics: Vec<lsp_types::Diagnostic> = new
+                            .problems
+                            .iter()
+                            .map(elm_make_file_problem_to_diagnostic)
+                            .collect::<Vec<_>>();
+                        Some(diagnostics)
                     }
-                }
-                for updated_file_diagnostics_to_publish in updated_diagnostics_to_publish {
-                    let _ = async_lsp::LanguageClient::publish_diagnostics(
-                        &mut state.client_socket,
-                        updated_file_diagnostics_to_publish,
-                    );
-                }
-                if let Some(mut_saved_project_state) =
-                    state.projects.get_mut(&saved_project_path_buf)
+                    None => {
+                        let was_error = saved_project_module
+                            .project
+                            .elm_make_errors
+                            .iter()
+                            .any(|file_error| &file_error.path == elm_make_file_error);
+                        if was_error { Some(vec![]) } else { None }
+                    }
+                };
+                if let Some(updated_diagnostics) = maybe_updated_diagnostics
+                    && let Ok(url) = lsp_types::Url::from_file_path(elm_make_file_error)
                 {
-                    mut_saved_project_state.elm_make_errors = elm_make_errors;
+                    updated_diagnostics_to_publish.push(lsp_types::PublishDiagnosticsParams {
+                        uri: url,
+                        diagnostics: updated_diagnostics,
+                        version: None,
+                    });
                 }
             }
-            Err(error) => {
-                eprintln!("{error}");
+            for updated_file_diagnostics_to_publish in updated_diagnostics_to_publish {
+                let _ = async_lsp::LanguageClient::publish_diagnostics(
+                    &mut state.client_socket,
+                    updated_file_diagnostics_to_publish,
+                );
             }
+            if let Some(mut_saved_project_state) = state.projects.get_mut(&saved_project_path_buf) {
+                mut_saved_project_state.elm_make_errors = elm_make_errors;
+            }
+        }
+        Err(error) => {
+            eprintln!("{error}");
         }
     }
 }
@@ -793,10 +802,7 @@ fn initialize_state_for_project_into(
     for (module_path, module_source) in elm_source_files {
         module_states.insert(
             module_path,
-            ModuleState {
-                syntax: parse_elm_syntax_module(&module_source),
-                source: module_source,
-            },
+            initialize_module_state_from_source(module_source),
         );
     }
     match &maybe_elm_json {
@@ -867,6 +873,12 @@ fn initialize_state_for_project_into(
             elm_make_errors: vec![],
         },
     );
+}
+fn initialize_module_state_from_source(source: String) -> ModuleState {
+    ModuleState {
+        syntax: parse_elm_syntax_module(&source),
+        source: source,
+    }
 }
 enum ElmJson<'a> {
     Application {
@@ -4725,10 +4737,7 @@ fn state_update_source_at_path(
         {
             project_state.modules.insert(
                 changed_path.clone(),
-                ModuleState {
-                    syntax: parse_elm_syntax_module(&changed_source),
-                    source: changed_source,
-                },
+                initialize_module_state_from_source(changed_source),
             );
             break 'updating;
         }
@@ -7668,35 +7677,38 @@ fn elm_syntax_import_uses_of_reference_into(
     elm_syntax_import: &ElmSyntaxImport,
     symbol_to_collect_uses_of: ElmDeclaredSymbol,
 ) {
-    if let Some(import_module_name_node) = &elm_syntax_import.module_name {
-        if let ElmDeclaredSymbol::ModuleName(module_name_to_collect_uses_of) =
-            symbol_to_collect_uses_of
-        {
-            if module_name_to_collect_uses_of == &import_module_name_node.value {
-                uses_so_far.push(import_module_name_node.range);
-            }
-        } else if let ElmDeclaredSymbol::ImportAlias {
-            module_origin: alias_to_collect_uses_of_origin,
-            alias_name: alias_to_collect_uses_of_name,
-        } = symbol_to_collect_uses_of
-        {
-            if alias_to_collect_uses_of_origin == &import_module_name_node.value
-                && let Some(import_alias) = &elm_syntax_import.alias
-                && let Some(import_alias_name_node) = &import_alias.name
-                && alias_to_collect_uses_of_name == &import_alias_name_node.value
-            {
-                uses_so_far.push(import_alias_name_node.range);
-            }
-        } else if let Some(exposing) = &elm_syntax_import.exposing
-            && let Some(exposing_specific) = &exposing.specific
-        {
-            elm_syntax_exposing_specific_uses_of_reference_into(
-                uses_so_far,
-                &import_module_name_node.value,
-                &exposing_specific.value,
-                symbol_to_collect_uses_of,
-            );
+    let import_module_name_node =
+        if let Some(import_module_name_node) = &elm_syntax_import.module_name {
+            import_module_name_node
+        } else {
+            return;
+        };
+    if let ElmDeclaredSymbol::ModuleName(module_name_to_collect_uses_of) = symbol_to_collect_uses_of
+    {
+        if module_name_to_collect_uses_of == &import_module_name_node.value {
+            uses_so_far.push(import_module_name_node.range);
         }
+    } else if let ElmDeclaredSymbol::ImportAlias {
+        module_origin: alias_to_collect_uses_of_origin,
+        alias_name: alias_to_collect_uses_of_name,
+    } = symbol_to_collect_uses_of
+    {
+        if alias_to_collect_uses_of_origin == &import_module_name_node.value
+            && let Some(import_alias) = &elm_syntax_import.alias
+            && let Some(import_alias_name_node) = &import_alias.name
+            && alias_to_collect_uses_of_name == &import_alias_name_node.value
+        {
+            uses_so_far.push(import_alias_name_node.range);
+        }
+    } else if let Some(exposing) = &elm_syntax_import.exposing
+        && let Some(exposing_specific) = &exposing.specific
+    {
+        elm_syntax_exposing_specific_uses_of_reference_into(
+            uses_so_far,
+            &import_module_name_node.value,
+            &exposing_specific.value,
+            symbol_to_collect_uses_of,
+        );
     }
 }
 
