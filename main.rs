@@ -12494,7 +12494,7 @@ fn parse_elm_syntax_expression_case(state: &mut ParseState) -> Option<ElmSyntaxE
         return None;
     }
     let case_pattern_node: ElmSyntaxNode<ElmSyntaxPattern> =
-        parse_elm_syntax_pattern_not_space_separated_node(state)?;
+        parse_elm_syntax_pattern_space_separated_node(state)?;
     parse_elm_whitespace_and_comments(state);
     Some(match parse_symbol_as_range(state, "->") {
         None => ElmSyntaxExpressionCase {
