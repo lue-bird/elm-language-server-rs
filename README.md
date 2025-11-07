@@ -1,4 +1,4 @@
-> Status: **not ready for use but trying it on small projects probably works**
+> Status: should work, with some features still to come
 
 Small LSP language server for [elm](https://elm-lang.org/).
 To use, [install rust](https://rust-lang.org/tools/install/) and
@@ -16,12 +16,11 @@ Works with [`elm-format`, install it](https://github.com/avh4/elm-format?tab=rea
 - getting to know the language server protocol :)
 
 ## not planned
-- support for elm version <= 0.18
+- support for elm version <= 0.18 or inline GLSL blocks
 - type inference
 - directly integrating `elm-test` running
 - codelens, outline symbols, code folding, linked editing
 - `elm.json` help
-- inline GLSL blocks
 
 ## not sure (Please give me feedback on this)
 - configuring a custom elm compiler and elm formatter path. Is there an established way to set it, preferably something like an environment variable outside of LSP configuration? (If there is, I will support it)
@@ -42,10 +41,10 @@ Works with [`elm-format`, install it](https://github.com/avh4/elm-format?tab=rea
 ## TODO
 - add suggestions for expose-imported variables and types
 - do not suggest exposed/module-declared members when local module-declared/binding has the same name
-- incremental reparsing
-- support elm projects with non-root `elm.json`
-- support `tests/` (dev hint: just add the tests directory as a source file and test dependencies as dependencies to the regular project state, do not add it to a separate project state to avoid module state syncing issues)
+- incremental reparsing (somehow it's pretty much fast enough already without?)
 - do not support goto definition on let declaration name and choice type
+- support `tests/` (dev hint: just add the tests directory as a source file and test dependencies as dependencies to the regular project state, do not add it to a separate project state to avoid module state syncing issues)
+- support elm projects with non-workspace-root `elm.json`
 
 ## setup for developing
 Rebuild the project with
