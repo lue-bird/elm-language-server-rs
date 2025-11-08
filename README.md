@@ -42,7 +42,6 @@ Works with [`elm-format`, install it](https://github.com/avh4/elm-format?tab=rea
 - do not suggest exposed/module-declared members when local module-declared/binding has the same name
 - incremental reparsing (somehow it's pretty much fast enough already without?)
 - do not support goto definition on let declaration name and choice type
-- support `tests/` (dev hint: just add the tests directory as a source file and test dependencies as dependencies to the regular project state, do not add it to a separate project state to avoid module state syncing issues)
 - support elm projects with non-workspace-root `elm.json`
 
 ## known bugs I don't really know how to fix
