@@ -1,5 +1,3 @@
-> Status: should work, with some features still to come
-
 Small LSP language server for [elm](https://elm-lang.org/).
 To use, [install rust](https://rust-lang.org/tools/install/) and
 ```bash
