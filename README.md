@@ -23,27 +23,27 @@ Works with [`elm-format`, install it](https://github.com/avh4/elm-format?tab=rea
 
 ## not sure (Please give me feedback on this)
 - configuring a custom elm compiler and elm formatter path. Is there an established way to set it, preferably something like an environment variable outside of LSP configuration? (If there is, I will support it)
+- reparse incrementally (somewhat easy to implement but somehow it's for me at least pretty much fast enough already without? More data points welcome)
 - adding necessary imports when autocompleting vs making it a separate code action vs nothing vs ? (leaning towards separate code action)
 - add "find references"
 - add support for `elm-review` (depends on how easy it is, which I assume it isn't)
 - when showing module documentation inline actual info for `@docs` members (these are not super easy to parse but would be useful, only if I have time and there is interest)
 - show all module exposes when hovering `(..)` (only if I have time and there is interest)
 - add code actions like "expose (including variants)", "inline", "inline all uses" (leaning towards no as it is fairly complicated, though it it very useful for sure)
+- support elm projects with non-workspace-root `elm.json`
 - support when the `elm.json` changes (only if I have time and there is interest)
 - switch to `position_encoding: Some(lsp_types::PositionEncodingKind::UTF8)`. This makes source edits and parsing easier and faster at the cost of compatibility with lsp clients below version 3.17.0. Is that acceptable? (leaning towards yes).
   Also validate if elm --report region column is UTF-8 or UTF-16 (seems to be UTF-16 strangely)
 - show function parameter names (leaning towards no, as they are often confusing if they are curried, reveal non-exposed variant patterns, have more parameters than the type suggests, are undescriptive etc)
+- currently, an exposed member will still be suggested even when a local module-declared reference/local binding with the same name exists. Likewise, a local module-declared reference will still be suggested even when a local binding with the same name exists. (somewhat easily fixable but I don't really see the harm in directly showing this shadowing in your face)
 - add a vs code extension as glue (would prefer not to, especially because I dislike distributing binaries. But open to the idea, as it would enable syntax highlighting inside doc comments and make installing easier)
 - add support for using [elm-dev](https://github.com/mdgriffith/elm-dev) as the compiler to speed up compile times and retrieve type info (I assume integrating it is hard and to me it seems kind of bloated with MCP bs etc, currently leaning towards no)
 - your idea 👀
 
 ## TODO
-- do not suggest exposed/module-declared members when local module-declared/binding has the same name
-- incremental reparsing (somehow it's pretty much fast enough already without?)
-- do not support goto definition on let declaration name and choice type
-- support elm projects with non-workspace-root `elm.json`
+- do not support goto definition on let declaration name
 
-## known bugs I don't really know how to fix
+## known limitations
 - when moving a module into an existing project, no syntax highlighting will be shown before you interact with the file, as semantic tokens are requested before the "did change watched files" notification is sent.
   A band-aid fix would be pre-maturely assuming that requesting semantic tokens on an unknown file means that that file should be added to a project. This would however potentially lead to duplicate parsing etc.
   There must surely be a better way, right?
