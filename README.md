@@ -20,7 +20,7 @@ Works with [`elm-format`](https://github.com/avh4/elm-format?tab=readme-ov-file#
 - `elm.json` help
 
 ## not sure (Please give me feedback on this)
-- configuring a custom elm compiler and elm formatter path. Is there an established way to set it, preferably something like an environment variable outside of LSP configuration? (If there is, I will support it)
+- configuring a custom elm compiler, formatter and test runner path. Is there an established way to set it, preferably something like an environment variable outside of LSP configuration? (If there is, I will support it)
 - reparse incrementally (somewhat easy to implement but somehow it's for me at least pretty much fast enough already without? More data points welcome)
 - adding necessary imports when autocompleting vs making it a separate code action vs nothing vs ? (leaning towards separate code action)
 - add "find references"
