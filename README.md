@@ -5,7 +5,7 @@ cargo install --git https://github.com/lue-bird/elm-language-server-rs
 ```
 Then point your editor to `elm-language-server-rs`, see also [specific setups](#editor-setups).
 
-Works with [`elm-format`, install it](https://github.com/avh4/elm-format?tab=readme-ov-file#installation-) if you haven't already.
+Works with [`elm-format`](https://github.com/avh4/elm-format?tab=readme-ov-file#installation) and [`elm-test`](https://github.com/rtfeldman/node-test-runner?tab=readme-ov-file#installation), install them if you haven't already.
 
 ## goals
 - fast (e.g. rename must be instant no matter the project size)
