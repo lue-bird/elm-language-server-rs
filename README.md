@@ -38,7 +38,6 @@ Works with [`elm-format`, install it](https://github.com/avh4/elm-format?tab=rea
 - your idea 👀
 
 ## TODO
-- add suggestions for expose-imported variables and types
 - do not suggest exposed/module-declared members when local module-declared/binding has the same name
 - incremental reparsing (somehow it's pretty much fast enough already without?)
 - do not support goto definition on let declaration name and choice type
