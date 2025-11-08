@@ -11551,7 +11551,7 @@ fn parse_elm_syntax_expose_node(state: &mut ParseState) -> Option<ElmSyntaxNode<
 }
 
 fn parse_elm_syntax_import_node(state: &mut ParseState) -> Option<ElmSyntaxNode<ElmSyntaxImport>> {
-    let import_keyword_range: lsp_types::Range = parse_symbol_as_range(state, "import")?;
+    let import_keyword_range: lsp_types::Range = parse_elm_keyword_as_range(state, "import")?;
     parse_elm_whitespace_and_comments(state);
     let maybe_module_name_node: Option<ElmSyntaxNode<String>> =
         parse_elm_standalone_module_name_node(state);
