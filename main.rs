@@ -1941,6 +1941,24 @@ fn respond_to_hover(
                 range: Some(hovered_symbol_node.range),
             })
         }
+        ElmSyntaxSymbol::LetDeclarationName {
+            name: hovered_name,
+            signature_type: maybe_signature_type,
+            start_name_range: _,
+            scope_expression: _,
+        } => Some(lsp_types::Hover {
+            contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
+                kind: lsp_types::MarkupKind::Markdown,
+                value: let_declaration_info_markdown(
+                    state,
+                    hovered_project_module_state.project,
+                    &hovered_project_module_state.module.syntax,
+                    hovered_name,
+                    maybe_signature_type,
+                ),
+            }),
+            range: Some(hovered_symbol_node.range),
+        }),
         ElmSyntaxSymbol::VariableOrVariantOrOperator {
             qualification: hovered_qualification,
             name: hovered_name,
@@ -1955,7 +1973,8 @@ fn respond_to_hover(
                         kind: lsp_types::MarkupKind::Markdown,
                         value: local_binding_info_markdown(
                             state,
-                            hovered_project_module_state,
+                            hovered_project_module_state.project,
+                            &hovered_project_module_state.module.syntax,
                             hovered_name,
                             hovered_local_binding_origin,
                         ),
@@ -2296,37 +2315,49 @@ fn respond_to_hover(
 
 fn local_binding_info_markdown(
     state: &State,
-    hovered_project_module_state: ProjectModuleState,
-    hovered_name: &str,
-    hovered_local_binding_origin: LocalBindingOrigin,
+    project_state: &ProjectState,
+    module_syntax: &ElmSyntaxModule,
+    binding_name: &str,
+    binding_origin: LocalBindingOrigin,
 ) -> String {
-    match hovered_local_binding_origin {
+    match binding_origin {
         LocalBindingOrigin::PatternVariable(_) => format!("variable introduced in pattern"),
         LocalBindingOrigin::PatternRecordField(_) => {
             format!("variable bound to a field, introduced in a pattern")
         }
         LocalBindingOrigin::LetDeclaredVariable {
-            signature_type: hovered_local_binding_maybe_signature_type,
+            signature_type: maybe_signature_type,
             start_name_range: _,
-        } => match hovered_local_binding_maybe_signature_type {
-            None => {
-                format!("```elm\nlet {}\n```\n", hovered_name)
-            }
-            Some(hovered_local_binding_signature) => {
-                format!(
-                    "```elm\nlet {} : {}\n```\n",
-                    hovered_name,
-                    &elm_syntax_type_to_single_line_string(
-                        &elm_syntax_module_create_origin_lookup(
-                            state,
-                            hovered_project_module_state.project,
-                            &hovered_project_module_state.module.syntax
-                        ),
-                        hovered_local_binding_signature,
-                    )
+        } => let_declaration_info_markdown(
+            state,
+            project_state,
+            module_syntax,
+            binding_name,
+            maybe_signature_type,
+        ),
+    }
+}
+fn let_declaration_info_markdown(
+    state: &State,
+    project_state: &ProjectState,
+    module_syntax: &ElmSyntaxModule,
+    name: &str,
+    maybe_signature_type: Option<&ElmSyntaxType>,
+) -> String {
+    match maybe_signature_type {
+        None => {
+            format!("```elm\nlet {}\n```\n", name)
+        }
+        Some(hovered_local_binding_signature) => {
+            format!(
+                "```elm\nlet {} : {}\n```\n",
+                name,
+                &elm_syntax_type_to_single_line_string(
+                    &elm_syntax_module_create_origin_lookup(state, project_state, module_syntax),
+                    hovered_local_binding_signature,
                 )
-            }
-        },
+            )
+        }
     }
 }
 
@@ -2349,8 +2380,12 @@ fn respond_to_goto_definition(
                 .position,
         )?;
     match goto_symbol_node.value {
+        ElmSyntaxSymbol::LetDeclarationName { .. } => {
+            // already at definition
+            None
+        }
         ElmSyntaxSymbol::ModuleMemberDeclarationName { .. } => {
-            // already at declaration
+            // already at definition
             None
         }
         ElmSyntaxSymbol::TypeVariable {
@@ -2900,6 +2935,15 @@ fn respond_to_prepare_rename(
             range: prepare_rename_symbol_node.range,
             placeholder: name.to_string(),
         }),
+        ElmSyntaxSymbol::LetDeclarationName {
+            name,
+            signature_type: _,
+            start_name_range: _,
+            scope_expression: _,
+        } => Ok(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
+            range: prepare_rename_symbol_node.range,
+            placeholder: name.to_string(),
+        }),
         ElmSyntaxSymbol::VariableOrVariantOrOperator {
             qualification,
             name,
@@ -3263,6 +3307,46 @@ fn respond_to_rename(
                     })
                 })
                 .collect::<Vec<_>>()
+        }
+        ElmSyntaxSymbol::LetDeclarationName {
+            name: to_rename_name,
+            start_name_range,
+            signature_type: maybe_signature_type,
+            scope_expression,
+        } => {
+            let mut all_uses_of_local_binding_to_rename: Vec<lsp_types::Range> = Vec::new();
+            elm_syntax_expression_uses_of_reference_into(
+                &mut all_uses_of_local_binding_to_rename,
+                &elm_syntax_module_create_origin_lookup(
+                    state,
+                    to_rename_project_module_state.project,
+                    &to_rename_project_module_state.module.syntax,
+                ),
+                &[ElmLocalBinding {
+                    name: to_rename_name,
+                    origin: LocalBindingOrigin::LetDeclaredVariable {
+                        signature_type: maybe_signature_type,
+                        start_name_range: start_name_range,
+                    },
+                }],
+                scope_expression,
+                ElmDeclaredSymbol::LocalBinding(to_rename_name),
+            );
+            vec![lsp_types::TextDocumentEdit {
+                text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
+                    uri: rename_arguments.text_document_position.text_document.uri,
+                    version: None,
+                },
+                edits: all_uses_of_local_binding_to_rename
+                    .into_iter()
+                    .map(|use_range_of_renamed_module| {
+                        lsp_types::OneOf::Left(lsp_types::TextEdit {
+                            range: use_range_of_renamed_module,
+                            new_text: rename_arguments.new_name.clone(),
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+            }]
         }
         ElmSyntaxSymbol::VariableOrVariantOrOperator {
             qualification: to_rename_qualification,
@@ -3806,6 +3890,54 @@ fn respond_to_completion(
                     .map(|node| node.value.as_str()),
             ))
         }
+        ElmSyntaxSymbol::LetDeclarationName {
+            name: _,
+            start_name_range: _,
+            signature_type: _,
+            scope_expression,
+        } => {
+            match scope_expression.value {
+                ElmSyntaxExpression::LetIn {
+                    declarations: let_declarations,
+                    in_keyword_range: _,
+                    result: _,
+                } => {
+                    // find previous signature
+                    let_declarations
+                        .iter()
+                        .zip(let_declarations.iter().skip(1))
+                        .find_map(|(previous_declaration_node, current_declaration_node)| {
+                            if let ElmSyntaxLetDeclaration::VariableDeclaration {
+                                start_name: current_declaration_start_name_node,
+                                signature: None,
+                                ..
+                            } = &current_declaration_node.value
+                                && current_declaration_start_name_node.range
+                                    == symbol_to_complete.range
+                                && let ElmSyntaxLetDeclaration::VariableDeclaration {
+                                    start_name: previous_declaration_start_name_node,
+                                    signature:
+                                        Some(ElmSyntaxVariableDeclarationSignature {
+                                            implementation_name_range: None,
+                                            ..
+                                        }),
+                                    ..
+                                } = &previous_declaration_node.value
+                            {
+                                Some(vec![lsp_types::CompletionItem {
+                                    label: previous_declaration_start_name_node.value.clone(),
+                                    kind: Some(lsp_types::CompletionItemKind::FUNCTION),
+                                    documentation: None,
+                                    ..lsp_types::CompletionItem::default()
+                                }])
+                            } else {
+                                None
+                            }
+                        })
+                }
+                _ => None,
+            }
+        }
         ElmSyntaxSymbol::ModuleMemberDeclarationName { declaration, .. } => {
             match &declaration.value {
                 ElmSyntaxDeclaration::ChoiceType { .. }
@@ -3849,8 +3981,7 @@ fn respond_to_completion(
                                 && let ElmSyntaxDeclaration::Variable {
                                     start_name: previous_declaration_start_name_node,
                                     signature:
-                                        None
-                                        | Some(ElmSyntaxVariableDeclarationSignature {
+                                        Some(ElmSyntaxVariableDeclarationSignature {
                                             implementation_name_range: None,
                                             ..
                                         }),
@@ -4385,7 +4516,8 @@ fn respond_to_completion(
                                 kind: lsp_types::MarkupKind::Markdown,
                                 value: local_binding_info_markdown(
                                     state,
-                                    completion_project_module,
+                                    completion_project_module.project,
+                                    &completion_project_module.module.syntax,
                                     local_binding.name,
                                     local_binding.origin,
                                 ),
@@ -6648,9 +6780,12 @@ enum ElmSyntaxSymbol<'a> {
         name: &'a str,
         all_exposes: &'a [ElmSyntaxNode<ElmSyntaxExpose>],
     },
-    /// also covers local bindings like pattern variables and let signature names, and exposes
-    /// TODO to avoid suggesting completions for let declaration names,
-    /// consider splitting off ::LetDeclarationName variant or similar
+    LetDeclarationName {
+        name: &'a str,
+        start_name_range: lsp_types::Range,
+        signature_type: Option<&'a ElmSyntaxType>,
+        scope_expression: ElmSyntaxNode<&'a ElmSyntaxExpression>,
+    },
     VariableOrVariantOrOperator {
         qualification: &'a str,
         name: &'a str,
@@ -7633,6 +7768,7 @@ fn elm_syntax_expression_find_reference_at_position<'a>(
                         elm_syntax_let_declaration_find_reference_at_position(
                             local_bindings,
                             scope_declaration,
+                            elm_syntax_expression_node,
                             elm_syntax_node_as_ref(declaration),
                             position,
                         )
@@ -7811,6 +7947,7 @@ fn elm_syntax_expression_find_reference_at_position<'a>(
 fn elm_syntax_let_declaration_find_reference_at_position<'a>(
     mut local_bindings: ElmLocalBindings<'a>,
     scope_declaration: &'a ElmSyntaxDeclaration,
+    scope_expression: ElmSyntaxNode<&'a ElmSyntaxExpression>,
     elm_syntax_let_declaration_node: ElmSyntaxNode<&'a ElmSyntaxLetDeclaration>,
     position: lsp_types::Position,
 ) -> std::ops::ControlFlow<ElmSyntaxNode<ElmSyntaxSymbol<'a>>, ElmLocalBindings<'a>> {
@@ -7846,10 +7983,14 @@ fn elm_syntax_let_declaration_find_reference_at_position<'a>(
         } => {
             if lsp_range_includes_position(start_name.range, position) {
                 return std::ops::ControlFlow::Break(ElmSyntaxNode {
-                    value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
-                        qualification: "",
+                    value: ElmSyntaxSymbol::LetDeclarationName {
                         name: &start_name.value,
-                        local_bindings: local_bindings,
+                        start_name_range: start_name.range,
+                        signature_type: maybe_signature
+                            .as_ref()
+                            .and_then(|signature| signature.type_.as_ref())
+                            .map(|node| &node.value),
+                        scope_expression: scope_expression,
                     },
                     range: start_name.range,
                 });
@@ -7865,10 +8006,14 @@ fn elm_syntax_let_declaration_find_reference_at_position<'a>(
                     && lsp_range_includes_position(implementation_name_range, position)
                 {
                     return std::ops::ControlFlow::Break(ElmSyntaxNode {
-                        value: ElmSyntaxSymbol::VariableOrVariantOrOperator {
-                            qualification: "",
+                        value: ElmSyntaxSymbol::LetDeclarationName {
                             name: &start_name.value,
-                            local_bindings: local_bindings,
+                            start_name_range: start_name.range,
+                            signature_type: maybe_signature
+                                .as_ref()
+                                .and_then(|signature| signature.type_.as_ref())
+                                .map(|node| &node.value),
+                            scope_expression: scope_expression,
                         },
                         range: implementation_name_range,
                     });
@@ -12944,10 +13089,10 @@ fn parse_elm_syntax_let_declaration(
     if state.position.character < state.indent as u32 {
         return None;
     }
-    parse_elm_syntax_let_variable_declaration(state)
-        .or_else(|| parse_elm_syntax_let_destructuring(state))
+    parse_elm_syntax_let_variable_declaration_node(state)
+        .or_else(|| parse_elm_syntax_let_destructuring_node(state))
 }
-fn parse_elm_syntax_let_destructuring(
+fn parse_elm_syntax_let_destructuring_node(
     state: &mut ParseState,
 ) -> Option<ElmSyntaxNode<ElmSyntaxLetDeclaration>> {
     let pattern_node: ElmSyntaxNode<ElmSyntaxPattern> =
@@ -12983,30 +13128,66 @@ fn parse_elm_syntax_let_destructuring(
         }
     })
 }
-fn parse_elm_syntax_let_variable_declaration(
+fn parse_elm_syntax_let_variable_declaration_node(
     state: &mut ParseState,
 ) -> Option<ElmSyntaxNode<ElmSyntaxLetDeclaration>> {
     let start_name_node: ElmSyntaxNode<String> = parse_elm_lowercase_as_node(state)?;
     parse_elm_whitespace_and_comments(state);
-    let maybe_signature: Option<ElmSyntaxVariableDeclarationSignature> =
-        parse_symbol_as_range(state, ":").map(|colon_key_symbol_range| {
+    match parse_symbol_as_range(state, ":") {
+        None => parse_elm_syntax_let_variable_declaration_node_after_maybe_signature_and_name(
+            state,
+            start_name_node,
+            None,
+        ),
+        Some(colon_key_symbol_range) => {
             parse_elm_whitespace_and_comments(state);
             let maybe_type: Option<ElmSyntaxNode<ElmSyntaxType>> =
                 parse_elm_syntax_type_space_separated_node(state);
             parse_elm_whitespace_and_comments(state);
-            let maybe_implementation_name_range: Option<lsp_types::Range> =
-                if state.position.character < state.indent as u32 {
-                    None
-                } else {
-                    parse_symbol_as_range(state, &start_name_node.value)
-                };
-            parse_elm_whitespace_and_comments(state);
-            ElmSyntaxVariableDeclarationSignature {
-                colon_key_symbol_range: colon_key_symbol_range,
-                type_: maybe_type,
-                implementation_name_range: maybe_implementation_name_range,
+            match parse_symbol_as_range(state, &start_name_node.value) {
+                None => {
+                    return Some(ElmSyntaxNode {
+                        range: lsp_types::Range {
+                            start: start_name_node.range.start,
+                            end: maybe_type
+                                .as_ref()
+                                .map(|node| node.range.end)
+                                .unwrap_or_else(|| colon_key_symbol_range.end),
+                        },
+                        value: ElmSyntaxLetDeclaration::VariableDeclaration {
+                            start_name: start_name_node,
+                            signature: Some(ElmSyntaxVariableDeclarationSignature {
+                                colon_key_symbol_range: colon_key_symbol_range,
+                                type_: maybe_type,
+                                implementation_name_range: None,
+                            }),
+                            parameters: vec![],
+                            equals_key_symbol_range: None,
+                            result: None,
+                        },
+                    });
+                }
+                Some(implementation_name_range) => {
+                    parse_elm_whitespace_and_comments(state);
+                    parse_elm_syntax_let_variable_declaration_node_after_maybe_signature_and_name(
+                        state,
+                        start_name_node,
+                        Some(ElmSyntaxVariableDeclarationSignature {
+                            colon_key_symbol_range: colon_key_symbol_range,
+                            type_: maybe_type,
+                            implementation_name_range: Some(implementation_name_range),
+                        }),
+                    )
+                }
             }
-        });
+        }
+    }
+}
+fn parse_elm_syntax_let_variable_declaration_node_after_maybe_signature_and_name(
+    state: &mut ParseState,
+    start_name_node: ElmSyntaxNode<String>,
+    maybe_signature: Option<ElmSyntaxVariableDeclarationSignature>,
+) -> Option<ElmSyntaxNode<ElmSyntaxLetDeclaration>> {
     let mut syntax_before_equals_key_symbol_end_location: lsp_types::Position =
         match maybe_signature {
             Some(ref signature) => signature
@@ -13025,7 +13206,11 @@ fn parse_elm_syntax_let_variable_declaration(
     let maybe_equals_key_symbol_range: Option<lsp_types::Range> = parse_symbol_as_range(state, "=");
     parse_elm_whitespace_and_comments(state);
     let maybe_result: Option<ElmSyntaxNode<ElmSyntaxExpression>> =
-        parse_elm_syntax_expression_space_separated_node(state);
+        if state.position.character <= state.indent as u32 {
+            None
+        } else {
+            parse_elm_syntax_expression_space_separated_node(state)
+        };
     Some(ElmSyntaxNode {
         range: lsp_types::Range {
             start: start_name_node.range.start,

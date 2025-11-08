@@ -40,9 +40,6 @@ Works with [`elm-format`, install it](https://github.com/avh4/elm-format?tab=rea
 - add support for using [elm-dev](https://github.com/mdgriffith/elm-dev) as the compiler to speed up compile times and retrieve type info (I assume integrating it is hard and to me it seems kind of bloated with MCP bs etc, currently leaning towards no)
 - your idea 👀
 
-## TODO
-- do not support goto definition on let declaration name
-
 ## known limitations
 - when moving a module into an existing project, no syntax highlighting will be shown before you interact with the file, as semantic tokens are requested before the "did change watched files" notification is sent.
   A band-aid fix would be pre-maturely assuming that requesting semantic tokens on an unknown file means that that file should be added to a project. This would however potentially lead to duplicate parsing etc.
