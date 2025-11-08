@@ -47,8 +47,8 @@ Works with [`elm-format`](https://github.com/avh4/elm-format?tab=readme-ov-file#
 
 ## editor setups
 feel free to contribute, as I only use vscodium
-#### vs code-like
-vs code (and forks) appear to have no built-in language server bridge so you first need to install an extension like [vscode-generic-lsp-proxy](https://github.com/mjmorales/vscode-generic-lsp-proxy).
+#### vscode-like
+There is no built-in language server bridge as far as I know so you first need to install an extension like [vscode-generic-lsp-proxy](https://github.com/mjmorales/vscode-generic-lsp-proxy).
 Then add a `.vscode/lsp-proxy.json` like
 ```json
 [
