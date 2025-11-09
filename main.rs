@@ -93,6 +93,13 @@ async fn main() {
                 }
             },
         );
+        router.request::<lsp_types::request::References, _>(
+            |state, reference_arguments: lsp_types::ReferenceParams| {
+                let maybe_reference_use_ranges: Option<Vec<lsp_types::Location>> =
+                    respond_to_references(state, reference_arguments);
+                async move { Ok(maybe_reference_use_ranges) }
+            },
+        );
         router.request::<lsp_types::request::SemanticTokensFullRequest, _>(
             |state, semantic_tokens_arguments: lsp_types::SemanticTokensParams| {
                 let semantic_tokens: Option<lsp_types::SemanticTokensResult> =
@@ -323,6 +330,7 @@ fn server_capabilities() -> lsp_types::ServerCapabilities {
                 work_done_progress: None,
             },
         })),
+        references_provider: Some(lsp_types::OneOf::Left(true)),
         completion_provider: Some(lsp_types::CompletionOptions {
             resolve_provider: Some(false),
             trigger_characters: Some(vec![".".to_string()]),
@@ -2326,14 +2334,16 @@ fn local_binding_info_markdown(
             format!("variable bound to a field, introduced in a pattern")
         }
         LocalBindingOrigin::LetDeclaredVariable {
-            signature_type: maybe_signature_type,
+            signature: maybe_signature,
             start_name_range: _,
         } => let_declaration_info_markdown(
             state,
             project_state,
             module_syntax,
             binding_name,
-            maybe_signature_type,
+            maybe_signature
+                .and_then(|signature| signature.type_.as_ref())
+                .map(|node| &node.value),
         ),
     }
 }
@@ -2697,7 +2707,7 @@ fn respond_to_goto_definition(
                             LocalBindingOrigin::PatternVariable(range) => range,
                             LocalBindingOrigin::PatternRecordField(range) => range,
                             LocalBindingOrigin::LetDeclaredVariable {
-                                signature_type: _,
+                                signature: _,
                                 start_name_range,
                             } => start_name_range,
                         },
@@ -3049,7 +3059,7 @@ fn respond_to_rename(
                 state,
                 to_rename_project_module_state.project,
                 &to_rename_project_module_state.module.syntax,
-                ElmDeclaredSymbol::ImportAlias {
+                ElmSymbolToReference::ImportAlias {
                     module_origin: import_alias_to_rename_module_origin,
                     alias_name: import_alias_to_rename,
                 },
@@ -3091,7 +3101,7 @@ fn respond_to_rename(
                     &to_rename_project_module_state.module.syntax,
                 ),
                 scope_declaration,
-                ElmDeclaredSymbol::TypeVariable(type_variable_to_rename),
+                ElmSymbolToReference::TypeVariable(type_variable_to_rename),
             );
             vec![lsp_types::TextDocumentEdit {
                 text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
@@ -3121,7 +3131,7 @@ fn respond_to_rename(
                     state,
                     to_rename_project_module_state.project,
                     &elm_module_state.syntax,
-                    ElmDeclaredSymbol::ModuleName(module_name_to_rename),
+                    ElmSymbolToReference::ModuleName(module_name_to_rename),
                 );
                 Some(lsp_types::TextDocumentEdit {
                     text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
@@ -3157,7 +3167,7 @@ fn respond_to_rename(
                 .and_then(|header| header.module_name.as_ref())
                 .map(|node| node.value.as_str())
                 .unwrap_or("");
-            let elm_declared_symbol_to_rename: ElmDeclaredSymbol = if to_rename_declaration_name
+            let elm_declared_symbol_to_rename: ElmSymbolToReference = if to_rename_declaration_name
                 .starts_with(char::is_uppercase)
             {
                 let to_rename_is_record_type_alias: bool = to_rename_project_module_state
@@ -3184,20 +3194,23 @@ fn respond_to_rename(
                         )
                     });
                 if to_rename_is_record_type_alias {
-                    ElmDeclaredSymbol::RecordTypeAlias {
+                    ElmSymbolToReference::RecordTypeAlias {
                         module_origin: to_rename_module_origin,
                         name: to_rename_declaration_name,
+                        including_declaration_name: true,
                     }
                 } else {
-                    ElmDeclaredSymbol::TypeNotRecordAlias {
+                    ElmSymbolToReference::TypeNotRecordAlias {
                         module_origin: to_rename_module_origin,
                         name: to_rename_declaration_name,
+                        including_declaration_name: true,
                     }
                 }
             } else {
-                ElmDeclaredSymbol::VariableOrVariant {
+                ElmSymbolToReference::VariableOrVariant {
                     module_origin: to_rename_module_origin,
                     name: to_rename_declaration_name,
+                    including_declaration_name: true,
                 }
             };
             state_iter_all_modules(state)
@@ -3235,7 +3248,7 @@ fn respond_to_rename(
             name: to_rename_import_expose_name,
             all_exposes: _,
         } => {
-            let elm_declared_symbol_to_rename: ElmDeclaredSymbol =
+            let elm_declared_symbol_to_rename: ElmSymbolToReference =
                 if to_rename_import_expose_name.starts_with(char::is_uppercase) {
                     let to_rename_is_record_type_alias: bool = to_rename_project_module_state
                         .module
@@ -3262,20 +3275,23 @@ fn respond_to_rename(
                             )
                         });
                     if to_rename_is_record_type_alias {
-                        ElmDeclaredSymbol::RecordTypeAlias {
+                        ElmSymbolToReference::RecordTypeAlias {
                             module_origin: to_rename_import_expose_origin_module,
                             name: to_rename_import_expose_name,
+                            including_declaration_name: true,
                         }
                     } else {
-                        ElmDeclaredSymbol::TypeNotRecordAlias {
+                        ElmSymbolToReference::TypeNotRecordAlias {
                             module_origin: to_rename_import_expose_origin_module,
                             name: to_rename_import_expose_name,
+                            including_declaration_name: true,
                         }
                     }
                 } else {
-                    ElmDeclaredSymbol::VariableOrVariant {
+                    ElmSymbolToReference::VariableOrVariant {
                         module_origin: to_rename_import_expose_origin_module,
                         name: to_rename_import_expose_name,
+                        including_declaration_name: true,
                     }
                 };
             state_iter_all_modules(state)
@@ -3311,7 +3327,7 @@ fn respond_to_rename(
         ElmSyntaxSymbol::LetDeclarationName {
             name: to_rename_name,
             start_name_range,
-            signature_type: maybe_signature_type,
+            signature_type: _,
             scope_expression,
         } => {
             let mut all_uses_of_local_binding_to_rename: Vec<lsp_types::Range> = Vec::new();
@@ -3325,12 +3341,15 @@ fn respond_to_rename(
                 &[ElmLocalBinding {
                     name: to_rename_name,
                     origin: LocalBindingOrigin::LetDeclaredVariable {
-                        signature_type: maybe_signature_type,
+                        signature: None, // irrelevant fir finding uses
                         start_name_range: start_name_range,
                     },
                 }],
                 scope_expression,
-                ElmDeclaredSymbol::LocalBinding(to_rename_name),
+                ElmSymbolToReference::LocalBinding {
+                    name: to_rename_name,
+                    including_let_declaration_name: true,
+                },
             );
             vec![lsp_types::TextDocumentEdit {
                 text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
@@ -3372,7 +3391,10 @@ fn respond_to_rename(
                         origin: to_rename_local_binding_origin,
                     }],
                     local_binding_to_rename_scope_expression,
-                    ElmDeclaredSymbol::LocalBinding(to_rename_name),
+                    ElmSymbolToReference::LocalBinding {
+                        name: to_rename_name,
+                        including_let_declaration_name: true,
+                    },
                 );
                 match to_rename_local_binding_origin {
                     LocalBindingOrigin::PatternVariable(range) => {
@@ -3410,6 +3432,44 @@ fn respond_to_rename(
                     to_rename_qualification,
                     to_rename_name,
                 );
+                let to_rename_is_record_type_alias: bool = project_state_get_module_with_name(
+                    state,
+                    to_rename_project_module_state.project,
+                    to_rename_module_origin,
+                )
+                .is_some_and(|(_, to_find_origin_module_state)| {
+                    to_find_origin_module_state.syntax.declarations.iter().any(
+                        |documented_declaration| {
+                            documented_declaration.declaration.as_ref().is_some_and(
+                                |declaration_node| match &declaration_node.value {
+                                    ElmSyntaxDeclaration::TypeAlias {
+                                        type_:
+                                            Some(ElmSyntaxNode {
+                                                value: ElmSyntaxType::Record(_),
+                                                range: _,
+                                            }),
+                                        name: Some(record_type_alias_name_node),
+                                        ..
+                                    } => record_type_alias_name_node.value == to_rename_name,
+                                    _ => false,
+                                },
+                            )
+                        },
+                    )
+                });
+                let symbol_to_find: ElmSymbolToReference = if to_rename_is_record_type_alias {
+                    ElmSymbolToReference::RecordTypeAlias {
+                        module_origin: to_rename_module_origin,
+                        name: to_rename_name,
+                        including_declaration_name: true,
+                    }
+                } else {
+                    ElmSymbolToReference::VariableOrVariant {
+                        module_origin: to_rename_module_origin,
+                        name: to_rename_name,
+                        including_declaration_name: true,
+                    }
+                };
                 state_iter_all_modules(state)
                     .filter_map(|project_module| {
                         let mut all_uses_of_renamed_module_name: Vec<lsp_types::Range> = Vec::new();
@@ -3418,10 +3478,7 @@ fn respond_to_rename(
                             state,
                             project_module.project_state,
                             &project_module.module_state.syntax,
-                            ElmDeclaredSymbol::VariableOrVariant {
-                                module_origin: to_rename_module_origin,
-                                name: to_rename_name,
-                            },
+                            symbol_to_find,
                         );
                         let elm_module_uri: lsp_types::Url =
                             lsp_types::Url::from_file_path(project_module.module_path).ok()?;
@@ -3483,18 +3540,20 @@ fn respond_to_rename(
                         },
                     )
                 });
-            let elm_declared_symbol_to_rename: ElmDeclaredSymbol = if to_rename_is_record_type_alias
-            {
-                ElmDeclaredSymbol::RecordTypeAlias {
-                    module_origin: to_rename_module_origin,
-                    name: type_name_to_rename,
-                }
-            } else {
-                ElmDeclaredSymbol::TypeNotRecordAlias {
-                    module_origin: to_rename_module_origin,
-                    name: type_name_to_rename,
-                }
-            };
+            let elm_declared_symbol_to_rename: ElmSymbolToReference =
+                if to_rename_is_record_type_alias {
+                    ElmSymbolToReference::RecordTypeAlias {
+                        module_origin: to_rename_module_origin,
+                        name: type_name_to_rename,
+                        including_declaration_name: true,
+                    }
+                } else {
+                    ElmSymbolToReference::TypeNotRecordAlias {
+                        module_origin: to_rename_module_origin,
+                        name: type_name_to_rename,
+                        including_declaration_name: true,
+                    }
+                };
             state_iter_all_modules(state)
                 .filter_map(|project_module| {
                     let mut all_uses_of_renamed_module_name: Vec<lsp_types::Range> = Vec::new();
@@ -3505,23 +3564,673 @@ fn respond_to_rename(
                         &project_module.module_state.syntax,
                         elm_declared_symbol_to_rename,
                     );
-                    lsp_types::Url::from_file_path(project_module.module_path)
-                        .ok()
-                        .map(|elm_module_uri| lsp_types::TextDocumentEdit {
-                            text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
-                                uri: elm_module_uri,
-                                version: None,
-                            },
-                            edits: all_uses_of_renamed_module_name
-                                .into_iter()
-                                .map(|use_range_of_renamed_module| {
-                                    lsp_types::OneOf::Left(lsp_types::TextEdit {
-                                        range: use_range_of_renamed_module,
-                                        new_text: rename_arguments.new_name.clone(),
-                                    })
+                    let elm_module_uri: lsp_types::Url =
+                        lsp_types::Url::from_file_path(project_module.module_path).ok()?;
+                    Some(lsp_types::TextDocumentEdit {
+                        text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
+                            uri: elm_module_uri,
+                            version: None,
+                        },
+                        edits: all_uses_of_renamed_module_name
+                            .into_iter()
+                            .map(|use_range_of_renamed_module| {
+                                lsp_types::OneOf::Left(lsp_types::TextEdit {
+                                    range: use_range_of_renamed_module,
+                                    new_text: rename_arguments.new_name.clone(),
                                 })
-                                .collect::<Vec<_>>(),
+                            })
+                            .collect::<Vec<_>>(),
+                    })
+                })
+                .collect::<Vec<_>>()
+        }
+    })
+}
+fn respond_to_references(
+    state: &State,
+    reference_arguments: lsp_types::ReferenceParams,
+) -> Option<Vec<lsp_types::Location>> {
+    let to_find_project_module_state = state_get_project_module_by_lsp_url(
+        state,
+        &reference_arguments.text_document_position.text_document.uri,
+    )?;
+    let symbol_to_find_node: ElmSyntaxNode<ElmSyntaxSymbol> =
+        elm_syntax_module_find_symbol_at_position(
+            &to_find_project_module_state.module.syntax,
+            reference_arguments.text_document_position.position,
+        )?;
+    Some(match symbol_to_find_node.value {
+        ElmSyntaxSymbol::ImportAlias {
+            module_origin: import_alias_to_find_module_origin,
+            alias_name: import_alias_to_find,
+        } => {
+            let mut all_uses_of_found_module_name: Vec<lsp_types::Range> =
+                if reference_arguments.context.include_declaration {
+                    vec![symbol_to_find_node.range] // the alias on the import itself
+                } else {
+                    Vec::new()
+                };
+            let symbol_to_find: ElmSymbolToReference = ElmSymbolToReference::ImportAlias {
+                module_origin: import_alias_to_find_module_origin,
+                alias_name: import_alias_to_find,
+            };
+            let module_origin_lookup: ModuleOriginLookup = elm_syntax_module_create_origin_lookup(
+                state,
+                to_find_project_module_state.project,
+                &to_find_project_module_state.module.syntax,
+            );
+            let to_find_module_name: &str = to_find_project_module_state
+                .module
+                .syntax
+                .header
+                .as_ref()
+                .and_then(|header| header.module_name.as_ref())
+                .map(|node| node.value.as_str())
+                .unwrap_or("");
+            for documented_declaration in &to_find_project_module_state.module.syntax.declarations {
+                if let Some(declaration_node) = &documented_declaration.declaration {
+                    elm_syntax_declaration_uses_of_reference_into(
+                        &mut all_uses_of_found_module_name,
+                        to_find_module_name,
+                        &module_origin_lookup,
+                        &declaration_node.value,
+                        symbol_to_find,
+                    );
+                }
+            }
+            all_uses_of_found_module_name
+                .into_iter()
+                .map(|use_range_of_found_module| lsp_types::Location {
+                    uri: reference_arguments
+                        .text_document_position
+                        .text_document
+                        .uri
+                        .clone(),
+                    range: use_range_of_found_module,
+                })
+                .collect::<Vec<_>>()
+        }
+        ElmSyntaxSymbol::TypeVariable {
+            scope_declaration,
+            name: type_variable_to_find,
+        } => {
+            let mut all_uses_of_found_module_name: Vec<lsp_types::Range> = Vec::new();
+            elm_syntax_declaration_uses_of_reference_into(
+                &mut all_uses_of_found_module_name,
+                to_find_project_module_state
+                    .module
+                    .syntax
+                    .header
+                    .as_ref()
+                    .and_then(|header| header.module_name.as_ref())
+                    .map(|node| node.value.as_str())
+                    .unwrap_or(""),
+                &elm_syntax_module_create_origin_lookup(
+                    state,
+                    to_find_project_module_state.project,
+                    &to_find_project_module_state.module.syntax,
+                ),
+                scope_declaration,
+                ElmSymbolToReference::TypeVariable(type_variable_to_find),
+            );
+            all_uses_of_found_module_name
+                .into_iter()
+                .map(|use_range_of_found_module| lsp_types::Location {
+                    uri: reference_arguments
+                        .text_document_position
+                        .text_document
+                        .uri
+                        .clone(),
+                    range: use_range_of_found_module,
+                })
+                .collect::<Vec<_>>()
+        }
+        ElmSyntaxSymbol::ModuleName(module_name_to_find) => to_find_project_module_state
+            .project
+            .modules
+            .iter()
+            .filter(|(_, project_module)| {
+                if reference_arguments.context.include_declaration
+                    && let Some(project_module_header) = project_module.syntax.header.as_ref()
+                    && let Some(project_module_name_node) =
+                        project_module_header.module_name.as_ref()
+                {
+                    &project_module_name_node.value != module_name_to_find
+                } else {
+                    true
+                }
+            })
+            .flat_map(|(elm_module_file_path, elm_module_state)| {
+                let mut all_uses_of_found_module_name: Vec<lsp_types::Range> = Vec::new();
+                elm_syntax_module_uses_of_reference_into(
+                    &mut all_uses_of_found_module_name,
+                    state,
+                    to_find_project_module_state.project,
+                    &elm_module_state.syntax,
+                    ElmSymbolToReference::ModuleName(module_name_to_find),
+                );
+                lsp_types::Url::from_file_path(elm_module_file_path)
+                    .ok()
+                    .map(|elm_module_uri| {
+                        all_uses_of_found_module_name.into_iter().map(
+                            move |use_range_of_found_module| lsp_types::Location {
+                                uri: elm_module_uri.clone(),
+                                range: use_range_of_found_module,
+                            },
+                        )
+                    })
+                    .into_iter()
+                    .flatten()
+            })
+            .collect::<Vec<_>>(),
+        ElmSyntaxSymbol::ModuleHeaderExpose {
+            name: to_find_name,
+            all_exposes: _,
+        } => {
+            let to_find_module_origin: &str = to_find_project_module_state
+                .module
+                .syntax
+                .header
+                .as_ref()
+                .and_then(|header| header.module_name.as_ref())
+                .map(|node| node.value.as_str())
+                .unwrap_or("");
+            let elm_declared_symbol_to_find: ElmSymbolToReference = if to_find_name
+                .starts_with(char::is_uppercase)
+            {
+                let to_find_is_record_type_alias: bool = to_find_project_module_state
+                    .module
+                    .syntax
+                    .declarations
+                    .iter()
+                    .any(|documented_declaration| {
+                        documented_declaration.declaration.as_ref().is_some_and(
+                            |declaration_node| match &declaration_node.value {
+                                ElmSyntaxDeclaration::TypeAlias {
+                                    type_:
+                                        Some(ElmSyntaxNode {
+                                            value: ElmSyntaxType::Record(_),
+                                            range: _,
+                                        }),
+                                    name: Some(record_type_alias_name_node),
+                                    ..
+                                } => record_type_alias_name_node.value == to_find_name,
+                                _ => false,
+                            },
+                        )
+                    });
+                if to_find_is_record_type_alias {
+                    ElmSymbolToReference::RecordTypeAlias {
+                        module_origin: to_find_module_origin,
+                        name: to_find_name,
+                        including_declaration_name: reference_arguments.context.include_declaration,
+                    }
+                } else {
+                    ElmSymbolToReference::TypeNotRecordAlias {
+                        module_origin: to_find_module_origin,
+                        name: to_find_name,
+                        including_declaration_name: reference_arguments.context.include_declaration,
+                    }
+                }
+            } else {
+                ElmSymbolToReference::VariableOrVariant {
+                    module_origin: to_find_module_origin,
+                    name: to_find_name,
+                    including_declaration_name: reference_arguments.context.include_declaration,
+                }
+            };
+            to_find_project_module_state
+                .project
+                .modules
+                .iter()
+                .flat_map(move |(project_module_path, project_module_state)| {
+                    lsp_types::Url::from_file_path(project_module_path)
+                        .ok()
+                        .map(|elm_module_uri| {
+                            let mut all_uses_of_found_module_name: Vec<lsp_types::Range> =
+                                Vec::new();
+                            elm_syntax_module_uses_of_reference_into(
+                                &mut all_uses_of_found_module_name,
+                                state,
+                                to_find_project_module_state.project,
+                                &project_module_state.syntax,
+                                elm_declared_symbol_to_find,
+                            );
+                            all_uses_of_found_module_name.into_iter().map(
+                                move |use_range_of_found_module| lsp_types::Location {
+                                    uri: elm_module_uri.clone(),
+                                    range: use_range_of_found_module,
+                                },
+                            )
                         })
+                        .into_iter()
+                        .flatten()
+                })
+                .collect::<Vec<_>>()
+        }
+        ElmSyntaxSymbol::ModuleMemberDeclarationName {
+            name: to_find_name,
+            documentation: _,
+            declaration: _,
+        } => {
+            let to_find_module_origin: &str = to_find_project_module_state
+                .module
+                .syntax
+                .header
+                .as_ref()
+                .and_then(|header| header.module_name.as_ref())
+                .map(|node| node.value.as_str())
+                .unwrap_or("");
+            let elm_declared_symbol_to_find: ElmSymbolToReference = if to_find_name
+                .starts_with(char::is_uppercase)
+            {
+                let to_find_is_record_type_alias: bool = to_find_project_module_state
+                    .module
+                    .syntax
+                    .declarations
+                    .iter()
+                    .any(|documented_declaration| {
+                        documented_declaration.declaration.as_ref().is_some_and(
+                            |declaration_node| match &declaration_node.value {
+                                ElmSyntaxDeclaration::TypeAlias {
+                                    type_:
+                                        Some(ElmSyntaxNode {
+                                            value: ElmSyntaxType::Record(_),
+                                            range: _,
+                                        }),
+                                    name: Some(record_type_alias_name_node),
+                                    ..
+                                } => record_type_alias_name_node.value == to_find_name,
+                                _ => false,
+                            },
+                        )
+                    });
+                if to_find_is_record_type_alias {
+                    ElmSymbolToReference::RecordTypeAlias {
+                        module_origin: to_find_module_origin,
+                        name: to_find_name,
+                        including_declaration_name: reference_arguments.context.include_declaration,
+                    }
+                } else {
+                    ElmSymbolToReference::TypeNotRecordAlias {
+                        module_origin: to_find_module_origin,
+                        name: to_find_name,
+                        including_declaration_name: reference_arguments.context.include_declaration,
+                    }
+                }
+            } else {
+                ElmSymbolToReference::VariableOrVariant {
+                    module_origin: to_find_module_origin,
+                    name: to_find_name,
+                    including_declaration_name: reference_arguments.context.include_declaration,
+                }
+            };
+            to_find_project_module_state
+                .project
+                .modules
+                .iter()
+                .flat_map(move |(project_module_path, project_module_state)| {
+                    let mut all_uses_of_found_module_name: Vec<lsp_types::Range> = Vec::new();
+                    elm_syntax_module_uses_of_reference_into(
+                        &mut all_uses_of_found_module_name,
+                        state,
+                        to_find_project_module_state.project,
+                        &project_module_state.syntax,
+                        elm_declared_symbol_to_find,
+                    );
+                    lsp_types::Url::from_file_path(project_module_path)
+                        .ok()
+                        .map(|elm_module_uri| {
+                            all_uses_of_found_module_name.into_iter().map(
+                                move |use_range_of_found_module| lsp_types::Location {
+                                    uri: elm_module_uri.clone(),
+                                    range: use_range_of_found_module,
+                                },
+                            )
+                        })
+                        .into_iter()
+                        .flatten()
+                })
+                .collect::<Vec<_>>()
+        }
+        ElmSyntaxSymbol::ImportExpose {
+            origin_module: to_find_import_expose_origin_module,
+            name: to_find_import_expose_name,
+            all_exposes: _,
+        } => {
+            let elm_declared_symbol_to_find: ElmSymbolToReference = if to_find_import_expose_name
+                .starts_with(char::is_uppercase)
+            {
+                let to_find_is_record_type_alias: bool = to_find_project_module_state
+                    .module
+                    .syntax
+                    .declarations
+                    .iter()
+                    .any(|documented_declaration| {
+                        documented_declaration.declaration.as_ref().is_some_and(
+                            |declaration_node| match &declaration_node.value {
+                                ElmSyntaxDeclaration::TypeAlias {
+                                    type_:
+                                        Some(ElmSyntaxNode {
+                                            value: ElmSyntaxType::Record(_),
+                                            range: _,
+                                        }),
+                                    name: Some(record_type_alias_name_node),
+                                    ..
+                                } => {
+                                    record_type_alias_name_node.value == to_find_import_expose_name
+                                }
+                                _ => false,
+                            },
+                        )
+                    });
+                if to_find_is_record_type_alias {
+                    ElmSymbolToReference::RecordTypeAlias {
+                        module_origin: to_find_import_expose_origin_module,
+                        name: to_find_import_expose_name,
+                        including_declaration_name: reference_arguments.context.include_declaration,
+                    }
+                } else {
+                    ElmSymbolToReference::TypeNotRecordAlias {
+                        module_origin: to_find_import_expose_origin_module,
+                        name: to_find_import_expose_name,
+                        including_declaration_name: reference_arguments.context.include_declaration,
+                    }
+                }
+            } else {
+                ElmSymbolToReference::VariableOrVariant {
+                    module_origin: to_find_import_expose_origin_module,
+                    name: to_find_import_expose_name,
+                    including_declaration_name: reference_arguments.context.include_declaration,
+                }
+            };
+            to_find_project_module_state
+                .project
+                .modules
+                .iter()
+                .flat_map(|(project_module_path, project_module_state)| {
+                    let mut all_uses_of_found_module_name: Vec<lsp_types::Range> = Vec::new();
+                    elm_syntax_module_uses_of_reference_into(
+                        &mut all_uses_of_found_module_name,
+                        state,
+                        to_find_project_module_state.project,
+                        &project_module_state.syntax,
+                        elm_declared_symbol_to_find,
+                    );
+                    lsp_types::Url::from_file_path(project_module_path)
+                        .ok()
+                        .map(|elm_module_uri| {
+                            all_uses_of_found_module_name.into_iter().map(
+                                move |use_range_of_found_module| lsp_types::Location {
+                                    uri: elm_module_uri.clone(),
+                                    range: use_range_of_found_module,
+                                },
+                            )
+                        })
+                        .into_iter()
+                        .flatten()
+                })
+                .chain(
+                    (if reference_arguments.context.include_declaration {
+                        Some(lsp_types::Location {
+                            uri: reference_arguments.text_document_position.text_document.uri,
+                            range: symbol_to_find_node.range,
+                        })
+                    } else {
+                        None
+                    })
+                    .into_iter(),
+                )
+                .collect::<Vec<_>>()
+        }
+        ElmSyntaxSymbol::LetDeclarationName {
+            name: to_find_name,
+            start_name_range,
+            signature_type: _,
+            scope_expression,
+        } => {
+            let mut all_uses_of_local_binding_to_find: Vec<lsp_types::Range> = Vec::new();
+            elm_syntax_expression_uses_of_reference_into(
+                &mut all_uses_of_local_binding_to_find,
+                &elm_syntax_module_create_origin_lookup(
+                    state,
+                    to_find_project_module_state.project,
+                    &to_find_project_module_state.module.syntax,
+                ),
+                &[ElmLocalBinding {
+                    name: to_find_name,
+                    origin: LocalBindingOrigin::LetDeclaredVariable {
+                        signature: None, // irrelevant for finding uses
+                        start_name_range: start_name_range,
+                    },
+                }],
+                scope_expression,
+                ElmSymbolToReference::LocalBinding {
+                    name: to_find_name,
+                    including_let_declaration_name: reference_arguments.context.include_declaration,
+                },
+            );
+            all_uses_of_local_binding_to_find
+                .into_iter()
+                .map(|use_range_of_found_module| lsp_types::Location {
+                    uri: reference_arguments
+                        .text_document_position
+                        .text_document
+                        .uri
+                        .clone(),
+                    range: use_range_of_found_module,
+                })
+                .collect::<Vec<_>>()
+        }
+        ElmSyntaxSymbol::VariableOrVariantOrOperator {
+            qualification: to_find_qualification,
+            name: to_find_name,
+            local_bindings,
+        } => {
+            if to_find_qualification.is_empty()
+                && let Some((to_find_local_binding_origin, local_binding_to_find_scope_expression)) =
+                    find_local_binding_scope_expression(&local_bindings, to_find_name)
+            {
+                let mut all_uses_of_local_binding_to_find: Vec<lsp_types::Range> = Vec::new();
+                elm_syntax_expression_uses_of_reference_into(
+                    &mut all_uses_of_local_binding_to_find,
+                    &elm_syntax_module_create_origin_lookup(
+                        state,
+                        to_find_project_module_state.project,
+                        &to_find_project_module_state.module.syntax,
+                    ),
+                    &[ElmLocalBinding {
+                        name: to_find_name,
+                        origin: to_find_local_binding_origin,
+                    }],
+                    local_binding_to_find_scope_expression,
+                    ElmSymbolToReference::LocalBinding {
+                        name: to_find_name,
+                        including_let_declaration_name: reference_arguments
+                            .context
+                            .include_declaration,
+                    },
+                );
+                if reference_arguments.context.include_declaration {
+                    match to_find_local_binding_origin {
+                        LocalBindingOrigin::PatternVariable(range) => {
+                            all_uses_of_local_binding_to_find.push(range)
+                        }
+                        LocalBindingOrigin::PatternRecordField(range) => {
+                            all_uses_of_local_binding_to_find.push(range)
+                        }
+                        LocalBindingOrigin::LetDeclaredVariable { .. } => {
+                            // already included in scope
+                        }
+                    }
+                }
+                all_uses_of_local_binding_to_find
+                    .into_iter()
+                    .map(|use_range_of_found_module| lsp_types::Location {
+                        uri: reference_arguments
+                            .text_document_position
+                            .text_document
+                            .uri
+                            .clone(),
+                        range: use_range_of_found_module,
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                let to_find_module_origin: &str = look_up_origin_module(
+                    &elm_syntax_module_create_origin_lookup(
+                        state,
+                        to_find_project_module_state.project,
+                        &to_find_project_module_state.module.syntax,
+                    ),
+                    to_find_qualification,
+                    to_find_name,
+                );
+                let to_find_is_record_type_alias: bool = project_state_get_module_with_name(
+                    state,
+                    to_find_project_module_state.project,
+                    to_find_module_origin,
+                )
+                .is_some_and(|(_, to_find_origin_module_state)| {
+                    to_find_origin_module_state.syntax.declarations.iter().any(
+                        |documented_declaration| {
+                            documented_declaration.declaration.as_ref().is_some_and(
+                                |declaration_node| match &declaration_node.value {
+                                    ElmSyntaxDeclaration::TypeAlias {
+                                        type_:
+                                            Some(ElmSyntaxNode {
+                                                value: ElmSyntaxType::Record(_),
+                                                range: _,
+                                            }),
+                                        name: Some(record_type_alias_name_node),
+                                        ..
+                                    } => record_type_alias_name_node.value == to_find_name,
+                                    _ => false,
+                                },
+                            )
+                        },
+                    )
+                });
+                let symbol_to_find: ElmSymbolToReference = if to_find_is_record_type_alias {
+                    ElmSymbolToReference::RecordTypeAlias {
+                        module_origin: to_find_module_origin,
+                        name: to_find_name,
+                        including_declaration_name: reference_arguments.context.include_declaration,
+                    }
+                } else {
+                    ElmSymbolToReference::VariableOrVariant {
+                        module_origin: to_find_module_origin,
+                        name: to_find_name,
+                        including_declaration_name: reference_arguments.context.include_declaration,
+                    }
+                };
+                to_find_project_module_state
+                    .project
+                    .modules
+                    .iter()
+                    .flat_map(|(project_module_path, project_module_state)| {
+                        let mut all_uses_of_found_module_name: Vec<lsp_types::Range> = Vec::new();
+                        elm_syntax_module_uses_of_reference_into(
+                            &mut all_uses_of_found_module_name,
+                            state,
+                            to_find_project_module_state.project,
+                            &project_module_state.syntax,
+                            symbol_to_find,
+                        );
+                        lsp_types::Url::from_file_path(project_module_path)
+                            .ok()
+                            .map(|elm_module_uri| {
+                                all_uses_of_found_module_name.into_iter().map(
+                                    move |use_range_of_found_module| lsp_types::Location {
+                                        uri: elm_module_uri.clone(),
+                                        range: use_range_of_found_module,
+                                    },
+                                )
+                            })
+                            .into_iter()
+                            .flatten()
+                    })
+                    .collect::<Vec<_>>()
+            }
+        }
+        ElmSyntaxSymbol::Type {
+            qualification: to_find_qualification,
+            name: type_name_to_find,
+        } => {
+            let to_find_module_origin: &str = look_up_origin_module(
+                &elm_syntax_module_create_origin_lookup(
+                    state,
+                    to_find_project_module_state.project,
+                    &to_find_project_module_state.module.syntax,
+                ),
+                to_find_qualification,
+                type_name_to_find,
+            );
+            let to_find_is_record_type_alias: bool = project_state_get_module_with_name(
+                state,
+                to_find_project_module_state.project,
+                to_find_module_origin,
+            )
+            .is_some_and(|(_, to_find_module_state)| {
+                to_find_module_state
+                    .syntax
+                    .declarations
+                    .iter()
+                    .any(|documented_declaration| {
+                        documented_declaration.declaration.as_ref().is_some_and(
+                            |declaration_node| match &declaration_node.value {
+                                ElmSyntaxDeclaration::TypeAlias {
+                                    type_:
+                                        Some(ElmSyntaxNode {
+                                            value: ElmSyntaxType::Record(_),
+                                            range: _,
+                                        }),
+                                    name: Some(record_type_alias_name_node),
+                                    ..
+                                } => record_type_alias_name_node.value == type_name_to_find,
+                                _ => false,
+                            },
+                        )
+                    })
+            });
+            let elm_declared_symbol_to_find: ElmSymbolToReference = if to_find_is_record_type_alias
+            {
+                ElmSymbolToReference::RecordTypeAlias {
+                    module_origin: to_find_module_origin,
+                    name: type_name_to_find,
+                    including_declaration_name: reference_arguments.context.include_declaration,
+                }
+            } else {
+                ElmSymbolToReference::TypeNotRecordAlias {
+                    module_origin: to_find_module_origin,
+                    name: type_name_to_find,
+                    including_declaration_name: reference_arguments.context.include_declaration,
+                }
+            };
+            to_find_project_module_state
+                .project
+                .modules
+                .iter()
+                .flat_map(|(project_module_path, project_module_state)| {
+                    let mut all_uses_of_found_module_name: Vec<lsp_types::Range> = Vec::new();
+                    elm_syntax_module_uses_of_reference_into(
+                        &mut all_uses_of_found_module_name,
+                        state,
+                        to_find_project_module_state.project,
+                        &project_module_state.syntax,
+                        elm_declared_symbol_to_find,
+                    );
+                    lsp_types::Url::from_file_path(project_module_path)
+                        .ok()
+                        .map(|elm_module_uri| {
+                            all_uses_of_found_module_name.into_iter().map(
+                                move |use_range_of_found_module| lsp_types::Location {
+                                    uri: elm_module_uri.clone(),
+                                    range: use_range_of_found_module,
+                                },
+                            )
+                        })
+                        .into_iter()
+                        .flatten()
                 })
                 .collect::<Vec<_>>()
         }
@@ -7547,7 +8256,7 @@ enum LocalBindingOrigin<'a> {
     PatternVariable(lsp_types::Range),
     PatternRecordField(lsp_types::Range),
     LetDeclaredVariable {
-        signature_type: Option<&'a ElmSyntaxType>,
+        signature: Option<&'a ElmSyntaxVariableDeclarationSignature>,
         start_name_range: lsp_types::Range,
     },
 }
@@ -8051,7 +8760,7 @@ fn elm_syntax_let_declaration_find_reference_at_position<'a>(
 
 // //
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum ElmDeclaredSymbol<'a> {
+enum ElmSymbolToReference<'a> {
     ModuleName(&'a str),
     ImportAlias {
         module_origin: &'a str,
@@ -8063,16 +8772,22 @@ enum ElmDeclaredSymbol<'a> {
     TypeNotRecordAlias {
         module_origin: &'a str,
         name: &'a str,
+        including_declaration_name: bool,
     },
     VariableOrVariant {
         module_origin: &'a str,
         name: &'a str,
+        including_declaration_name: bool,
     },
     RecordTypeAlias {
         module_origin: &'a str,
         name: &'a str,
+        including_declaration_name: bool,
     },
-    LocalBinding(&'a str),
+    LocalBinding {
+        name: &'a str,
+        including_let_declaration_name: bool,
+    },
 }
 
 fn elm_syntax_module_uses_of_reference_into(
@@ -8080,14 +8795,14 @@ fn elm_syntax_module_uses_of_reference_into(
     state: &State,
     project_state: &ProjectState,
     elm_syntax_module: &ElmSyntaxModule,
-    symbol_to_collect_uses_of: ElmDeclaredSymbol,
+    symbol_to_collect_uses_of: ElmSymbolToReference,
 ) {
     let maybe_self_module_name: Option<&ElmSyntaxNode<String>> = elm_syntax_module
         .header
         .as_ref()
         .and_then(|header| header.module_name.as_ref());
     if let Some(self_module_name_node) = maybe_self_module_name
-        && let ElmDeclaredSymbol::ModuleName(module_name_to_collect_uses_of) =
+        && let ElmSymbolToReference::ModuleName(module_name_to_collect_uses_of) =
             symbol_to_collect_uses_of
         && module_name_to_collect_uses_of == &self_module_name_node.value
     {
@@ -8096,18 +8811,21 @@ fn elm_syntax_module_uses_of_reference_into(
         return;
     }
     let symbol_to_collect_can_occur_here: bool = match symbol_to_collect_uses_of {
-        ElmDeclaredSymbol::ModuleName(module_origin_to_collect_uses_of)
-        | ElmDeclaredSymbol::RecordTypeAlias {
+        ElmSymbolToReference::ModuleName(module_origin_to_collect_uses_of)
+        | ElmSymbolToReference::RecordTypeAlias {
             module_origin: module_origin_to_collect_uses_of,
             name: _,
+            including_declaration_name: _,
         }
-        | ElmDeclaredSymbol::TypeNotRecordAlias {
+        | ElmSymbolToReference::TypeNotRecordAlias {
             module_origin: module_origin_to_collect_uses_of,
             name: _,
+            including_declaration_name: _,
         }
-        | ElmDeclaredSymbol::VariableOrVariant {
+        | ElmSymbolToReference::VariableOrVariant {
             module_origin: module_origin_to_collect_uses_of,
             name: _,
+            including_declaration_name: _,
         } => {
             Some(module_origin_to_collect_uses_of)
                 == maybe_self_module_name
@@ -8122,9 +8840,9 @@ fn elm_syntax_module_uses_of_reference_into(
                         == Some(module_origin_to_collect_uses_of)
                 })
         }
-        ElmDeclaredSymbol::ImportAlias { .. } => false,
-        ElmDeclaredSymbol::TypeVariable(_) => false,
-        ElmDeclaredSymbol::LocalBinding(_) => false,
+        ElmSymbolToReference::ImportAlias { .. } => false,
+        ElmSymbolToReference::TypeVariable(_) => false,
+        ElmSymbolToReference::LocalBinding { .. } => false,
     };
     if !symbol_to_collect_can_occur_here {
         // if not imported, that module name can never appear, so we can skip a bunch of
@@ -8170,7 +8888,7 @@ fn elm_syntax_module_uses_of_reference_into(
 fn elm_syntax_import_uses_of_reference_into(
     uses_so_far: &mut Vec<lsp_types::Range>,
     elm_syntax_import: &ElmSyntaxImport,
-    symbol_to_collect_uses_of: ElmDeclaredSymbol,
+    symbol_to_collect_uses_of: ElmSymbolToReference,
 ) {
     let import_module_name_node =
         if let Some(import_module_name_node) = &elm_syntax_import.module_name {
@@ -8178,12 +8896,13 @@ fn elm_syntax_import_uses_of_reference_into(
         } else {
             return;
         };
-    if let ElmDeclaredSymbol::ModuleName(module_name_to_collect_uses_of) = symbol_to_collect_uses_of
+    if let ElmSymbolToReference::ModuleName(module_name_to_collect_uses_of) =
+        symbol_to_collect_uses_of
     {
         if module_name_to_collect_uses_of == &import_module_name_node.value {
             uses_so_far.push(import_module_name_node.range);
         }
-    } else if let ElmDeclaredSymbol::ImportAlias {
+    } else if let ElmSymbolToReference::ImportAlias {
         module_origin: alias_to_collect_uses_of_origin,
         alias_name: alias_to_collect_uses_of_name,
     } = symbol_to_collect_uses_of
@@ -8211,7 +8930,7 @@ fn elm_syntax_exposing_specific_uses_of_reference_into(
     uses_so_far: &mut Vec<lsp_types::Range>,
     origin_module: &str,
     elm_syntax_exposing: &ElmSyntaxExposingSpecific,
-    symbol_to_collect_uses_of: ElmDeclaredSymbol,
+    symbol_to_collect_uses_of: ElmSymbolToReference,
 ) {
     match elm_syntax_exposing {
         ElmSyntaxExposingSpecific::All(_) => {}
@@ -8222,37 +8941,43 @@ fn elm_syntax_exposing_specific_uses_of_reference_into(
                         name,
                         open_range: _,
                     } => {
-                        if symbol_to_collect_uses_of
-                            == (ElmDeclaredSymbol::TypeNotRecordAlias {
-                                name: &name.value,
-                                module_origin: origin_module,
-                            })
+                        if let ElmSymbolToReference::TypeNotRecordAlias {
+                            name: symbol_name,
+                            module_origin: symbol_module_origin,
+                            including_declaration_name: _,
+                        } = symbol_to_collect_uses_of
+                            && symbol_name == &name.value
+                            && symbol_module_origin == origin_module
                         {
                             uses_so_far.push(name.range);
                         }
                     }
                     ElmSyntaxExpose::Operator(_) => {}
                     ElmSyntaxExpose::Type(name) => {
-                        if (symbol_to_collect_uses_of
-                            == (ElmDeclaredSymbol::TypeNotRecordAlias {
-                                name: name,
-                                module_origin: origin_module,
-                            }))
-                            || (symbol_to_collect_uses_of
-                                == (ElmDeclaredSymbol::RecordTypeAlias {
-                                    name: name,
-                                    module_origin: origin_module,
-                                }))
+                        if let ElmSymbolToReference::TypeNotRecordAlias {
+                            name: symbol_name,
+                            module_origin: symbol_module_origin,
+                            including_declaration_name: _,
+                        }
+                        | ElmSymbolToReference::RecordTypeAlias {
+                            name: symbol_name,
+                            module_origin: symbol_module_origin,
+                            including_declaration_name: _,
+                        } = symbol_to_collect_uses_of
+                            && symbol_name == name
+                            && symbol_module_origin == origin_module
                         {
                             uses_so_far.push(expose.range);
                         }
                     }
                     ElmSyntaxExpose::Variable(name) => {
-                        if symbol_to_collect_uses_of
-                            == (ElmDeclaredSymbol::VariableOrVariant {
-                                name: name,
-                                module_origin: origin_module,
-                            })
+                        if let ElmSymbolToReference::VariableOrVariant {
+                            name: symbol_name,
+                            module_origin: symbol_module_origin,
+                            including_declaration_name: _,
+                        } = symbol_to_collect_uses_of
+                            && symbol_name == name
+                            && symbol_module_origin == origin_module
                         {
                             uses_so_far.push(expose.range);
                         }
@@ -8268,7 +8993,7 @@ fn elm_syntax_declaration_uses_of_reference_into(
     origin_module: &str,
     module_origin_lookup: &ModuleOriginLookup,
     elm_syntax_declaration: &ElmSyntaxDeclaration,
-    symbol_to_collect_uses_of: ElmDeclaredSymbol,
+    symbol_to_collect_uses_of: ElmSymbolToReference,
 ) {
     match elm_syntax_declaration {
         ElmSyntaxDeclaration::ChoiceType {
@@ -8281,16 +9006,17 @@ fn elm_syntax_declaration_uses_of_reference_into(
         } => {
             if let Some(name_node) = maybe_name
                 && symbol_to_collect_uses_of
-                    == (ElmDeclaredSymbol::TypeNotRecordAlias {
+                    == (ElmSymbolToReference::TypeNotRecordAlias {
                         module_origin: origin_module,
                         name: &name_node.value,
+                        including_declaration_name: true,
                     })
             {
                 uses_so_far.push(name_node.range);
             }
             'parameter_traversal: for parameter_node in parameters {
                 if symbol_to_collect_uses_of
-                    == ElmDeclaredSymbol::TypeVariable(&parameter_node.value)
+                    == ElmSymbolToReference::TypeVariable(&parameter_node.value)
                 {
                     uses_so_far.push(parameter_node.range);
                     break 'parameter_traversal;
@@ -8298,9 +9024,10 @@ fn elm_syntax_declaration_uses_of_reference_into(
             }
             if let Some(variant0_name_node) = maybe_variant0_name
                 && symbol_to_collect_uses_of
-                    == (ElmDeclaredSymbol::VariableOrVariant {
+                    == (ElmSymbolToReference::VariableOrVariant {
                         name: &variant0_name_node.value,
                         module_origin: origin_module,
+                        including_declaration_name: true,
                     })
             {
                 uses_so_far.push(variant0_name_node.range);
@@ -8316,9 +9043,10 @@ fn elm_syntax_declaration_uses_of_reference_into(
             }
             for variant in variant1_up {
                 if let Some(variant_name_node) = &variant.name
-                    && (ElmDeclaredSymbol::VariableOrVariant {
+                    && (ElmSymbolToReference::VariableOrVariant {
                         name: &variant_name_node.value,
                         module_origin: origin_module,
+                        including_declaration_name: true,
                     }) == symbol_to_collect_uses_of
                 {
                     uses_so_far.push(variant_name_node.range);
@@ -8342,9 +9070,10 @@ fn elm_syntax_declaration_uses_of_reference_into(
         } => {
             if let Some(name_node) = maybe_name
                 && symbol_to_collect_uses_of
-                    == (ElmDeclaredSymbol::VariableOrVariant {
+                    == (ElmSymbolToReference::VariableOrVariant {
                         name: &name_node.value,
                         module_origin: origin_module,
+                        including_declaration_name: true,
                     })
             {
                 uses_so_far.push(name_node.range);
@@ -8367,21 +9096,23 @@ fn elm_syntax_declaration_uses_of_reference_into(
         } => {
             if let Some(name_node) = maybe_name
                 && ((symbol_to_collect_uses_of
-                    == (ElmDeclaredSymbol::TypeNotRecordAlias {
+                    == (ElmSymbolToReference::TypeNotRecordAlias {
                         name: &name_node.value,
                         module_origin: origin_module,
+                        including_declaration_name: true,
                     }))
                     || (symbol_to_collect_uses_of
-                        == (ElmDeclaredSymbol::RecordTypeAlias {
+                        == (ElmSymbolToReference::RecordTypeAlias {
                             name: &name_node.value,
                             module_origin: origin_module,
+                            including_declaration_name: true,
                         })))
             {
                 uses_so_far.push(name_node.range);
             }
             'parameter_traversal: for parameter_node in parameters {
                 if symbol_to_collect_uses_of
-                    == ElmDeclaredSymbol::TypeVariable(&parameter_node.value)
+                    == ElmSymbolToReference::TypeVariable(&parameter_node.value)
                 {
                     uses_so_far.push(parameter_node.range);
                     break 'parameter_traversal;
@@ -8404,9 +9135,10 @@ fn elm_syntax_declaration_uses_of_reference_into(
             result: maybe_result,
         } => {
             if symbol_to_collect_uses_of
-                == (ElmDeclaredSymbol::VariableOrVariant {
+                == (ElmSymbolToReference::VariableOrVariant {
                     name: &start_name_node.value,
                     module_origin: origin_module,
+                    including_declaration_name: true,
                 })
             {
                 uses_so_far.push(start_name_node.range);
@@ -8414,9 +9146,10 @@ fn elm_syntax_declaration_uses_of_reference_into(
             if let Some(signature) = maybe_signature {
                 if let Some(implementation_name_range) = signature.implementation_name_range
                     && symbol_to_collect_uses_of
-                        == (ElmDeclaredSymbol::VariableOrVariant {
+                        == (ElmSymbolToReference::VariableOrVariant {
                             name: &start_name_node.value,
                             module_origin: origin_module,
+                            including_declaration_name: true,
                         })
                 {
                     uses_so_far.push(implementation_name_range);
@@ -8462,28 +9195,30 @@ fn elm_syntax_type_uses_of_reference_into(
     uses_so_far: &mut Vec<lsp_types::Range>,
     module_origin_lookup: &ModuleOriginLookup,
     elm_syntax_type_node: ElmSyntaxNode<&ElmSyntaxType>,
-    symbol_to_collect_uses_of: ElmDeclaredSymbol,
+    symbol_to_collect_uses_of: ElmSymbolToReference,
 ) {
     match elm_syntax_type_node.value {
         ElmSyntaxType::Construct {
             reference,
             arguments,
         } => {
-            let module_origin = look_up_origin_module(
+            let module_origin: &str = look_up_origin_module(
                 module_origin_lookup,
                 &reference.value.qualification,
                 &reference.value.name,
             );
-            if (symbol_to_collect_uses_of
-                == (ElmDeclaredSymbol::TypeNotRecordAlias {
-                    module_origin: module_origin,
-                    name: &reference.value.name,
-                }))
-                || (symbol_to_collect_uses_of
-                    == (ElmDeclaredSymbol::RecordTypeAlias {
-                        module_origin: module_origin,
-                        name: &reference.value.name,
-                    }))
+            if let ElmSymbolToReference::TypeNotRecordAlias {
+                name: symbol_name,
+                module_origin: symbol_module_origin,
+                including_declaration_name: _,
+            }
+            | ElmSymbolToReference::RecordTypeAlias {
+                name: symbol_name,
+                module_origin: symbol_module_origin,
+                including_declaration_name: _,
+            } = symbol_to_collect_uses_of
+                && symbol_module_origin == module_origin
+                && symbol_name == &reference.value.name
             {
                 uses_so_far.push(lsp_types::Range {
                     start: lsp_position_add_characters(
@@ -8494,7 +9229,7 @@ fn elm_syntax_type_uses_of_reference_into(
                 });
             }
             if symbol_to_collect_uses_of
-                == (ElmDeclaredSymbol::ImportAlias {
+                == (ElmSymbolToReference::ImportAlias {
                     module_origin: module_origin,
                     alias_name: &reference.value.qualification,
                 })
@@ -8506,7 +9241,7 @@ fn elm_syntax_type_uses_of_reference_into(
                         reference.value.qualification.len() as i32,
                     ),
                 });
-            } else if (symbol_to_collect_uses_of == ElmDeclaredSymbol::ModuleName(module_origin))
+            } else if (symbol_to_collect_uses_of == ElmSymbolToReference::ModuleName(module_origin))
                 && (&reference.value.qualification == module_origin)
             {
                 uses_so_far.push(lsp_types::Range {
@@ -8573,7 +9308,7 @@ fn elm_syntax_type_uses_of_reference_into(
         } => {
             if let Some(record_variable_node) = maybe_record_variable
                 && symbol_to_collect_uses_of
-                    == ElmDeclaredSymbol::TypeVariable(&record_variable_node.value)
+                    == ElmSymbolToReference::TypeVariable(&record_variable_node.value)
             {
                 uses_so_far.push(record_variable_node.range);
             }
@@ -8641,7 +9376,7 @@ fn elm_syntax_type_uses_of_reference_into(
         }
         ElmSyntaxType::Unit => {}
         ElmSyntaxType::Variable(variable) => {
-            if symbol_to_collect_uses_of == ElmDeclaredSymbol::TypeVariable(variable) {
+            if symbol_to_collect_uses_of == ElmSymbolToReference::TypeVariable(variable) {
                 uses_so_far.push(elm_syntax_type_node.range);
             }
         }
@@ -8653,7 +9388,7 @@ fn elm_syntax_expression_uses_of_reference_into(
     module_origin_lookup: &ModuleOriginLookup,
     local_bindings: &[ElmLocalBinding],
     elm_syntax_expression_node: ElmSyntaxNode<&ElmSyntaxExpression>,
-    symbol_to_collect_uses_of: ElmDeclaredSymbol,
+    symbol_to_collect_uses_of: ElmSymbolToReference,
 ) {
     match elm_syntax_expression_node.value {
         ElmSyntaxExpression::Call {
@@ -8906,8 +9641,11 @@ fn elm_syntax_expression_uses_of_reference_into(
             fields,
         } => {
             if let Some(record_variable_node) = maybe_record_variable {
-                if symbol_to_collect_uses_of
-                    == ElmDeclaredSymbol::LocalBinding(&record_variable_node.value)
+                if let ElmSymbolToReference::LocalBinding {
+                    name: symbol_name,
+                    including_let_declaration_name: _,
+                } = symbol_to_collect_uses_of
+                    && symbol_name == &record_variable_node.value
                 {
                     if local_bindings
                         .iter()
@@ -8915,15 +9653,18 @@ fn elm_syntax_expression_uses_of_reference_into(
                     {
                         uses_so_far.push(record_variable_node.range);
                     }
-                } else if symbol_to_collect_uses_of
-                    == (ElmDeclaredSymbol::VariableOrVariant {
-                        module_origin: look_up_origin_module(
+                } else if let ElmSymbolToReference::VariableOrVariant {
+                    module_origin: symbol_module_origin,
+                    name: symbol_name,
+                    including_declaration_name: _,
+                } = symbol_to_collect_uses_of
+                    && symbol_module_origin
+                        == look_up_origin_module(
                             module_origin_lookup,
                             "",
                             &record_variable_node.value,
-                        ),
-                        name: &record_variable_node.value,
-                    })
+                        )
+                    && symbol_name == &record_variable_node.value
                 {
                     uses_so_far.push(record_variable_node.range);
                 }
@@ -8944,7 +9685,12 @@ fn elm_syntax_expression_uses_of_reference_into(
             qualification,
             name,
         } => {
-            if symbol_to_collect_uses_of == ElmDeclaredSymbol::LocalBinding(name) {
+            if let ElmSymbolToReference::LocalBinding {
+                name: symbol_name,
+                including_let_declaration_name: _,
+            } = symbol_to_collect_uses_of
+                && symbol_name == name
+            {
                 if qualification.is_empty()
                     && local_bindings
                         .iter()
@@ -8953,13 +9699,20 @@ fn elm_syntax_expression_uses_of_reference_into(
                     uses_so_far.push(elm_syntax_expression_node.range);
                 }
             } else {
-                let module_origin =
+                let module_origin: &str =
                     look_up_origin_module(module_origin_lookup, &qualification, &name);
-                if symbol_to_collect_uses_of
-                    == (ElmDeclaredSymbol::VariableOrVariant {
-                        module_origin: module_origin,
-                        name: name,
-                    })
+                if let ElmSymbolToReference::VariableOrVariant {
+                    module_origin: symbol_module_origin,
+                    name: symbol_name,
+                    including_declaration_name: _,
+                }
+                | ElmSymbolToReference::RecordTypeAlias {
+                    module_origin: symbol_module_origin,
+                    name: symbol_name,
+                    including_declaration_name: _,
+                } = symbol_to_collect_uses_of
+                    && symbol_module_origin == module_origin
+                    && symbol_name == name
                 {
                     uses_so_far.push(lsp_types::Range {
                         start: lsp_position_add_characters(
@@ -8969,7 +9722,7 @@ fn elm_syntax_expression_uses_of_reference_into(
                         end: elm_syntax_expression_node.range.end,
                     });
                 } else if symbol_to_collect_uses_of
-                    == (ElmDeclaredSymbol::ImportAlias {
+                    == (ElmSymbolToReference::ImportAlias {
                         module_origin: module_origin,
                         alias_name: &qualification,
                     })
@@ -8982,7 +9735,7 @@ fn elm_syntax_expression_uses_of_reference_into(
                         ),
                     });
                 } else if (symbol_to_collect_uses_of
-                    == ElmDeclaredSymbol::ModuleName(module_origin))
+                    == ElmSymbolToReference::ModuleName(module_origin))
                     && (qualification == module_origin)
                 {
                     uses_so_far.push(lsp_types::Range {
@@ -9061,7 +9814,7 @@ fn elm_syntax_let_declaration_uses_of_reference_into(
     module_origin_lookup: &ModuleOriginLookup,
     local_bindings: &[ElmLocalBinding],
     elm_syntax_let_declaration: &ElmSyntaxLetDeclaration,
-    symbol_to_collect_uses_of: ElmDeclaredSymbol,
+    symbol_to_collect_uses_of: ElmSymbolToReference,
 ) {
     match elm_syntax_let_declaration {
         ElmSyntaxLetDeclaration::Destructuring {
@@ -9092,7 +9845,11 @@ fn elm_syntax_let_declaration_uses_of_reference_into(
             equals_key_symbol_range: _,
             result: maybe_result,
         } => {
-            if symbol_to_collect_uses_of == ElmDeclaredSymbol::LocalBinding(&start_name_node.value)
+            if symbol_to_collect_uses_of
+                == (ElmSymbolToReference::LocalBinding {
+                    name: &start_name_node.value,
+                    including_let_declaration_name: true,
+                })
             {
                 uses_so_far.push(start_name_node.range);
                 if let Some(signature) = maybe_signature
@@ -9146,13 +9903,13 @@ fn elm_syntax_pattern_uses_of_reference_into(
     uses_so_far: &mut Vec<lsp_types::Range>,
     module_origin_lookup: &ModuleOriginLookup,
     elm_syntax_pattern_node: ElmSyntaxNode<&ElmSyntaxPattern>,
-    symbol_to_collect_uses_of: ElmDeclaredSymbol,
+    symbol_to_collect_uses_of: ElmSymbolToReference,
 ) {
     match elm_syntax_pattern_node.value {
         ElmSyntaxPattern::As {
             pattern: alias_pattern,
             as_keyword_range: _,
-            variable: maybe_variable,
+            variable: _,
         } => {
             elm_syntax_pattern_uses_of_reference_into(
                 uses_so_far,
@@ -9160,12 +9917,6 @@ fn elm_syntax_pattern_uses_of_reference_into(
                 elm_syntax_node_unbox(alias_pattern),
                 symbol_to_collect_uses_of,
             );
-            if let Some(variable_node) = maybe_variable
-                && symbol_to_collect_uses_of
-                    == ElmDeclaredSymbol::LocalBinding(&variable_node.value)
-            {
-                uses_so_far.push(variable_node.range);
-            }
         }
         ElmSyntaxPattern::Char(_) => {}
         ElmSyntaxPattern::Ignored => {}
@@ -9210,16 +9961,7 @@ fn elm_syntax_pattern_uses_of_reference_into(
                 symbol_to_collect_uses_of,
             );
         }
-        ElmSyntaxPattern::Record(field_names) => {
-            'find_in_field_names: for field_name_node in field_names {
-                if symbol_to_collect_uses_of
-                    == ElmDeclaredSymbol::LocalBinding(&field_name_node.value)
-                {
-                    uses_so_far.push(field_name_node.range);
-                    break 'find_in_field_names;
-                }
-            }
-        }
+        ElmSyntaxPattern::Record(_) => {}
         ElmSyntaxPattern::String { .. } => {}
         ElmSyntaxPattern::Triple {
             part0: maybe_part0,
@@ -9273,22 +10015,20 @@ fn elm_syntax_pattern_uses_of_reference_into(
             }
         }
         ElmSyntaxPattern::Unit => {}
-        ElmSyntaxPattern::Variable(variable) => {
-            if symbol_to_collect_uses_of == ElmDeclaredSymbol::LocalBinding(variable) {
-                uses_so_far.push(elm_syntax_pattern_node.range);
-            }
-        }
+        ElmSyntaxPattern::Variable(_) => {}
         ElmSyntaxPattern::Variant { reference, values } => {
             let module_origin = look_up_origin_module(
                 module_origin_lookup,
                 &reference.value.qualification,
                 &reference.value.name,
             );
-            if symbol_to_collect_uses_of
-                == (ElmDeclaredSymbol::VariableOrVariant {
-                    module_origin: module_origin,
-                    name: &reference.value.name,
-                })
+            if let ElmSymbolToReference::VariableOrVariant {
+                module_origin: symbol_module_origin,
+                name: symbol_name,
+                including_declaration_name: _,
+            } = symbol_to_collect_uses_of
+                && symbol_module_origin == module_origin
+                && symbol_name == &reference.value.name
             {
                 uses_so_far.push(lsp_types::Range {
                     start: lsp_position_add_characters(
@@ -9299,7 +10039,7 @@ fn elm_syntax_pattern_uses_of_reference_into(
                 });
             }
             if symbol_to_collect_uses_of
-                == (ElmDeclaredSymbol::ImportAlias {
+                == (ElmSymbolToReference::ImportAlias {
                     module_origin: module_origin,
                     alias_name: &reference.value.qualification,
                 })
@@ -9311,7 +10051,7 @@ fn elm_syntax_pattern_uses_of_reference_into(
                         reference.value.qualification.len() as i32,
                     ),
                 });
-            } else if (symbol_to_collect_uses_of == ElmDeclaredSymbol::ModuleName(module_origin))
+            } else if (symbol_to_collect_uses_of == ElmSymbolToReference::ModuleName(module_origin))
                 && (&reference.value.qualification == module_origin)
             {
                 uses_so_far.push(lsp_types::Range {
@@ -9350,10 +10090,7 @@ fn elm_syntax_let_declaration_introduced_bindings_into<'a>(
             bindings_so_far.push(ElmLocalBinding {
                 name: &start_name_node.value,
                 origin: LocalBindingOrigin::LetDeclaredVariable {
-                    signature_type: signature
-                        .as_ref()
-                        .and_then(|signature| signature.type_.as_ref())
-                        .map(|node| &node.value),
+                    signature: signature.as_ref(),
                     start_name_range: start_name_node.range,
                 },
             });
