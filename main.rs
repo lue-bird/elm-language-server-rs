@@ -2417,7 +2417,7 @@ fn respond_to_goto_definition(
     state: &State,
     goto_definition_arguments: lsp_types::GotoDefinitionParams,
 ) -> Option<lsp_types::GotoDefinitionResponse> {
-    let goto_project_module_state = state_get_project_module_by_lsp_url(
+    let goto_symbol_project_module_state = state_get_project_module_by_lsp_url(
         state,
         &goto_definition_arguments
             .text_document_position_params
@@ -2426,7 +2426,7 @@ fn respond_to_goto_definition(
     )?;
     let goto_symbol_node: ElmSyntaxNode<ElmSyntaxSymbol> =
         elm_syntax_module_find_symbol_at_position(
-            &goto_project_module_state.module.syntax,
+            &goto_symbol_project_module_state.module.syntax,
             goto_definition_arguments
                 .text_document_position_params
                 .position,
@@ -2495,15 +2495,18 @@ fn respond_to_goto_definition(
                 ElmSyntaxDeclaration::Variable { .. } => None,
             }
         }
-        ElmSyntaxSymbol::ModuleName(goto_module_name)
-        | ElmSyntaxSymbol::ImportAlias {
-            module_origin: goto_module_name,
-            alias_name: _,
-        } => {
+        ElmSyntaxSymbol::ModuleName(goto_module_name) => {
+            if let Some(goto_symbol_module_header) =
+                &goto_symbol_project_module_state.module.syntax.header
+                && let Some(goto_symbol_module_name_node) = &goto_symbol_module_header.module_name
+                && goto_symbol_module_name_node.value == goto_module_name
+            {
+                return None;
+            }
             let (origin_module_file_path, origin_module_state) =
                 project_state_get_module_with_name(
                     state,
-                    goto_project_module_state.project,
+                    goto_symbol_project_module_state.project,
                     goto_module_name,
                 )?;
             let origin_module_file_url: lsp_types::Url =
@@ -2523,11 +2526,54 @@ fn respond_to_goto_definition(
                                     module_keyword_range,
                                 } => module_keyword_range,
                                 ElmSyntaxModuleHeaderSpecific::Effect {
-                                    effect_keyword_range: _,
                                     module_keyword_range,
-                                    where_keyword_range: _,
-                                    command: _,
-                                    subscription: _,
+                                    ..
+                                } => module_keyword_range,
+                            },
+                        },
+                        None => lsp_types::Range {
+                            start: lsp_types::Position {
+                                line: 0,
+                                character: 0,
+                            },
+                            end: lsp_types::Position {
+                                line: 1,
+                                character: 0,
+                            },
+                        },
+                    },
+                },
+            ))
+        }
+        ElmSyntaxSymbol::ImportAlias {
+            module_origin: goto_module_name,
+            alias_name: _,
+        } => {
+            let (origin_module_file_path, origin_module_state) =
+                project_state_get_module_with_name(
+                    state,
+                    goto_symbol_project_module_state.project,
+                    goto_module_name,
+                )?;
+            let origin_module_file_url: lsp_types::Url =
+                lsp_types::Url::from_file_path(origin_module_file_path).ok()?;
+            Some(lsp_types::GotoDefinitionResponse::Scalar(
+                lsp_types::Location {
+                    uri: origin_module_file_url,
+                    range: match origin_module_state.syntax.header {
+                        Some(ref module_header) => match module_header.module_name {
+                            Some(ref module_name_node) => module_name_node.range,
+                            None => match module_header.specific {
+                                ElmSyntaxModuleHeaderSpecific::Pure {
+                                    module_keyword_range,
+                                } => module_keyword_range,
+                                ElmSyntaxModuleHeaderSpecific::Port {
+                                    port_keyword_range: _,
+                                    module_keyword_range,
+                                } => module_keyword_range,
+                                ElmSyntaxModuleHeaderSpecific::Effect {
+                                    module_keyword_range,
+                                    ..
                                 } => module_keyword_range,
                             },
                         },
@@ -2549,7 +2595,7 @@ fn respond_to_goto_definition(
             name: goto_name,
             all_exposes: _,
         } => {
-            let declaration_name_range: lsp_types::Range = goto_project_module_state
+            let declaration_name_range: lsp_types::Range = goto_symbol_project_module_state
                 .module
                 .syntax
                 .declarations
@@ -2647,7 +2693,7 @@ fn respond_to_goto_definition(
             let (origin_module_file_path, origin_module_state) =
                 project_state_get_module_with_name(
                     state,
-                    goto_project_module_state.project,
+                    goto_symbol_project_module_state.project,
                     goto_module_origin,
                 )?;
             let origin_module_file_url: lsp_types::Url =
@@ -2759,8 +2805,8 @@ fn respond_to_goto_definition(
             let goto_module_origin: &str = look_up_origin_module(
                 &elm_syntax_module_create_origin_lookup(
                     state,
-                    goto_project_module_state.project,
-                    &goto_project_module_state.module.syntax,
+                    goto_symbol_project_module_state.project,
+                    &goto_symbol_project_module_state.module.syntax,
                 ),
                 goto_qualification,
                 goto_name,
@@ -2768,7 +2814,7 @@ fn respond_to_goto_definition(
             let (origin_module_file_path, origin_module_state) =
                 project_state_get_module_with_name(
                     state,
-                    goto_project_module_state.project,
+                    goto_symbol_project_module_state.project,
                     goto_module_origin,
                 )?;
             let origin_module_file_url: lsp_types::Url =
@@ -2877,8 +2923,8 @@ fn respond_to_goto_definition(
             let goto_module_origin: &str = look_up_origin_module(
                 &elm_syntax_module_create_origin_lookup(
                     state,
-                    goto_project_module_state.project,
-                    &goto_project_module_state.module.syntax,
+                    goto_symbol_project_module_state.project,
+                    &goto_symbol_project_module_state.module.syntax,
                 ),
                 goto_qualification,
                 goto_name,
@@ -2886,7 +2932,7 @@ fn respond_to_goto_definition(
             let (origin_module_file_path, origin_module_state) =
                 project_state_get_module_with_name(
                     state,
-                    goto_project_module_state.project,
+                    goto_symbol_project_module_state.project,
                     goto_module_origin,
                 )?;
             let origin_module_file_url: lsp_types::Url =
