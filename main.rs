@@ -5320,12 +5320,12 @@ fn respond_to_completion(
                     }
                 }
             }
-            if !to_complete_qualification.is_empty()
-                && let Some(to_complete_module_origins) = look_up_import_alias_module_origins(
+            if !to_complete_qualification.is_empty() {
+                let to_complete_module_origins: Vec<&str> = look_up_import_alias_module_origins(
                     &to_complete_module_import_alias_origin_lookup,
                     to_complete_qualification,
                 )
-            {
+                .unwrap_or_else(|| vec![to_complete_qualification]);
                 for to_complete_module_origin in to_complete_module_origins {
                     if let Some((_, to_complete_origin_module_state)) =
                         project_state_get_module_with_name(
@@ -5422,12 +5422,12 @@ fn respond_to_completion(
                     }
                 }
             }
-            if !to_complete_qualification.is_empty()
-                && let Some(to_complete_module_origins) = look_up_import_alias_module_origins(
+            if !to_complete_qualification.is_empty() {
+                let to_complete_module_origins: Vec<&str> = look_up_import_alias_module_origins(
                     &to_complete_module_import_alias_origin_lookup,
                     to_complete_qualification,
                 )
-            {
+                .unwrap_or_else(|| vec![to_complete_qualification]);
                 for to_complete_module_origin in to_complete_module_origins {
                     if let Some((_, origin_module_state)) = project_state_get_module_with_name(
                         state,
