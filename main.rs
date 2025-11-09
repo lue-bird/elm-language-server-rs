@@ -795,16 +795,14 @@ accordingly so that tools like the elm compiler and language server can find the
         for (not_fully_parsed_project_path, not_fully_parsed_project_state) in &state.projects {
             let projects_that_finished_full_parse_sender = fully_parsed_project_sender.clone();
             thread_scope.spawn(move || {
-                let mut fully_parsed_modules = std::collections::HashMap::new();
+                let mut fully_parsed_modules = Vec::new();
                 for (not_fully_parsed_module_path, not_fully_parsed_module_state) in
                     &not_fully_parsed_project_state.modules
                 {
-                    fully_parsed_modules.insert(
+                    fully_parsed_modules.push((
                         not_fully_parsed_module_path.clone(),
-                        initialize_module_state_from_source(
-                            not_fully_parsed_module_state.source.clone(),
-                        ),
-                    );
+                        parse_elm_syntax_module(&not_fully_parsed_module_state.source),
+                    ));
                 }
                 projects_that_finished_full_parse_sender
                     .send((not_fully_parsed_project_path.clone(), fully_parsed_modules))
@@ -816,7 +814,16 @@ accordingly so that tools like the elm compiler and language server can find the
         fully_parsed_project_receiver.recv()
     {
         if let Some(project_state_to_update) = state.projects.get_mut(&fully_parsed_project_path) {
-            project_state_to_update.modules = fully_parsed_project_modules;
+            for (fully_parsed_project_module_path, fully_parsed_project_module_syntax) in
+                fully_parsed_project_modules
+            {
+                if let Some(module_state_to_update) = project_state_to_update
+                    .modules
+                    .get_mut(&fully_parsed_project_module_path)
+                {
+                    module_state_to_update.syntax = fully_parsed_project_module_syntax
+                }
+            }
         }
     }
 }
