@@ -506,6 +506,10 @@ fn compute_diagnostics(
     project_path: &std::path::Path,
     project_state: &ProjectState,
 ) -> Result<Vec<ElmMakeFileCompileError>, String> {
+    if !std::path::Path::exists(project_path) {
+        // project zombie. Probably got deleted
+        return Ok(vec![]);
+    }
     // if there is a better way, please open an issue <3
     let sink_path: &str = match std::env::consts::FAMILY {
         "windows" => "NUL",
@@ -533,7 +537,7 @@ fn compute_diagnostics(
         .stderr(std::process::Stdio::piped())
         .spawn().map_err(|error| {
             format!(
-                "I tried to run elm make but it failed: {error}. Try installing elm via `npm install -g elm`."
+                "I tried to run elm make at path {project_path:?} but it failed: {error}. Try installing elm via `npm install -g elm`."
             )
         })?;
     let elm_make_output: std::process::Output = elm_make_process
@@ -759,18 +763,38 @@ accordingly so that tools like the elm compiler and language server can find the
             )
         }
     };
+    let mut skipped_dependencies: std::collections::HashSet<std::path::PathBuf> =
+        std::collections::HashSet::new();
     let _modules_exposed_from_workspace_packages = initialize_state_for_projects_into(
         state,
+        &mut skipped_dependencies,
         &elm_home_path,
         ProjectKind::InWorkspace,
-        // improvement possibility: search for elm.json in subdirectories
-        workspace_directory_paths,
+        list_elm_project_directories_in_directory_at_path(workspace_directory_paths).into_iter(),
     );
+    if !skipped_dependencies.is_empty() {
+        eprintln!(
+            "I'm skipping initializing dependency {} {}. \
+            I can only load packages that you've actively downloaded with `elm install`. \
+            If you did and don't care about LSP functionality for indirect dependencies, ignore this message.",
+            if skipped_dependencies.len() == 1 {
+                "project"
+            } else {
+                "projects"
+            },
+            skipped_dependencies
+                .into_iter()
+                .map(|dep| dep.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
 }
 
 /// returns exposed module names and their origins
 fn initialize_state_for_projects_into(
     state: &mut State,
+    skipped_dependencies: &mut std::collections::HashSet<std::path::PathBuf>,
     elm_home_path: &std::path::PathBuf,
     project_kind: ProjectKind,
     project_paths: impl Iterator<Item = std::path::PathBuf>,
@@ -783,8 +807,9 @@ fn initialize_state_for_projects_into(
         initialize_state_for_project_into(
             state,
             &mut dependency_exposed_module_names,
-            project_kind,
+            skipped_dependencies,
             elm_home_path,
+            project_kind,
             project_path,
         );
     }
@@ -796,15 +821,13 @@ fn initialize_state_for_project_into(
         String,
         ProjectModuleOrigin,
     >,
-    project_kind: ProjectKind,
+    skipped_dependencies: &mut std::collections::HashSet<std::path::PathBuf>,
     elm_home_path: &std::path::PathBuf,
+    project_kind: ProjectKind,
     project_path: std::path::PathBuf,
 ) {
     let elm_json_path: std::path::PathBuf = std::path::Path::join(&project_path, "elm.json");
     let maybe_elm_json_value: Option<serde_json::Value> = std::fs::read_to_string(&elm_json_path)
-        .map_err(|io_error| {
-            eprintln!("I couldn't find an elm.json file at {elm_json_path:?}: {io_error}")
-        })
         .ok()
         .and_then(|elm_json_source| {
             serde_json::from_str(&elm_json_source)
@@ -825,13 +848,11 @@ fn initialize_state_for_project_into(
         match project_kind {
             ProjectKind::InWorkspace => {
                 eprintln!(
-                    "no valid elm.json found. Now looking for elm module files across the workspace and elm/core 1.0.5"
+                    "I couldn't find a valid elm.json found at path {elm_json_path:?}. Now looking for elm module files across the workspace and elm/core 1.0.5"
                 );
             }
             ProjectKind::Dependency => {
-                eprintln!(
-                    "I'm skipping initializing dependency project {project_path:?} as it is not downloaded and a different (less indirectly depended upon) version is probably already initialized."
-                );
+                skipped_dependencies.insert(project_path);
                 return;
             }
             ProjectKind::Test => {}
@@ -880,9 +901,8 @@ fn initialize_state_for_project_into(
             .collect::<Vec<_>>(),
     };
     let module_states: std::collections::HashMap<std::path::PathBuf, ModuleState> =
-        elm_json_source_directories
-            .iter()
-            .flat_map(list_elm_files_in_source_directory_at_path)
+        list_elm_files_in_directory_at_paths(elm_json_source_directories.iter().cloned())
+            .into_iter()
             .map(|(module_path, module_source)| {
                 (
                     module_path,
@@ -934,6 +954,7 @@ fn initialize_state_for_project_into(
         ProjectModuleOrigin,
     > = initialize_state_for_projects_into(
         state,
+        skipped_dependencies,
         elm_home_path,
         ProjectKind::Dependency,
         direct_dependency_paths.clone().into_iter(),
@@ -942,6 +963,8 @@ fn initialize_state_for_project_into(
         ProjectKind::Dependency => {}
         ProjectKind::Test => {}
         ProjectKind::InWorkspace => {
+            let tests_source_directory_path: std::path::PathBuf =
+                std::path::Path::join(&project_path, "tests");
             let test_only_dependencies: Box<dyn Iterator<Item = std::path::PathBuf>> =
                 match &maybe_elm_json {
                     None => Box::new(std::iter::empty()),
@@ -969,6 +992,7 @@ fn initialize_state_for_project_into(
                 ProjectModuleOrigin,
             > = initialize_state_for_projects_into(
                 state,
+                skipped_dependencies,
                 elm_home_path,
                 ProjectKind::Dependency,
                 test_only_dependencies,
@@ -988,18 +1012,18 @@ fn initialize_state_for_project_into(
                     ))
                 },
             ));
-            let tests_source_directory_path: std::path::PathBuf =
-                std::path::Path::join(&project_path, "tests");
             let test_module_states: std::collections::HashMap<std::path::PathBuf, ModuleState> =
-                list_elm_files_in_source_directory_at_path(&tests_source_directory_path)
-                    .into_iter()
-                    .map(|(module_path, module_source)| {
-                        (
-                            module_path,
-                            initialize_module_state_from_source(module_source),
-                        )
-                    })
-                    .collect::<std::collections::HashMap<_, _>>();
+                list_elm_files_in_directory_at_paths(std::iter::once(
+                    tests_source_directory_path.clone(),
+                ))
+                .into_iter()
+                .map(|(module_path, module_source)| {
+                    (
+                        module_path,
+                        initialize_module_state_from_source(module_source),
+                    )
+                })
+                .collect::<std::collections::HashMap<_, _>>();
             state.projects.insert(
                 tests_source_directory_path.clone(),
                 ProjectState {
@@ -6129,29 +6153,80 @@ fn elm_syntax_highlight_kind_to_lsp_semantic_token_type(
     }
 }
 
-fn list_elm_files_in_source_directory_at_path(
-    path: &std::path::PathBuf,
+fn list_elm_files_in_directory_at_paths(
+    paths: impl Iterator<Item = std::path::PathBuf>,
 ) -> Vec<(std::path::PathBuf, String)> {
     let mut result: Vec<(std::path::PathBuf, String)> = Vec::new();
-    list_elm_files_in_source_directory_at_path_into(&mut result, path.clone());
+    for path in paths {
+        list_files_passing_test_in_directory_at_path_into(&mut result, path, |file_path| {
+            file_path
+                .extension()
+                .is_some_and(|extension| extension == "elm")
+        });
+    }
     result
 }
 
-fn list_elm_files_in_source_directory_at_path_into(
+fn list_elm_project_directories_in_directory_at_path(
+    paths: impl Iterator<Item = std::path::PathBuf>,
+) -> Vec<std::path::PathBuf> {
+    let mut result: Vec<std::path::PathBuf> = Vec::new();
+    for path in paths {
+        list_elm_project_directories_in_directory_at_path_into(&mut result, &path);
+    }
+    result
+}
+
+fn list_elm_project_directories_in_directory_at_path_into(
+    so_far: &mut Vec<std::path::PathBuf>,
+    path: &std::path::PathBuf,
+) {
+    if !path.is_dir() {
+        return;
+    }
+    if path
+        .file_name()
+        .is_some_and(|file_name| file_name == "elm-stuff")
+    {
+        // some elm tools put generated code including elm.json there
+        return;
+    }
+    if let Ok(dir_subs) = std::fs::read_dir(&path) {
+        for dir_sub_result in dir_subs {
+            if let Ok(dir_sub) = dir_sub_result {
+                let dir_sub_path: std::path::PathBuf = dir_sub.path();
+                if dir_sub_path.is_file()
+                    && dir_sub_path
+                        .file_name()
+                        .is_some_and(|file_name| file_name == "elm.json")
+                {
+                    so_far.push(path.clone());
+                }
+                list_elm_project_directories_in_directory_at_path_into(so_far, &dir_sub_path);
+            }
+        }
+    }
+}
+
+fn list_files_passing_test_in_directory_at_path_into(
     so_far: &mut Vec<(std::path::PathBuf, String)>,
     path: std::path::PathBuf,
+    should_add_file: fn(&std::path::PathBuf) -> bool,
 ) {
     if path.is_dir() {
         if let Ok(dir_subs) = std::fs::read_dir(&path) {
             for dir_sub_result in dir_subs {
                 if let Ok(dir_sub) = dir_sub_result {
-                    list_elm_files_in_source_directory_at_path_into(so_far, dir_sub.path());
+                    list_files_passing_test_in_directory_at_path_into(
+                        so_far,
+                        dir_sub.path(),
+                        should_add_file,
+                    );
                 }
             }
         }
     } else {
-        if let Some(extension) = path.extension()
-            && extension == "elm"
+        if should_add_file(&path)
             && let Ok(file_content) = std::fs::read_to_string(&path)
         {
             so_far.push((path, file_content));

@@ -27,7 +27,6 @@ Works with [`elm-format`](https://github.com/avh4/elm-format?tab=readme-ov-file#
 - when showing module documentation inline actual info for `@docs` members (these are not super easy to parse but would be useful, only if I have time and there is interest)
 - show all module exposes when hovering `(..)` (only if I have time and there is interest)
 - add code actions like "expose (including variants)", "inline", "inline all uses" (leaning towards no as it is fairly complicated, though it is very useful for sure)
-- support elm projects with non-workspace-root `elm.json`
 - support when the `elm.json` changes (only if I have time and there is interest)
 - switch to `position_encoding: Some(lsp_types::PositionEncodingKind::UTF8)`. This makes source edits and parsing easier and faster at the cost of compatibility with lsp clients below version 3.17.0. Is that acceptable? (leaning towards yes).
   Also validate if elm --report region column is UTF-8 or UTF-16 (seems to be UTF-16 strangely)
