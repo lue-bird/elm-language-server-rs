@@ -7111,6 +7111,21 @@ fn elm_syntax_module_create_origin_lookup<'a>(
                 }
             }
         }
+        let mut insert_import_expose = |import_expose: &'a str| {
+            if module_origin_lookup.unqualified.contains_key(import_expose) {
+                module_origin_lookup.ambiguously_qualified.insert(
+                    ElmQualified {
+                        qualification: allowed_qualification,
+                        name: import_expose,
+                    },
+                    import_module_name,
+                );
+            } else {
+                module_origin_lookup
+                    .unqualified
+                    .insert(import_expose, import_module_name);
+            }
+        };
         if let Some(import_exposing) = &import.exposing {
             match import_exposing.specific.as_ref().map(|node| &node.value) {
                 None => {}
@@ -7121,9 +7136,7 @@ fn elm_syntax_module_create_origin_lookup<'a>(
                         for import_exposed_symbol in
                             elm_syntax_module_exposed_symbols(&imported_module_state.syntax)
                         {
-                            module_origin_lookup
-                                .unqualified
-                                .insert(import_exposed_symbol, import_module_name);
+                            insert_import_expose(import_exposed_symbol);
                         }
                     }
                 }
@@ -7134,9 +7147,7 @@ fn elm_syntax_module_create_origin_lookup<'a>(
                                 name: choice_type_expose_name,
                                 open_range: _,
                             } => {
-                                module_origin_lookup
-                                    .unqualified
-                                    .insert(&choice_type_expose_name.value, import_module_name);
+                                insert_import_expose(&choice_type_expose_name.value);
                                 if let Some((_, imported_module_syntax)) =
                                     project_state_get_module_with_name(
                                         state,
@@ -7167,11 +7178,10 @@ fn elm_syntax_module_create_origin_lookup<'a>(
                                                         .map(|node| node.value.as_str())
                                                 {
                                                     if let Some(imported_module_choice_type_variant0_name_node) = maybe_imported_module_choice_type_variant0_name.as_ref() {
-                                                            module_origin_lookup.unqualified.insert(
-                                                                &imported_module_choice_type_variant0_name_node.value,
-                                                                import_module_name,
-                                                            );
-                                                        }
+                                                        insert_import_expose(
+                                                            &imported_module_choice_type_variant0_name_node.value
+                                                        );
+                                                    }
                                                     for imported_module_choice_type_variant in
                                                         imported_module_choice_type_variant1_up
                                                     {
@@ -7181,9 +7191,8 @@ fn elm_syntax_module_create_origin_lookup<'a>(
                                                             .name
                                                             .as_ref()
                                                         {
-                                                            module_origin_lookup.unqualified.insert(
+                                                            insert_import_expose(
                                                                 &imported_module_choice_type_variant_name_node.value,
-                                                                import_module_name,
                                                             );
                                                         }
                                                     }
@@ -7197,20 +7206,14 @@ fn elm_syntax_module_create_origin_lookup<'a>(
                             }
                             ElmSyntaxExpose::Operator(symbol) => {
                                 if let Some(operator_symbol_node) = symbol {
-                                    module_origin_lookup
-                                        .unqualified
-                                        .insert(operator_symbol_node.value, import_module_name);
+                                    insert_import_expose(operator_symbol_node.value);
                                 }
                             }
                             ElmSyntaxExpose::Type(name) => {
-                                module_origin_lookup
-                                    .unqualified
-                                    .insert(name, import_module_name);
+                                insert_import_expose(name);
                             }
                             ElmSyntaxExpose::Variable(name) => {
-                                module_origin_lookup
-                                    .unqualified
-                                    .insert(name, import_module_name);
+                                insert_import_expose(name);
                             }
                         }
                     }
