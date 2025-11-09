@@ -790,6 +790,35 @@ accordingly so that tools like the elm compiler and language server can find the
                 .join(", ")
         );
     }
+    let (fully_parsed_project_sender, fully_parsed_project_receiver) = std::sync::mpsc::channel();
+    std::thread::scope(|thread_scope| {
+        for (not_fully_parsed_project_path, not_fully_parsed_project_state) in &state.projects {
+            let projects_that_finished_full_parse_sender = fully_parsed_project_sender.clone();
+            thread_scope.spawn(move || {
+                let mut fully_parsed_modules = std::collections::HashMap::new();
+                for (not_fully_parsed_module_path, not_fully_parsed_module_state) in
+                    &not_fully_parsed_project_state.modules
+                {
+                    fully_parsed_modules.insert(
+                        not_fully_parsed_module_path.clone(),
+                        initialize_module_state_from_source(
+                            not_fully_parsed_module_state.source.clone(),
+                        ),
+                    );
+                }
+                projects_that_finished_full_parse_sender
+                    .send((not_fully_parsed_project_path.clone(), fully_parsed_modules))
+            });
+        }
+    });
+    drop(fully_parsed_project_sender);
+    while let Ok((fully_parsed_project_path, fully_parsed_project_modules)) =
+        fully_parsed_project_receiver.recv()
+    {
+        if let Some(project_state_to_update) = state.projects.get_mut(&fully_parsed_project_path) {
+            project_state_to_update.modules = fully_parsed_project_modules;
+        }
+    }
 }
 
 /// returns exposed module names and their origins
@@ -916,7 +945,7 @@ fn initialize_state_for_project_into(
             .map(|(module_path, module_source)| {
                 (
                     module_path,
-                    initialize_module_state_from_source(module_source),
+                    initialize_header_only_module_state_from_source(module_source),
                 )
             })
             .collect::<std::collections::HashMap<_, _>>();
@@ -1034,7 +1063,7 @@ fn initialize_state_for_project_into(
                 .map(|(module_path, module_source)| {
                     (
                         module_path,
-                        initialize_module_state_from_source(module_source),
+                        initialize_header_only_module_state_from_source(module_source),
                     )
                 })
                 .collect::<std::collections::HashMap<_, _>>();
@@ -1068,6 +1097,12 @@ fn initialize_state_for_project_into(
 fn initialize_module_state_from_source(source: String) -> ModuleState {
     ModuleState {
         syntax: parse_elm_syntax_module(&source),
+        source: source,
+    }
+}
+fn initialize_header_only_module_state_from_source(source: String) -> ModuleState {
+    ModuleState {
+        syntax: parse_elm_syntax_module_until_including_header_only(&source),
         source: source,
     }
 }
@@ -14559,6 +14594,28 @@ fn parse_elm_syntax_documented_declaration(
                 declaration: maybe_declaration,
             })
         }
+    }
+}
+fn parse_elm_syntax_module_until_including_header_only(module_source: &str) -> ElmSyntaxModule {
+    let mut state: ParseState = ParseState {
+        source: module_source,
+        offset_utf8: 0,
+        position: lsp_types::Position {
+            line: 0,
+            character: 0,
+        },
+        indent: 0,
+        lower_indents_stack: vec![],
+        comments: vec![],
+    };
+    parse_elm_whitespace_and_comments(&mut state);
+    let maybe_header: Option<ElmSyntaxModuleHeader> = parse_elm_syntax_module_header(&mut state);
+    ElmSyntaxModule {
+        header: maybe_header,
+        documentation: None,
+        comments: state.comments,
+        imports: vec![],
+        declarations: vec![],
     }
 }
 fn parse_elm_syntax_module(module_source: &str) -> ElmSyntaxModule {

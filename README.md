@@ -42,9 +42,6 @@ Works with [`elm-format`](https://github.com/avh4/elm-format?tab=readme-ov-file#
   There must surely be a better way, right?
 - It is possible that an elm module belongs to multiple projects when source directory paths overlap between projects. This throws a wrench in pretty much all existing code (likely internal document source desync and a more limited lsp feature range in one of the containing projects).
   This situation is, I assume, fixable by special-casing their storage and handling but it would require a _lot_ of work
-- if your workspace has a lot of contained elm projects (and or a lot a lot of dependencies),
-  initializing the LSP might take time in a way that you notice.
-  A nice solution might be to only parse module headers at first, then parse each module in full in different threads
 
 ## editor setups
 feel free to contribute, as I only use vscodium
