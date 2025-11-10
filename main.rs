@@ -46,7 +46,7 @@ async fn main() {
                     capabilities: server_capabilities(),
                     server_info: Some(lsp_types::ServerInfo {
                         name: "elm-language-server-rs".to_string(),
-                        version: Some("pre-release".to_string()),
+                        version: Some("0.0.1".to_string()),
                     }),
                 })
             }
