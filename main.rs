@@ -12413,7 +12413,7 @@ fn parse_elm_syntax_import_node(state: &mut ParseState) -> Option<ElmSyntaxNode<
         parse_elm_standalone_module_name_node(state);
     parse_elm_whitespace_and_comments(state);
     let maybe_alias: Option<EmSyntaxImportAs> =
-        parse_symbol_as_range(state, "as").map(|as_keyword_range| {
+        parse_elm_keyword_as_range(state, "as").map(|as_keyword_range| {
             parse_elm_whitespace_and_comments(state);
             let maybe_alias_name_node: Option<ElmSyntaxNode<String>> =
                 parse_elm_uppercase_node(state);
@@ -12423,7 +12423,16 @@ fn parse_elm_syntax_import_node(state: &mut ParseState) -> Option<ElmSyntaxNode<
             }
         });
     parse_elm_whitespace_and_comments(state);
-    let maybe_exposing: Option<ElmSyntaxExposing> = parse_elm_syntax_exposing(state);
+    let maybe_exposing: Option<ElmSyntaxExposing> = parse_elm_keyword_as_range(state, "exposing")
+        .map(|exposing_keyword_range| {
+            parse_elm_whitespace_and_comments(state);
+            let maybe_specific: Option<ElmSyntaxNode<ElmSyntaxExposingSpecific>> =
+                parse_elm_syntax_exposing_specific_node(state);
+            ElmSyntaxExposing {
+                exposing_keyword_range: exposing_keyword_range,
+                specific: maybe_specific,
+            }
+        });
     let end_position: lsp_types::Position = maybe_exposing
         .as_ref()
         .map(|exposing| {
@@ -12456,10 +12465,11 @@ fn parse_elm_syntax_import_node(state: &mut ParseState) -> Option<ElmSyntaxNode<
         },
     })
 }
-fn parse_elm_syntax_exposing(state: &mut ParseState) -> Option<ElmSyntaxExposing> {
-    let exposing_keyword_range = parse_symbol_as_range(state, "exposing")?;
+fn parse_elm_syntax_module_header_exposing(state: &mut ParseState) -> Option<ElmSyntaxExposing> {
+    let exposing_keyword_range: lsp_types::Range = parse_symbol_as_range(state, "exposing")?;
     parse_elm_whitespace_and_comments(state);
-    let maybe_specific = parse_elm_syntax_exposing_specific_node(state);
+    let maybe_specific: Option<ElmSyntaxNode<ElmSyntaxExposingSpecific>> =
+        parse_elm_syntax_exposing_specific_node(state);
     Some(ElmSyntaxExposing {
         exposing_keyword_range: exposing_keyword_range,
         specific: maybe_specific,
@@ -12518,7 +12528,8 @@ fn parse_elm_syntax_module_header(state: &mut ParseState) -> Option<ElmSyntaxMod
         let maybe_module_name_node: Option<ElmSyntaxNode<String>> =
             parse_elm_standalone_module_name_node(state);
         parse_elm_whitespace_and_comments(state);
-        let maybe_exposing: Option<ElmSyntaxExposing> = parse_elm_syntax_exposing(state);
+        let maybe_exposing: Option<ElmSyntaxExposing> =
+            parse_elm_syntax_module_header_exposing(state);
         Some(ElmSyntaxModuleHeader {
             specific: ElmSyntaxModuleHeaderSpecific::Pure {
                 module_keyword_range: module_keyword_range,
@@ -12533,7 +12544,8 @@ fn parse_elm_syntax_module_header(state: &mut ParseState) -> Option<ElmSyntaxMod
         let maybe_module_name_node: Option<ElmSyntaxNode<String>> =
             parse_elm_standalone_module_name_node(state);
         parse_elm_whitespace_and_comments(state);
-        let maybe_exposing: Option<ElmSyntaxExposing> = parse_elm_syntax_exposing(state);
+        let maybe_exposing: Option<ElmSyntaxExposing> =
+            parse_elm_syntax_module_header_exposing(state);
         Some(ElmSyntaxModuleHeader {
             specific: ElmSyntaxModuleHeaderSpecific::Port {
                 port_keyword_range: port_keyword_range,
@@ -12570,7 +12582,8 @@ fn parse_elm_syntax_module_header(state: &mut ParseState) -> Option<ElmSyntaxMod
         }
 
         parse_elm_whitespace_and_comments(state);
-        let maybe_exposing: Option<ElmSyntaxExposing> = parse_elm_syntax_exposing(state);
+        let maybe_exposing: Option<ElmSyntaxExposing> =
+            parse_elm_syntax_module_header_exposing(state);
         Some(ElmSyntaxModuleHeader {
             specific: ElmSyntaxModuleHeaderSpecific::Effect {
                 effect_keyword_range: effect_keyword_range,
