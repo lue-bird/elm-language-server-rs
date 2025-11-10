@@ -46,13 +46,17 @@ Works with [`elm-format`](https://github.com/avh4/elm-format?tab=readme-ov-file#
 ## editor setups
 feel free to contribute, as I only use vscodium
 
-#### vscode-like
+### vscode-like
+#### pre-built
+1. download https://github.com/lue-bird/elm-language-server-rs/blob/main/vscode/elm-language-server-rs-0.0.1.vsix
+2. open the command bar at the top and select: `>Extensions: Install from VSIX`
+#### source-built
 1. clone this repo
 2. open `vscode/`
-3. (optional) run `npm i && npm run package` to create the `.vsix` instead of the prebuilt one
-4. Open the command bar at the top and select: `>Extensions: Install from VSIX`
-
-Alternatively, since there is no built-in language server bridge as far as I know you can install an extension like [vscode-generic-lsp-proxy](https://github.com/mjmorales/vscode-generic-lsp-proxy).
+3. run `npm run package` to create the `.vsix`
+4. open the command bar at the top and select: `>Extensions: Install from VSIX`
+#### server only
+There is no built-in language server bridge as far as I know but you can install an extension like [vscode-generic-lsp-proxy](https://github.com/mjmorales/vscode-generic-lsp-proxy) that will work for any language server.
 Then add a `.vscode/lsp-proxy.json` like
 ```json
 [
@@ -67,7 +71,7 @@ Then add a `.vscode/lsp-proxy.json` like
 ]
 ```
 
-#### helix
+### helix
 write to `~/.config/helix/languages.toml`:
 ```toml
 [language-server.elm-language-server-rs]
