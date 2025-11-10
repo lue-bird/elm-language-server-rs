@@ -50,7 +50,7 @@ feel free to contribute, as I only use vscodium
 #### pre-built
 1. download https://github.com/lue-bird/elm-language-server-rs/blob/main/vscode/elm-language-server-rs-0.0.1.vsix
 2. open the command bar at the top and select: `>Extensions: Install from VSIX`
-#### source-built
+#### build from source
 1. clone this repo
 2. open `vscode/`
 3. run `npm run package` to create the `.vsix`
