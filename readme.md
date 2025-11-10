@@ -45,8 +45,14 @@ Works with [`elm-format`](https://github.com/avh4/elm-format?tab=readme-ov-file#
 
 ## editor setups
 feel free to contribute, as I only use vscodium
+
 #### vscode-like
-There is no built-in language server bridge as far as I know so you first need to install an extension like [vscode-generic-lsp-proxy](https://github.com/mjmorales/vscode-generic-lsp-proxy).
+1. clone this repo
+2. open `vscode/`
+3. (optional) run `npm i && npm run package` to create the `.vsix` instead of the prebuilt one
+4. Open the command bar at the top and select: `>Extensions: Install from VSIX`
+
+Alternatively, since there is no built-in language server bridge as far as I know you can install an extension like [vscode-generic-lsp-proxy](https://github.com/mjmorales/vscode-generic-lsp-proxy).
 Then add a `.vscode/lsp-proxy.json` like
 ```json
 [

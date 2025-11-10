@@ -1,0 +1,8 @@
+out
+node_modules
+client/*.tsbuildinfo
+.vscode-test
+coverage
+.nyc_output
+**/tsconfig.tsbuildinfo
+# I also don't feel super comfortable leaving prebuilt *.vsix around

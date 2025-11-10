@@ -1,0 +1,95 @@
+{
+  "name": "elm-language-server-rs",
+  "displayName": "elm",
+  "description": "language server for elm, in rust",
+  "author": "lue_bird",
+  "icon": "images/icon.png",
+  "license": "MIT",
+  "version": "0.0.1",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lue-bird/elm-language-server-rs"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "elm"
+  ],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "activationEvents": [
+    "workspaceContains:**/elm.json"
+  ],
+  "main": "./out/extension",
+  "contributes": {
+    "languages": [
+      {
+        "id": "elm",
+        "extensions": [
+          ".elm"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "scopeName": "markdown.elm.codeblock",
+        "path": "./syntaxes/codeblock.json",
+        "injectTo": [
+          "text.html.markdown"
+        ],
+        "embeddedLanguages": {
+          "meta.embedded.block.elm": "elm",
+          "meta.embedded.block.glsl": "glsl"
+        }
+      }
+    ],
+    "commands": [
+      {
+        "command": "elm.commands.restart",
+        "title": "restart elm-language-server-rs",
+        "category": "elm"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "elm",
+      "properties": {
+        "elm-language-server-rs.elmPath": {
+          "scope": "window",
+          "type": "string",
+          "default": "",
+          "description": "The path to your elm compiler executable. Should be empty by default."
+        },
+        "elm-language-server-rs.elmFormatPath": {
+          "scope": "window",
+          "type": "string",
+          "default": "",
+          "description": "The path to your elm-format executable. Should be empty by default."
+        },
+        "elm-language-server-rs.elmTestPath": {
+          "scope": "window",
+          "type": "string",
+          "default": "",
+          "description": "The path to your elm-test executable. Should be empty by default."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1",
+    "@types/node": "^24.10.0",
+    "@types/vscode": "^1.85.0"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^3.7.0",
+    "esbuild": "^0.27.0",
+    "typescript": "5.3.3"
+  },
+  "scripts": {
+    "compile": "tsc -p . --noEmit && esbuild --platform=node --bundle extension.js --external:vscode --minify --outfile=out/extension.js",
+    "package": "npm install && npm run compile && vsce package"
+  }
+}
