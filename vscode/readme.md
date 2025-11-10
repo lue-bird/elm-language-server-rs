@@ -1,4 +1,4 @@
-vscode extension for [elm](https://elm-lang.org/) using [elm-language-server-rs](https://github.com/lue-bird/elm-language-server-rs)
+vscode extension for [elm](https://elm-lang.org/) using [elm-language-server-rs](https://github.com/lue-bird/elm-language-server-rs). Having it installed is a strict requirement.
 
 ## (not used, yet!) extension settings
 
