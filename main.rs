@@ -1511,7 +1511,8 @@ fn respond_to_hover(
                 .syntax
                 .declarations
                 .iter()
-                .find_map(|documented_declaration| {
+                .find_map(|documented_declaration_or_err| {
+                    let documented_declaration = documented_declaration_or_err.as_ref().ok()?;
                     let declaration_node = documented_declaration.declaration.as_ref()?;
                     match &declaration_node.value {
                         ElmSyntaxDeclaration::ChoiceType {
@@ -1567,33 +1568,34 @@ fn respond_to_hover(
                                                 .syntax
                                                 .declarations
                                                 .iter()
-                                                .find_map(|origin_module_declaration| {
+                                                .find_map(|origin_module_declaration_or_err| {
+                                                    let origin_module_declaration = origin_module_declaration_or_err.as_ref().ok()?;
                                                     let origin_module_declaration_node =
                                                         origin_module_declaration
                                                             .declaration
                                                             .as_ref()?;
                                                     match &origin_module_declaration_node.value {
-                                                ElmSyntaxDeclaration::Variable {
-                                                    start_name: origin_module_declaration_name,
-                                                    signature: origin_module_declaration_signature,
-                                                    parameters: _,
-                                                    equals_key_symbol_range: _,
-                                                    result: _,
-                                                } if origin_module_declaration_name.value
-                                                    == origin_module_declaration_function_node
-                                                        .value =>
-                                                {
-                                                    Some((
-                                                        origin_module_declaration_signature
-                                                            .as_ref(),
-                                                        origin_module_declaration
-                                                            .documentation
-                                                            .as_ref()
-                                                            .map(|node| node.value.as_str()),
-                                                    ))
-                                                }
-                                                _ => None,
-                                            }
+                                                        ElmSyntaxDeclaration::Variable {
+                                                            start_name: origin_module_declaration_name,
+                                                            signature: origin_module_declaration_signature,
+                                                            parameters: _,
+                                                            equals_key_symbol_range: _,
+                                                            result: _,
+                                                        } if origin_module_declaration_name.value
+                                                            == origin_module_declaration_function_node
+                                                                .value =>
+                                                        {
+                                                            Some((
+                                                                origin_module_declaration_signature
+                                                                    .as_ref(),
+                                                                origin_module_declaration
+                                                                    .documentation
+                                                                    .as_ref()
+                                                                    .map(|node| node.value.as_str()),
+                                                            ))
+                                                        }
+                                                        _ => None,
+                                                    }
                                                 })
                                         },
                                     );
@@ -1765,7 +1767,9 @@ fn respond_to_hover(
                                     .syntax
                                     .declarations
                                     .iter()
-                                    .find_map(|origin_module_declaration| {
+                                    .find_map(|origin_module_declaration_or_err| {
+                                        let origin_module_declaration =
+                                            origin_module_declaration_or_err.as_ref().ok()?;
                                         let origin_module_declaration_node =
                                             origin_module_declaration.declaration.as_ref()?;
                                         match &origin_module_declaration_node.value {
@@ -1875,7 +1879,8 @@ fn respond_to_hover(
                 .syntax
                 .declarations
                 .iter()
-                .find_map(|documented_declaration| {
+                .find_map(|documented_declaration_or_err| {
+                    let documented_declaration = documented_declaration_or_err.as_ref().ok()?;
                     let declaration_node = documented_declaration.declaration.as_ref()?;
                     match &declaration_node.value {
                         ElmSyntaxDeclaration::ChoiceType {
@@ -1927,7 +1932,11 @@ fn respond_to_hover(
                                     maybe_declaration_function.as_ref().and_then(
                                         |origin_module_declaration_function_node| {
                                             origin_module_state.syntax.declarations.iter().find_map(
-                                                |origin_module_declaration| {
+                                                |origin_module_declaration_or_err| {
+                                                    let origin_module_declaration =
+                                                        origin_module_declaration_or_err
+                                                            .as_ref()
+                                                            .ok()?;
                                                     let origin_module_declaration_node =
                                                         origin_module_declaration
                                                             .declaration
@@ -2121,7 +2130,8 @@ fn respond_to_hover(
                 .syntax
                 .declarations
                 .iter()
-                .find_map(|origin_module_declaration| {
+                .find_map(|origin_module_declaration_or_err| {
+                    let origin_module_declaration = origin_module_declaration_or_err.as_ref().ok()?;
                     let origin_module_declaration_node = origin_module_declaration.declaration.as_ref()?;
                     match &origin_module_declaration_node.value {
                         ElmSyntaxDeclaration::ChoiceType {
@@ -2184,7 +2194,8 @@ fn respond_to_hover(
                                     maybe_origin_module_declaration_function.as_ref().and_then(
                                         |origin_module_declaration_function_node| {
                                             origin_module_state.syntax.declarations.iter().find_map(
-                                                |origin_module_declaration| {
+                                                |origin_module_declaration_or_err| {
+                                                    let origin_module_declaration = origin_module_declaration_or_err.as_ref().ok()?;
                                                     let origin_module_declaration_node = origin_module_declaration.declaration.as_ref()?;
                                                     match &origin_module_declaration_node.value {
                                                         ElmSyntaxDeclaration::Variable {
@@ -2349,7 +2360,9 @@ fn respond_to_hover(
                 &origin_module_state.syntax,
             );
             let info_markdown: String = origin_module_state.syntax.declarations.iter().find_map(
-                |origin_module_declaration| {
+                |origin_module_declaration_or_err| {
+                    let origin_module_declaration =
+                        origin_module_declaration_or_err.as_ref().ok()?;
                     let origin_module_declaration_node =
                         origin_module_declaration.declaration.as_ref()?;
                     match &origin_module_declaration_node.value {
@@ -2661,7 +2674,9 @@ fn respond_to_goto_definition(
                 .syntax
                 .declarations
                 .iter()
-                .find_map(|origin_module_declaration| {
+                .find_map(|origin_module_declaration_or_err| {
+                    let origin_module_declaration =
+                        origin_module_declaration_or_err.as_ref().ok()?;
                     let origin_module_declaration_node =
                         origin_module_declaration.declaration.as_ref()?;
                     match &origin_module_declaration_node.value {
@@ -2761,7 +2776,9 @@ fn respond_to_goto_definition(
                 lsp_types::Url::from_file_path(origin_module_file_path).ok()?;
             let declaration_name_range: lsp_types::Range =
                 origin_module_state.syntax.declarations.iter().find_map(
-                    |origin_module_declaration| {
+                    |origin_module_declaration_or_err| {
+                        let origin_module_declaration =
+                            origin_module_declaration_or_err.as_ref().ok()?;
                         let origin_module_declaration_node =
                             origin_module_declaration.declaration.as_ref()?;
                         match &origin_module_declaration_node.value {
@@ -2884,7 +2901,9 @@ fn respond_to_goto_definition(
                 .syntax
                 .declarations
                 .iter()
-                .find_map(|origin_module_declaration| {
+                .find_map(|origin_module_declaration_or_err| {
+                    let origin_module_declaration =
+                        origin_module_declaration_or_err.as_ref().ok()?;
                     let origin_module_declaration_node =
                         origin_module_declaration.declaration.as_ref()?;
                     match &origin_module_declaration_node.value {
@@ -3000,7 +3019,9 @@ fn respond_to_goto_definition(
                 lsp_types::Url::from_file_path(origin_module_file_path).ok()?;
             let declaration_name_range: lsp_types::Range =
                 origin_module_state.syntax.declarations.iter().find_map(
-                    |origin_module_declaration| {
+                    |origin_module_declaration_or_err| {
+                        let origin_module_declaration =
+                            origin_module_declaration_or_err.as_ref().ok()?;
                         let origin_module_declaration_node =
                             origin_module_declaration.declaration.as_ref()?;
                         match &origin_module_declaration_node.value {
@@ -3295,52 +3316,49 @@ fn respond_to_rename(
                 .and_then(|header| header.module_name.as_ref())
                 .map(|node| node.value.as_str())
                 .unwrap_or("");
-            let elm_declared_symbol_to_rename: ElmSymbolToReference = if to_rename_declaration_name
-                .starts_with(char::is_uppercase)
-            {
-                let to_rename_is_record_type_alias: bool = to_rename_project_module_state
-                    .module
-                    .syntax
-                    .declarations
-                    .iter()
-                    .any(|documented_declaration| {
-                        documented_declaration.declaration.as_ref().is_some_and(
-                            |declaration_node| match &declaration_node.value {
-                                ElmSyntaxDeclaration::TypeAlias {
-                                    type_:
-                                        Some(ElmSyntaxNode {
-                                            value: ElmSyntaxType::Record(_),
-                                            range: _,
-                                        }),
-                                    name: Some(record_type_alias_name_node),
-                                    ..
-                                } => {
-                                    record_type_alias_name_node.value == to_rename_declaration_name
-                                }
-                                _ => false,
-                            },
-                        )
-                    });
-                if to_rename_is_record_type_alias {
-                    ElmSymbolToReference::RecordTypeAlias {
-                        module_origin: to_rename_module_origin,
-                        name: to_rename_declaration_name,
-                        including_declaration_name: true,
+            let elm_declared_symbol_to_rename: ElmSymbolToReference =
+                if to_rename_declaration_name.starts_with(char::is_uppercase) {
+                    let to_rename_is_record_type_alias: bool = to_rename_project_module_state
+                        .module
+                        .syntax
+                        .declarations
+                        .iter()
+                        .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
+                        .filter_map(|documented_declaration| {
+                            documented_declaration.declaration.as_ref()
+                        })
+                        .any(|declaration_node| match &declaration_node.value {
+                            ElmSyntaxDeclaration::TypeAlias {
+                                type_:
+                                    Some(ElmSyntaxNode {
+                                        value: ElmSyntaxType::Record(_),
+                                        range: _,
+                                    }),
+                                name: Some(record_type_alias_name_node),
+                                ..
+                            } => record_type_alias_name_node.value == to_rename_declaration_name,
+                            _ => false,
+                        });
+                    if to_rename_is_record_type_alias {
+                        ElmSymbolToReference::RecordTypeAlias {
+                            module_origin: to_rename_module_origin,
+                            name: to_rename_declaration_name,
+                            including_declaration_name: true,
+                        }
+                    } else {
+                        ElmSymbolToReference::TypeNotRecordAlias {
+                            module_origin: to_rename_module_origin,
+                            name: to_rename_declaration_name,
+                            including_declaration_name: true,
+                        }
                     }
                 } else {
-                    ElmSymbolToReference::TypeNotRecordAlias {
+                    ElmSymbolToReference::VariableOrVariant {
                         module_origin: to_rename_module_origin,
                         name: to_rename_declaration_name,
                         including_declaration_name: true,
                     }
-                }
-            } else {
-                ElmSymbolToReference::VariableOrVariant {
-                    module_origin: to_rename_module_origin,
-                    name: to_rename_declaration_name,
-                    including_declaration_name: true,
-                }
-            };
+                };
             state_iter_all_modules(state)
                 .filter_map(move |project_module| {
                     let mut all_uses_of_renamed_module_name: Vec<lsp_types::Range> = Vec::new();
@@ -3383,6 +3401,7 @@ fn respond_to_rename(
                         .syntax
                         .declarations
                         .iter()
+                        .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
                         .any(|documented_declaration| {
                             documented_declaration.declaration.as_ref().is_some_and(
                                 |declaration_node| match &declaration_node.value {
@@ -3566,8 +3585,12 @@ fn respond_to_rename(
                     to_rename_module_origin,
                 )
                 .is_some_and(|(_, to_find_origin_module_state)| {
-                    to_find_origin_module_state.syntax.declarations.iter().any(
-                        |documented_declaration| {
+                    to_find_origin_module_state
+                        .syntax
+                        .declarations
+                        .iter()
+                        .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
+                        .any(|documented_declaration| {
                             documented_declaration.declaration.as_ref().is_some_and(
                                 |declaration_node| match &declaration_node.value {
                                     ElmSyntaxDeclaration::TypeAlias {
@@ -3582,8 +3605,7 @@ fn respond_to_rename(
                                     _ => false,
                                 },
                             )
-                        },
-                    )
+                        })
                 });
                 let symbol_to_find: ElmSymbolToReference = if to_rename_is_record_type_alias {
                     ElmSymbolToReference::RecordTypeAlias {
@@ -3642,32 +3664,34 @@ fn respond_to_rename(
                 to_rename_qualification,
                 type_name_to_rename,
             );
-            let to_rename_is_record_type_alias: bool =
-                project_state_get_module_with_name(
-                    state,
-                    to_rename_project_module_state.project,
-                    to_rename_module_origin,
-                )
-                .is_some_and(|(_, to_rename_module_state)| {
-                    to_rename_module_state.syntax.declarations.iter().any(
-                        |documented_declaration| {
-                            documented_declaration.declaration.as_ref().is_some_and(
-                                |declaration_node| match &declaration_node.value {
-                                    ElmSyntaxDeclaration::TypeAlias {
-                                        type_:
-                                            Some(ElmSyntaxNode {
-                                                value: ElmSyntaxType::Record(_),
-                                                range: _,
-                                            }),
-                                        name: Some(record_type_alias_name_node),
-                                        ..
-                                    } => record_type_alias_name_node.value == type_name_to_rename,
-                                    _ => false,
-                                },
-                            )
-                        },
-                    )
-                });
+            let to_rename_is_record_type_alias: bool = project_state_get_module_with_name(
+                state,
+                to_rename_project_module_state.project,
+                to_rename_module_origin,
+            )
+            .is_some_and(|(_, to_rename_module_state)| {
+                to_rename_module_state
+                    .syntax
+                    .declarations
+                    .iter()
+                    .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
+                    .any(|documented_declaration| {
+                        documented_declaration.declaration.as_ref().is_some_and(
+                            |declaration_node| match &declaration_node.value {
+                                ElmSyntaxDeclaration::TypeAlias {
+                                    type_:
+                                        Some(ElmSyntaxNode {
+                                            value: ElmSyntaxType::Record(_),
+                                            range: _,
+                                        }),
+                                    name: Some(record_type_alias_name_node),
+                                    ..
+                                } => record_type_alias_name_node.value == type_name_to_rename,
+                                _ => false,
+                            },
+                        )
+                    })
+            });
             let elm_declared_symbol_to_rename: ElmSymbolToReference =
                 if to_rename_is_record_type_alias {
                     ElmSymbolToReference::RecordTypeAlias {
@@ -3755,7 +3779,13 @@ fn respond_to_references(
                 .and_then(|header| header.module_name.as_ref())
                 .map(|node| node.value.as_str())
                 .unwrap_or("");
-            for documented_declaration in &to_find_project_module_state.module.syntax.declarations {
+            for documented_declaration in to_find_project_module_state
+                .module
+                .syntax
+                .declarations
+                .iter()
+                .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
+            {
                 if let Some(declaration_node) = &documented_declaration.declaration {
                     elm_syntax_declaration_uses_of_reference_into(
                         &mut all_uses_of_found_module_name,
@@ -3871,6 +3901,7 @@ fn respond_to_references(
                     .syntax
                     .declarations
                     .iter()
+                    .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
                     .any(|documented_declaration| {
                         documented_declaration.declaration.as_ref().is_some_and(
                             |declaration_node| match &declaration_node.value {
@@ -3957,6 +3988,7 @@ fn respond_to_references(
                     .syntax
                     .declarations
                     .iter()
+                    .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
                     .any(|documented_declaration| {
                         documented_declaration.declaration.as_ref().is_some_and(
                             |declaration_node| match &declaration_node.value {
@@ -4034,6 +4066,7 @@ fn respond_to_references(
                     .syntax
                     .declarations
                     .iter()
+                    .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
                     .any(|documented_declaration| {
                         documented_declaration.declaration.as_ref().is_some_and(
                             |declaration_node| match &declaration_node.value {
@@ -4216,8 +4249,12 @@ fn respond_to_references(
                     to_find_module_origin,
                 )
                 .is_some_and(|(_, to_find_origin_module_state)| {
-                    to_find_origin_module_state.syntax.declarations.iter().any(
-                        |documented_declaration| {
+                    to_find_origin_module_state
+                        .syntax
+                        .declarations
+                        .iter()
+                        .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
+                        .any(|documented_declaration| {
                             documented_declaration.declaration.as_ref().is_some_and(
                                 |declaration_node| match &declaration_node.value {
                                     ElmSyntaxDeclaration::TypeAlias {
@@ -4232,8 +4269,7 @@ fn respond_to_references(
                                     _ => false,
                                 },
                             )
-                        },
-                    )
+                        })
                 });
                 let symbol_to_find: ElmSymbolToReference = if to_find_is_record_type_alias {
                     ElmSymbolToReference::RecordTypeAlias {
@@ -4300,6 +4336,7 @@ fn respond_to_references(
                     .syntax
                     .declarations
                     .iter()
+                    .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
                     .any(|documented_declaration| {
                         documented_declaration.declaration.as_ref().is_some_and(
                             |declaration_node| match &declaration_node.value {
@@ -4792,12 +4829,14 @@ fn respond_to_completion(
                         .syntax
                         .declarations
                         .iter()
+                        .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
                         .zip(
                             completion_project_module
                                 .module
                                 .syntax
                                 .declarations
                                 .iter()
+                                .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
                                 .skip(1),
                         )
                         .find_map(|(previous_declaration, current_declaration)| {
@@ -4879,6 +4918,7 @@ fn respond_to_completion(
                     .syntax
                     .declarations
                     .iter()
+                    .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
                     .filter_map(|documented_declaration| {
                         let declaration_node = documented_declaration.declaration.as_ref()?;
                         Some((
@@ -5076,6 +5116,7 @@ fn respond_to_completion(
                     .syntax
                     .declarations
                     .iter()
+                    .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
                     .filter_map(|documented_declaration| {
                         documented_declaration
                             .declaration
@@ -5254,6 +5295,9 @@ fn respond_to_completion(
                                         .syntax
                                         .declarations
                                         .iter()
+                                        .filter_map(|declaration_or_err| {
+                                            declaration_or_err.as_ref().ok()
+                                        })
                                         .find_map(|origin_module_declaration| {
                                             let origin_module_declaration_node =
                                                 origin_module_declaration.declaration.as_ref()?;
@@ -5560,6 +5604,7 @@ fn variable_declaration_completions_into(
     for (origin_module_declaration_node, origin_module_declaration_documentation) in module_syntax
         .declarations
         .iter()
+        .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
         .filter_map(|documented_declaration| {
             documented_declaration
                 .declaration
@@ -5746,6 +5791,7 @@ fn type_declaration_completions_into(
     for (origin_module_declaration_node, origin_module_declaration_documentation) in module_syntax
         .declarations
         .iter()
+        .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
         .filter_map(|documented_declaration| {
             documented_declaration
                 .declaration
@@ -6677,15 +6723,13 @@ struct ElmSyntaxModule {
     documentation: Option<ElmSyntaxNode<String>>,
     imports: Vec<ElmSyntaxNode<ElmSyntaxImport>>,
     comments: Vec<ElmSyntaxNode<ElmSyntaxComment>>,
-    whatever_indented_before_declarations: Option<std::ops::Range<usize>>,
-    declarations: Vec<ElmSyntaxDocumentedDeclaration>,
+    declarations: Vec<Result<ElmSyntaxDocumentedDeclaration, std::ops::Range<usize>>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 struct ElmSyntaxDocumentedDeclaration {
     documentation: Option<ElmSyntaxNode<String>>,
     declaration: Option<ElmSyntaxNode<ElmSyntaxDeclaration>>,
-    whatever_indented_after: Option<std::ops::Range<usize>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -7055,6 +7099,7 @@ fn elm_syntax_module_create_origin_lookup<'a>(
     for declaration_node in elm_syntax_module
         .declarations
         .iter()
+        .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
         .filter_map(|documented_declaration| documented_declaration.declaration.as_ref())
     {
         match &declaration_node.value {
@@ -7239,7 +7284,13 @@ fn elm_syntax_module_create_origin_lookup<'a>(
                                     )
                                 {
                                     'until_origin_choice_type_declaration_found: for documented_declaration in
-                                        imported_module_syntax.syntax.declarations.iter()
+                                        imported_module_syntax
+                                            .syntax
+                                            .declarations
+                                            .iter()
+                                            .filter_map(|declaration_or_err| {
+                                                declaration_or_err.as_ref().ok()
+                                            })
                                     {
                                         if let Some(declaration_node) =
                                             &documented_declaration.declaration
@@ -7320,6 +7371,7 @@ fn elm_syntax_module_exposed_symbols<'a>(elm_syntax_module: &'a ElmSyntaxModule)
             for declaration_node in elm_syntax_module
                 .declarations
                 .iter()
+                .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
                 .filter_map(|documented_declaration| documented_declaration.declaration.as_ref())
             {
                 match &declaration_node.value {
@@ -7388,11 +7440,13 @@ fn elm_syntax_module_exposed_symbols<'a>(elm_syntax_module: &'a ElmSyntaxModule)
                     } => {
                         exposed_symbols.push(&choice_type_expose_name.value);
                         'until_origin_choice_type_declaration_found: for declaration_node in
-                            elm_syntax_module.declarations.iter().filter_map(
-                                |documented_declaration| {
+                            elm_syntax_module
+                                .declarations
+                                .iter()
+                                .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
+                                .filter_map(|documented_declaration| {
                                     documented_declaration.declaration.as_ref()
-                                },
-                            )
+                                })
                         {
                             if let ElmSyntaxDeclaration::ChoiceType {
                                 name: Some(exposed_choice_type_name_node),
@@ -7708,6 +7762,7 @@ fn elm_syntax_module_find_symbol_at_position<'a>(
             elm_syntax_module
                 .declarations
                 .iter()
+                .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
                 .find_map(|documented_declaration| {
                     let declaration_node = documented_declaration.declaration.as_ref()?;
                     elm_syntax_declaration_find_reference_at_position(
@@ -9024,7 +9079,11 @@ fn elm_syntax_module_uses_of_reference_into(
     }
     let module_origin_lookup: ModuleOriginLookup =
         elm_syntax_module_create_origin_lookup(state, project_state, elm_syntax_module);
-    for documented_declaration in elm_syntax_module.declarations.iter() {
+    for documented_declaration in elm_syntax_module
+        .declarations
+        .iter()
+        .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
+    {
         if let Some(declaration_node) = &documented_declaration.declaration {
             elm_syntax_declaration_uses_of_reference_into(
                 uses_so_far,
@@ -10374,7 +10433,11 @@ fn elm_syntax_highlight_module_into(
     for import_node in elm_syntax_module.imports.iter() {
         elm_syntax_highlight_import_into(highlighted_so_far, elm_syntax_node_as_ref(import_node));
     }
-    for documented_declaration in elm_syntax_module.declarations.iter() {
+    for documented_declaration in elm_syntax_module
+        .declarations
+        .iter()
+        .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
+    {
         if let Some(documentation_node) = &documented_declaration.documentation {
             highlighted_so_far.extend(
                 elm_syntax_highlight_multi_line(elm_syntax_node_as_ref(documentation_node), 3, 2)
@@ -11953,7 +12016,6 @@ fn parse_linebreak_as_str<'a>(state: &mut ParseState<'a>) -> Option<&'a str> {
         None
     }
 }
-/// TODO remove
 /// prefer using after `parse_line_break` or similar failed
 fn parse_any_guaranteed_non_linebreak_char(state: &mut ParseState) -> bool {
     match state.source[state.offset_utf8..].chars().next() {
@@ -14430,29 +14492,25 @@ fn parse_elm_syntax_declaration_variable_node_after_maybe_signature_and_name(
         },
     }
 }
-fn parse_elm_syntax_documented_declaration_followed_by_whatever_indented(
+fn parse_elm_syntax_documented_declaration_followed_by_whitespace_and_comments_and_whatever_indented(
     state: &mut ParseState,
 ) -> Option<ElmSyntaxDocumentedDeclaration> {
     match parse_elm_documentation_comment_block_node(state) {
         None => parse_elm_syntax_declaration_node(state).map(|declaration_node| {
-            let maybe_whatever_indented_after: Option<std::ops::Range<usize>> =
-                parse_whatever_until_indent_0_or_end_of_source(state);
+            parse_elm_whitespace_and_comments(state);
             ElmSyntaxDocumentedDeclaration {
                 documentation: None,
                 declaration: Some(declaration_node),
-                whatever_indented_after: maybe_whatever_indented_after,
             }
         }),
         Some(documentation_node) => {
             parse_elm_whitespace_and_comments(state);
             let maybe_declaration: Option<ElmSyntaxNode<ElmSyntaxDeclaration>> =
                 parse_elm_syntax_declaration_node(state);
-            let maybe_whatever_indented_after: Option<std::ops::Range<usize>> =
-                parse_whatever_until_indent_0_or_end_of_source(state);
+            parse_elm_whitespace_and_comments(state);
             Some(ElmSyntaxDocumentedDeclaration {
                 documentation: Some(documentation_node),
                 declaration: maybe_declaration,
-                whatever_indented_after: maybe_whatever_indented_after,
             })
         }
     }
@@ -14476,7 +14534,6 @@ fn parse_elm_syntax_module_until_including_header_only(module_source: &str) -> E
         documentation: None,
         comments: state.comments,
         imports: vec![],
-        whatever_indented_before_declarations: None,
         declarations: vec![],
     }
 }
@@ -14503,23 +14560,26 @@ fn parse_elm_syntax_module(module_source: &str) -> ElmSyntaxModule {
         imports.push(import_node);
         parse_elm_whitespace_and_comments(&mut state);
     }
-    let maybe_whatever_indented_before_declarations: Option<std::ops::Range<usize>> =
-        parse_whatever_until_indent_0_or_end_of_source(&mut state);
-    let mut declarations: Vec<ElmSyntaxDocumentedDeclaration> = Vec::new();
-    'parsing_declarations: loop {
-        match parse_elm_syntax_documented_declaration_followed_by_whatever_indented(&mut state) {
+    let mut last_valid_end_offet_utf8: usize = state.offset_utf8;
+    let mut last_parsed_was_valid: bool = true;
+    let mut declarations: Vec<Result<ElmSyntaxDocumentedDeclaration, std::ops::Range<usize>>> =
+        Vec::new();
+    'parsing_delarations: loop {
+        match parse_elm_syntax_documented_declaration_followed_by_whitespace_and_comments_and_whatever_indented(&mut state) {
             Some(documented_declaration) => {
-                declarations.push(documented_declaration);
+                if !last_parsed_was_valid {
+                    declarations.push(Err(last_valid_end_offet_utf8..state.offset_utf8));
+                }
+                last_parsed_was_valid = true;
+                declarations.push(Ok(documented_declaration));
                 parse_elm_whitespace_and_comments(&mut state);
+                last_valid_end_offet_utf8 = state.offset_utf8;
             }
             None => {
-                if parse_any_guaranteed_non_linebreak_char(&mut state) {
-                    while parse_linebreak(&mut state)
-                        || parse_same_line_char_if(&mut state, char::is_whitespace)
-                    {
-                    }
+                if parse_linebreak(&mut state) || parse_any_guaranteed_non_linebreak_char(&mut state) {
+                    last_parsed_was_valid = false;
                 } else {
-                    break 'parsing_declarations;
+                    break 'parsing_delarations;
                 }
             }
         }
@@ -14529,25 +14589,8 @@ fn parse_elm_syntax_module(module_source: &str) -> ElmSyntaxModule {
         documentation: maybe_module_documentation,
         comments: state.comments,
         imports: imports,
-        whatever_indented_before_declarations: maybe_whatever_indented_before_declarations,
         declarations: declarations,
     }
-}
-fn parse_whatever_until_indent_0_or_end_of_source(
-    state: &mut ParseState,
-) -> Option<std::ops::Range<usize>> {
-    if state.position.character == 0 {
-        return None;
-    }
-    let start_offet_utf8 = state.offset_utf8;
-    'until_indent_0: while state.position.character != 0 {
-        if parse_any_guaranteed_non_linebreak_char(state) {
-            while parse_linebreak(state) || parse_same_line_char_if(state, char::is_whitespace) {}
-        } else {
-            break 'until_indent_0;
-        }
-    }
-    Some(start_offet_utf8..state.offset_utf8)
 }
 
 fn string_replace_lsp_range(
