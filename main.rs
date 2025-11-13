@@ -2108,8 +2108,10 @@ fn respond_to_hover(
                     hovered_project_module_state.project,
                     &hovered_project_module_state.module.syntax,
                 ),
-                hovered_qualification,
-                hovered_name,
+                ElmQualified {
+                    qualification: hovered_qualification,
+                    name: hovered_name,
+                },
             );
             let (_, origin_module_state) = project_state_get_module_with_name(
                 state,
@@ -2337,8 +2339,10 @@ fn respond_to_hover(
                     hovered_project_module_state.project,
                     &hovered_project_module_state.module.syntax,
                 ),
-                hovered_qualification,
-                hovered_name,
+                ElmQualified {
+                    qualification: hovered_qualification,
+                    name: hovered_name,
+                },
             );
             if (hovered_module_origin == "List") && (hovered_name == "List") {
                 // module List has no type List.List exposed in an oversight so we make one up.
@@ -2913,8 +2917,10 @@ fn respond_to_goto_definition(
                     goto_symbol_project_module_state.project,
                     &goto_symbol_project_module_state.module.syntax,
                 ),
-                goto_qualification,
-                goto_name,
+                ElmQualified {
+                    qualification: goto_qualification,
+                    name: goto_name,
+                },
             );
             let (origin_module_file_path, origin_module_state) =
                 project_state_get_module_with_name(
@@ -3033,8 +3039,10 @@ fn respond_to_goto_definition(
                     goto_symbol_project_module_state.project,
                     &goto_symbol_project_module_state.module.syntax,
                 ),
-                goto_qualification,
-                goto_name,
+                ElmQualified {
+                    qualification: goto_qualification,
+                    name: goto_name,
+                },
             );
             let (origin_module_file_path, origin_module_state) =
                 project_state_get_module_with_name(
@@ -3603,8 +3611,10 @@ fn respond_to_rename(
                         to_rename_project_module_state.project,
                         &to_rename_project_module_state.module.syntax,
                     ),
-                    to_rename_qualification,
-                    to_rename_name,
+                    ElmQualified {
+                        qualification: to_rename_qualification,
+                        name: to_rename_name,
+                    },
                 );
                 let to_rename_is_record_type_alias: bool = project_state_get_module_with_name(
                     state,
@@ -3688,8 +3698,10 @@ fn respond_to_rename(
                     to_rename_project_module_state.project,
                     &to_rename_project_module_state.module.syntax,
                 ),
-                to_rename_qualification,
-                type_name_to_rename,
+                ElmQualified {
+                    qualification: to_rename_qualification,
+                    name: type_name_to_rename,
+                },
             );
             let to_rename_is_record_type_alias: bool = project_state_get_module_with_name(
                 state,
@@ -4267,8 +4279,10 @@ fn respond_to_references(
                         to_find_project_module_state.project,
                         &to_find_project_module_state.module.syntax,
                     ),
-                    to_find_qualification,
-                    to_find_name,
+                    ElmQualified {
+                        qualification: to_find_qualification,
+                        name: to_find_name,
+                    },
                 );
                 let to_find_is_record_type_alias: bool = project_state_get_module_with_name(
                     state,
@@ -4350,8 +4364,10 @@ fn respond_to_references(
                     to_find_project_module_state.project,
                     &to_find_project_module_state.module.syntax,
                 ),
-                to_find_qualification,
-                type_name_to_find,
+                ElmQualified {
+                    qualification: to_find_qualification,
+                    name: type_name_to_find,
+                },
             );
             let to_find_is_record_type_alias: bool = project_state_get_module_with_name(
                 state,
@@ -4566,13 +4582,7 @@ fn present_port_declaration_info_markdown(
     elm_syntax_port_declaration_into(
         &mut declaration_as_string,
         comments,
-        |qualified| {
-            look_up_origin_module(
-                module_origin_lookup,
-                qualified.qualification,
-                qualified.name,
-            )
-        },
+        |qualified| look_up_origin_module(module_origin_lookup, qualified),
         declaration_range,
         maybe_fully_qualified_name
             .as_ref()
@@ -4603,13 +4613,7 @@ fn present_type_alias_declaration_info_markdown(
     elm_syntax_type_alias_declaration_into(
         &mut declaration_as_string,
         elm_syntax_comments_in_range(comments, declaration_range),
-        |qualified| {
-            look_up_origin_module(
-                module_origin_lookup,
-                qualified.qualification,
-                qualified.name,
-            )
-        },
+        |qualified| look_up_origin_module(module_origin_lookup, qualified),
         declaration_range,
         maybe_fully_qualified_name
             .as_ref()
@@ -4674,13 +4678,7 @@ fn present_choice_type_declaration_info_markdown(
     elm_syntax_choice_type_declaration_into(
         &mut declaration_string,
         elm_syntax_comments_in_range(comments, declaration_range),
-        |qualified| {
-            look_up_origin_module(
-                module_origin_lookup,
-                qualified.qualification,
-                qualified.name,
-            )
-        },
+        |qualified| look_up_origin_module(module_origin_lookup, qualified),
         declaration_range,
         maybe_fully_qualified_name
             .as_ref()
@@ -7419,25 +7417,18 @@ fn module_origin_lookup_for_implicit_imports() -> ModuleOriginLookup<'static> {
 
 fn look_up_origin_module<'a>(
     module_origin_lookup: &ModuleOriginLookup<'a>,
-    // TODO take ElmQualified<'a> instead
-    qualification: &'a str,
-    name: &'a str,
+    qualified: ElmQualified<'a>,
 ) -> &'a str {
-    match match qualification {
-        "" => module_origin_lookup.unqualified.get(name),
+    match match qualified.qualification {
+        "" => module_origin_lookup.unqualified.get(qualified.name),
         qualification_module_or_alias => module_origin_lookup
             .uniquely_qualified
             .get(qualification_module_or_alias),
     } {
         Some(module_origin) => module_origin,
-        None => match module_origin_lookup
-            .ambiguously_qualified
-            .get(&ElmQualified {
-                qualification: qualification,
-                name: name,
-            }) {
+        None => match module_origin_lookup.ambiguously_qualified.get(&qualified) {
             Some(module_origin) => module_origin,
-            None => qualification,
+            None => qualified.qualification,
         },
     }
 }
@@ -7952,13 +7943,7 @@ fn elm_syntax_type_to_string(
     elm_syntax_type_not_parenthesized_into(
         &mut builder,
         indent,
-        |qualified| {
-            look_up_origin_module(
-                module_origin_lookup,
-                qualified.qualification,
-                qualified.name,
-            )
-        },
+        |qualified| look_up_origin_module(module_origin_lookup, qualified),
         comments, // pass from parens and slice?
         elm_syntax_type,
     );
@@ -10414,8 +10399,10 @@ fn elm_syntax_type_uses_of_reference_into(
         } => {
             let module_origin: &str = look_up_origin_module(
                 module_origin_lookup,
-                &reference.value.qualification,
-                &reference.value.name,
+                ElmQualified {
+                    qualification: &reference.value.qualification,
+                    name: &reference.value.name,
+                },
             );
             if let ElmSymbolToReference::TypeNotRecordAlias {
                 name: symbol_name,
@@ -10863,8 +10850,10 @@ fn elm_syntax_expression_uses_of_reference_into(
                     && symbol_module_origin
                         == look_up_origin_module(
                             module_origin_lookup,
-                            "",
-                            &record_variable_node.value,
+                            ElmQualified {
+                                qualification: "",
+                                name: &record_variable_node.value,
+                            },
                         )
                     && symbol_name == record_variable_node.value
                 {
@@ -10901,8 +10890,13 @@ fn elm_syntax_expression_uses_of_reference_into(
                     uses_so_far.push(elm_syntax_expression_node.range);
                 }
             } else {
-                let module_origin: &str =
-                    look_up_origin_module(module_origin_lookup, qualification, name);
+                let module_origin: &str = look_up_origin_module(
+                    module_origin_lookup,
+                    ElmQualified {
+                        qualification: qualification,
+                        name: name,
+                    },
+                );
                 if let ElmSymbolToReference::VariableOrVariant {
                     module_origin: symbol_module_origin,
                     name: symbol_name,
@@ -11211,10 +11205,12 @@ fn elm_syntax_pattern_uses_of_reference_into(
         ElmSyntaxPattern::Unit => {}
         ElmSyntaxPattern::Variable(_) => {}
         ElmSyntaxPattern::Variant { reference, values } => {
-            let module_origin = look_up_origin_module(
+            let module_origin: &str = look_up_origin_module(
                 module_origin_lookup,
-                &reference.value.qualification,
-                &reference.value.name,
+                ElmQualified {
+                    qualification: &reference.value.qualification,
+                    name: &reference.value.name,
+                },
             );
             if let ElmSymbolToReference::VariableOrVariant {
                 module_origin: symbol_module_origin,
