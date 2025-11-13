@@ -1,37 +1,5 @@
-#![allow(non_shorthand_field_patterns)]
+// lsp still reports this specific error, even though it is allowed in the cargo.toml
 #![allow(non_upper_case_globals)]
-// If you want to contribute, you don't need to bother with clippy
-// I just wanted to try enabling it for myself to maybe find performance issues
-// and did e.g. find unnecessary PathBuf clones
-#![warn(clippy::pedantic)]
-#![allow(clippy::too_many_lines)]
-#![allow(clippy::uninlined_format_args)]
-#![allow(clippy::explicit_iter_loop)]
-#![allow(clippy::similar_names)]
-#![allow(clippy::single_match_else)]
-#![allow(clippy::map_unwrap_or)]
-#![allow(clippy::if_not_else)]
-#![allow(clippy::cast_possible_truncation)]
-#![allow(clippy::cast_sign_loss)]
-#![allow(clippy::cast_possible_wrap)]
-#![allow(clippy::manual_string_new)]
-#![allow(clippy::option_option)]
-#![allow(clippy::elidable_lifetime_names)]
-// no point
-#![allow(clippy::single_char_pattern)]
-// generally useful but too many false positives and cases where returning the same trivial expression is perfectly fine
-#![allow(clippy::match_same_arms)]
-// has false positives, e.g. for std::path::Path
-#![allow(clippy::unnecessary_debug_formatting)]
-// non-pedantic
-#![allow(clippy::redundant_field_names)]
-#![allow(clippy::unwrap_or_default)]
-#![allow(clippy::redundant_closure)]
-#![allow(clippy::collapsible_else_if)]
-// heuristic
-#![allow(clippy::too_many_arguments)]
-// sometimes skip(length_of_thing).next is more clear
-#![allow(clippy::iter_skip_next)]
 
 struct State {
     client_socket: async_lsp::ClientSocket,
@@ -1026,7 +994,7 @@ fn initialize_state_for_project_into(
         skipped_dependencies,
         elm_home_path,
         ProjectKind::Dependency,
-        direct_dependency_paths.clone().into_iter(),
+        direct_dependency_paths.into_iter(),
     );
     match project_kind {
         ProjectKind::Dependency | ProjectKind::Test => {}
@@ -6415,7 +6383,7 @@ fn project_module_name_completions_for_except(
     let module_name_base_to_complete: String = module_name_to_complete
         .rsplit_once(".")
         .map(|(before_last_dot, _)| before_last_dot.to_string() + ".")
-        .unwrap_or("".to_string());
+        .unwrap_or_else(|| "".to_string());
     completion_project
         .dependency_exposed_module_names
         .iter()
@@ -6882,7 +6850,7 @@ enum ElmSyntaxPattern {
         values: Vec<ElmSyntaxNode<ElmSyntaxPattern>>,
     },
 }
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ElmSyntaxStringQuotingStyle {
     SingleQuoted,
     TripleQuoted,
@@ -7024,7 +6992,7 @@ enum ElmSyntaxExpression {
         part1: Option<ElmSyntaxNode<Box<ElmSyntaxExpression>>>,
     },
 }
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ElmSyntaxIntBase {
     IntBase10,
     IntBase16,
@@ -7102,7 +7070,7 @@ enum ElmSyntaxDeclaration {
         result: Option<ElmSyntaxNode<ElmSyntaxExpression>>,
     },
 }
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ElmSyntaxInfixDirection {
     Left,
     Non,

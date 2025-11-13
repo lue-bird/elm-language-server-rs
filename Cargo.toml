@@ -26,3 +26,48 @@ opt-level = 2
 codegen-backend = "cranelift"
 [profile.dev.package."*"]
 debug = false
+
+[lints.rust]
+non_shorthand_field_patterns = { level = "allow" }
+non_upper_case_globals = { level = "allow" }
+
+# If you want to contribute, you really don't need to bother with clippy
+# I just wanted to try enabling it for myself to maybe find performance issues
+# and did e.g. find unnecessary PathBuf clones
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+single_char_pattern = { level = "allow" }
+# generally useful but too many false positives and cases where returning the same trivial expression is perfectly fine
+match_same_arms = { level = "allow" }
+# has false positives, e.g. for std::path::Path
+unnecessary_debug_formatting = { level = "allow" }
+redundant_field_names = { level = "allow" }
+unwrap_or_default = { level = "allow" }
+redundant_closure = { level = "allow" }
+collapsible_else_if = { level = "allow" }
+# heuristic
+too_many_arguments = { level = "allow" }
+# sometimes skip(length_of_thing).next is more clear
+iter_skip_next = { level = "allow" }
+too_many_lines = { level = "allow" }
+uninlined_format_args = { level = "allow" }
+explicit_iter_loop = { level = "allow" }
+similar_names = { level = "allow" }
+single_match_else = { level = "allow" }
+map_unwrap_or = { level = "allow" }
+if_not_else = { level = "allow" }
+cast_possible_truncation = { level = "allow" }
+cast_sign_loss = { level = "allow" }
+cast_possible_wrap = { level = "allow" }
+manual_string_new = { level = "allow" }
+option_option = { level = "allow" }
+elidable_lifetime_names = { level = "allow" }
+
+nursery = { level = "warn", priority = -1 }
+# not sure how to _only_ allow recursive self in type definitions?
+use_self = { level = "allow" }
+option_if_let_else = { level = "allow" }
+missing_const_for_fn = { level = "allow" }
+branches_sharing_code = { level = "allow" }
+equatable_if_let = { level = "allow" }
+useless_let_if_seq = { level = "allow" }
