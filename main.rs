@@ -16,6 +16,7 @@
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::manual_string_new)]
 #![allow(clippy::option_option)]
+#![allow(clippy::elidable_lifetime_names)]
 // no point
 #![allow(clippy::single_char_pattern)]
 // generally useful but too many false positives and cases where returning the same trivial expression is perfectly fine
@@ -31,9 +32,6 @@
 #![allow(clippy::too_many_arguments)]
 // sometimes skip(length_of_thing).next is more clear
 #![allow(clippy::iter_skip_next)]
-// TODO remove allow
-#![allow(clippy::needless_lifetimes)]
-#![allow(clippy::elidable_lifetime_names)]
 
 struct State {
     client_socket: async_lsp::ClientSocket,
@@ -1340,9 +1338,9 @@ fn parse_elm_json<'a>(json: &'a serde_json::Value) -> Result<ElmJson<'a>, String
         _ => Err("must have field type".to_string()),
     }
 }
-fn elm_json_version_constraint_to_minimum_version<'a>(
-    elm_json_version_constraint: &'a str,
-) -> Result<&'a str, String> {
+fn elm_json_version_constraint_to_minimum_version(
+    elm_json_version_constraint: &str,
+) -> Result<&str, String> {
     match elm_json_version_constraint.split_once(" <= v < ") {
         None => Err(format!(
             "dependency version constraints must be set in the form lo <= v < hi, found {elm_json_version_constraint}"
@@ -7123,9 +7121,7 @@ struct ElmSyntaxNode<Value> {
     value: Value,
 }
 
-fn elm_syntax_node_as_ref<'a, Value>(
-    elm_syntax_node: &'a ElmSyntaxNode<Value>,
-) -> ElmSyntaxNode<&'a Value> {
+fn elm_syntax_node_as_ref<Value>(elm_syntax_node: &ElmSyntaxNode<Value>) -> ElmSyntaxNode<&Value> {
     ElmSyntaxNode {
         range: elm_syntax_node.range,
         value: &elm_syntax_node.value,
@@ -7149,9 +7145,9 @@ fn elm_syntax_node_map<A, B>(
         value: value_change(elm_syntax_node.value),
     }
 }
-fn elm_syntax_node_unbox<'a, Value>(
-    elm_syntax_node_box: &'a ElmSyntaxNode<Box<Value>>,
-) -> ElmSyntaxNode<&'a Value> {
+fn elm_syntax_node_unbox<Value>(
+    elm_syntax_node_box: &ElmSyntaxNode<Box<Value>>,
+) -> ElmSyntaxNode<&Value> {
     ElmSyntaxNode {
         range: elm_syntax_node_box.range,
         value: &elm_syntax_node_box.value,
@@ -7814,7 +7810,7 @@ fn elm_syntax_module_create_origin_lookup<'a>(
     module_origin_lookup
 }
 
-fn elm_syntax_module_exposed_symbols<'a>(elm_syntax_module: &'a ElmSyntaxModule) -> Vec<&'a str> {
+fn elm_syntax_module_exposed_symbols(elm_syntax_module: &ElmSyntaxModule) -> Vec<&str> {
     let mut exposed_symbols: Vec<&str> = Vec::new();
     match elm_syntax_module
         .header
