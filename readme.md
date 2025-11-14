@@ -32,7 +32,6 @@ Works with [`elm-format`](https://github.com/avh4/elm-format?tab=readme-ov-file#
   Also validate if elm --report region column is UTF-8 or UTF-16 (seems to be UTF-16 strangely)
 - show function parameter names (leaning towards no, as they are often confusing if they are curried, reveal non-exposed variant patterns, have more parameters than the type suggests, are undescriptive etc)
 - currently, an exposed member will still be suggested even when a local module-declared reference/local binding with the same name exists. Likewise, a local module-declared reference will still be suggested even when a local binding with the same name exists. (somewhat easily fixable but I don't really see the harm in directly showing this shadowing in your face)
-- add a vs code extension as glue (would prefer not to, especially because I dislike distributing binaries. But open to the idea, as it would enable syntax highlighting inside doc comments and make installing easier)
 - add support for using [elm-dev](https://github.com/mdgriffith/elm-dev) as the compiler to speed up compile times and retrieve type info (I assume integrating it is hard and to me it seems kind of bloated with MCP bs etc, currently leaning towards no)
 - your idea 👀
 
