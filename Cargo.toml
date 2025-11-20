@@ -14,18 +14,20 @@ tower = "0.5.2"
 tokio = { version = "1.47.1", features = ["macros", "rt"] }
 serde_json = "1.0.145"
 
+[features]
+# switch out elm-format for a fast rust formatter that is mostly but not fully compatible
+use_experimental_formatter = []
+
 [profile.dev]
 # disabling debug info speeds up build
 debug = "none"
 # >= 1 required to enable tail-call-elimination.
-# Without, the lsp stack overflows on medium to large files.
+# Without, the language server stack can overflows on bigger files.
 # Here, I chose to do 2 to get a more realistic feel for the release performance
 # but please do switch to 1 locally if you need faster compile times
 opt-level = 2
 # speeds up build a ton (about 6-10+ times)
 codegen-backend = "cranelift"
-[profile.dev.package."*"]
-debug = false
 
 [lints.rust]
 non_shorthand_field_patterns = { level = "allow" }
