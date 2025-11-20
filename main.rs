@@ -2,7 +2,6 @@
 #![allow(non_upper_case_globals)]
 
 struct State {
-    client_socket: async_lsp::ClientSocket,
     projects: std::collections::HashMap<
         /* path to directory containing elm.json */ std::path::PathBuf,
         ProjectState,
@@ -32,274 +31,342 @@ struct ModuleState {
     source: String,
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() {
-    let (server, _client_socket) = async_lsp::MainLoop::new_server(|client| {
-        let mut router: async_lsp::router::Router<State> = async_lsp::router::Router::new(State {
-            client_socket: client.clone(),
-            projects: std::collections::HashMap::new(),
-        });
-        router.request::<lsp_types::request::Initialize, _>(|state, initialize_arguments| {
-            initialize_state_for_workspace_directories_into(state, &initialize_arguments);
-            async move {
-                Ok(lsp_types::InitializeResult {
-                    capabilities: server_capabilities(),
-                    server_info: Some(lsp_types::ServerInfo {
-                        name: "elm-language-server-rs".to_string(),
-                        version: Some("0.0.1".to_string()),
-                    }),
-                })
+fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let (connection, io_thread) = lsp_server::Connection::stdio();
+
+    let (initialize_request_id, initialize_arguments_json) = connection.initialize_start()?;
+    connection.initialize_finish(
+        initialize_request_id,
+        serde_json::to_value(lsp_types::InitializeResult {
+            capabilities: server_capabilities(),
+            server_info: Some(lsp_types::ServerInfo {
+                name: "elm-language-server-rs".to_string(),
+                version: Some("0.0.2".to_string()),
+            }),
+        })?,
+    )?;
+    let initialize_arguments: lsp_types::InitializeParams =
+        serde_json::from_value(initialize_arguments_json)?;
+    let state: State = initialize_state_for_workspace_directories_into(&initialize_arguments);
+    server_loop(&connection, state)?;
+    io_thread.join()?;
+    Ok(())
+}
+fn server_loop(
+    connection: &lsp_server::Connection,
+    mut state: State,
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    for client_message in &connection.receiver {
+        match client_message {
+            lsp_server::Message::Request(request) => {
+                if connection.handle_shutdown(&request)? {
+                    break;
+                }
+                if let Err(error) = handle_request(
+                    connection,
+                    &state,
+                    request.id,
+                    &request.method,
+                    request.params,
+                ) {
+                    eprintln!("request {} failed: {error}", &request.method);
+                }
             }
-        });
-        router.request::<lsp_types::request::HoverRequest, _>(
-            |state, hover_arguments: lsp_types::HoverParams| {
-                let maybe_hover_result: Option<lsp_types::Hover> =
-                    respond_to_hover(state, &hover_arguments);
-                async move { Ok(maybe_hover_result) }
-            },
-        );
-        router.request::<lsp_types::request::GotoDefinition, _>(
-            |state, goto_definition_arguments: lsp_types::GotoDefinitionParams| {
-                let response: Option<lsp_types::GotoDefinitionResponse> =
-                    respond_to_goto_definition(state, goto_definition_arguments);
-                async move { Ok(response) }
-            },
-        );
-        router.request::<lsp_types::request::PrepareRenameRequest, _>(
-            |state, prepare_rename_arguments: lsp_types::TextDocumentPositionParams| {
-                let prepared: Option<
-                    Result<lsp_types::PrepareRenameResponse, async_lsp::ResponseError>,
-                > = respond_to_prepare_rename(state, &prepare_rename_arguments);
-                async move {
-                    match prepared {
-                        None => Ok(None),
-                        Some(result) => result.map(Some),
-                    }
+            lsp_server::Message::Notification(notification) => {
+                if let Err(err) = handle_notification(
+                    connection,
+                    &mut state,
+                    &notification.method,
+                    notification.params,
+                ) {
+                    eprintln!("notification {} failed: {err}", notification.method);
                 }
-            },
-        );
-        router.request::<lsp_types::request::Rename, _>(
-            |state, rename_arguments: lsp_types::RenameParams| {
-                let maybe_rename_edits: Option<Vec<lsp_types::TextDocumentEdit>> =
-                    respond_to_rename(state, rename_arguments);
-                async move {
-                    Ok(
-                        maybe_rename_edits.map(|rename_edits| lsp_types::WorkspaceEdit {
-                            changes: None,
-                            document_changes: Some(lsp_types::DocumentChanges::Edits(rename_edits)),
-                            change_annotations: None,
-                        }),
-                    )
-                }
-            },
-        );
-        router.request::<lsp_types::request::References, _>(
-            |state, reference_arguments: lsp_types::ReferenceParams| {
-                let maybe_reference_use_ranges: Option<Vec<lsp_types::Location>> =
-                    respond_to_references(state, reference_arguments);
-                async move { Ok(maybe_reference_use_ranges) }
-            },
-        );
-        router.request::<lsp_types::request::SemanticTokensFullRequest, _>(
-            |state, semantic_tokens_arguments: lsp_types::SemanticTokensParams| {
-                let semantic_tokens: Option<lsp_types::SemanticTokensResult> =
-                    respond_to_semantic_tokens_full(state, &semantic_tokens_arguments);
-                async move { Ok(semantic_tokens) }
-            },
-        );
-        router.request::<lsp_types::request::Completion, _>(
-            |state, completion_arguments: lsp_types::CompletionParams| {
-                let maybe_completions: Option<lsp_types::CompletionResponse> =
-                    respond_to_completion(state, &completion_arguments);
-                async { Ok(maybe_completions) }
-            },
-        );
-        router.request::<lsp_types::request::Formatting, _>(|state, formatting_arguments| {
-            let maybe_edits = respond_to_document_formatting(state, &formatting_arguments);
-            async { Ok(maybe_edits) }
-        });
-        router.request::<lsp_types::request::Shutdown, _>(|_state, ()| {
-            // ?
-            async { Ok(()) }
-        });
-        router.notification::<lsp_types::notification::Initialized>({
-            let client = client.clone();
-            move |state, _| {
-                publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(state);
-                let file_watch_registration_options: lsp_types::DidChangeWatchedFilesRegistrationOptions =
-                    lsp_types::DidChangeWatchedFilesRegistrationOptions {
-                        watchers: state
-                            .projects
-                            .values()
-                            .flat_map(|project| &project.source_directories)
-                            .filter_map(|source_directory_path| {
-                                lsp_types::Url::from_directory_path(source_directory_path).ok()
-                            })
-                            .map(|source_directory_url| lsp_types::FileSystemWatcher {
-                                glob_pattern: lsp_types::GlobPattern::Relative(
-                                    lsp_types::RelativePattern {
-                                        base_uri: lsp_types::OneOf::Right(source_directory_url),
-                                        pattern: "**/*.elm".to_string(),
-                                    },
-                                ),
-                                kind: Some(
-                                    lsp_types::WatchKind::Create
-                                        | lsp_types::WatchKind::Change
-                                        | lsp_types::WatchKind::Delete,
-                                ),
-                            })
-                            .collect::<Vec<lsp_types::FileSystemWatcher>>(),
-                    };
-                let mut client = client.clone();
-                tokio::spawn(async move {
-                    match serde_json::to_value(file_watch_registration_options) {
-                        Err(encode_error) => {
-                            eprintln!(
-                                "failed to register file watchers because encoding the request \
-                                options failed: {encode_error}"
-                            );
-                        }
-                        Ok(file_watch_registration_options_json) => {
-                            if let Err(file_watch_register_result) = async_lsp::LanguageClient::register_capability(
-                                &mut client,
-                                lsp_types::RegistrationParams {
-                                    registrations: vec![lsp_types::Registration {
-                                        id: "file-watch".to_string(),
-                                        method: <lsp_types::notification::DidChangeWatchedFiles as lsp_types::notification::Notification>::METHOD
-                                            .to_string(),
-                                        register_options: Some(file_watch_registration_options_json),
-                                    }],
+            }
+            lsp_server::Message::Response(resp) => {
+                eprintln!("client response: {resp:?}");
+            }
+        }
+    }
+    Ok(())
+}
+fn handle_notification(
+    connection: &lsp_server::Connection,
+    state: &mut State,
+    notification_method: &str,
+    notification_arguments_json: serde_json::Value,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match notification_method {
+        <lsp_types::notification::Initialized as lsp_types::notification::Notification>::METHOD => {
+            publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(connection, state);
+            let file_watch_registration_options: lsp_types::DidChangeWatchedFilesRegistrationOptions =
+                lsp_types::DidChangeWatchedFilesRegistrationOptions {
+                    watchers: state
+                        .projects
+                        .values()
+                        .flat_map(|project| &project.source_directories)
+                        .filter_map(|source_directory_path| {
+                            lsp_types::Url::from_directory_path(source_directory_path).ok()
+                        })
+                        .map(|source_directory_url| lsp_types::FileSystemWatcher {
+                            glob_pattern: lsp_types::GlobPattern::Relative(
+                                lsp_types::RelativePattern {
+                                    base_uri: lsp_types::OneOf::Right(source_directory_url),
+                                    pattern: "**/*.elm".to_string(),
                                 },
-                            ).await {
-                                eprintln!("LSP client failed to register file watching: {:?}", file_watch_register_result);
-                            }
-                        }
-                    }
-                });
-                std::ops::ControlFlow::Continue(())
+                            ),
+                            kind: Some(
+                                lsp_types::WatchKind::Create
+                                    | lsp_types::WatchKind::Change
+                                    | lsp_types::WatchKind::Delete,
+                            ),
+                        })
+                        .collect::<Vec<lsp_types::FileSystemWatcher>>(),
+                };
+            let file_watch_registration_options_json: serde_json::Value =
+                serde_json::to_value(file_watch_registration_options)?;
+            let file_watch_registration: lsp_types::Registration = lsp_types::Registration {
+                id: "file-watch".to_string(),
+                method: <lsp_types::notification::DidChangeWatchedFiles as lsp_types::notification::Notification>::METHOD.to_string(),
+                register_options: Some(file_watch_registration_options_json),
+            };
+            connection.sender.send(lsp_server::Message::Notification(
+                lsp_server::Notification {
+                    method: <lsp_types::request::RegisterCapability as lsp_types::request::Request>::METHOD.to_string(),
+                    params: serde_json::to_value(lsp_types::RegistrationParams {
+                        registrations: vec![file_watch_registration],
+                    })?,
+                },
+            ))?;
+        }
+        <lsp_types::notification::DidOpenTextDocument as lsp_types::notification::Notification>::METHOD => {}
+        <lsp_types::notification::DidCloseTextDocument as lsp_types::notification::Notification>::METHOD => {}
+        <lsp_types::notification::DidChangeTextDocument as lsp_types::notification::Notification>::METHOD => {
+            let arguments: <lsp_types::notification::DidChangeTextDocument as lsp_types::notification::Notification>::Params =
+                serde_json::from_value(notification_arguments_json)?;
+            update_state_on_did_change_text_document(state, arguments);
+        }
+        <lsp_types::notification::DidSaveTextDocument as lsp_types::notification::Notification>::METHOD => {
+            let arguments: <lsp_types::notification::DidSaveTextDocument as lsp_types::notification::Notification>::Params =
+                serde_json::from_value(notification_arguments_json)?;
+            if let Ok(saved_path) = &arguments
+                .text_document
+                .uri
+                .to_file_path()
+                && let Some((saved_project_path, saved_project_state)) =
+                    state_get_mut_project_by_module_path(&mut state.projects, saved_path)
+            {
+                publish_and_update_state_for_diagnostics_for_document(
+                    connection,
+                    saved_project_path,
+                    saved_project_state,
+                    std::iter::empty(),
+                );
             }
-        });
-        router.notification::<lsp_types::notification::DidOpenTextDocument>(|_state, _| {
-            std::ops::ControlFlow::Continue(())
-        });
-        router.notification::<lsp_types::notification::DidChangeTextDocument>(
-            |state, did_change_text_document: lsp_types::DidChangeTextDocumentParams| {
-                update_state_on_did_change_text_document(state, did_change_text_document);
-                std::ops::ControlFlow::Continue(())
-            },
-        );
-        router.notification::<lsp_types::notification::DidChangeWatchedFiles>(
-            |state, did_change_watched_files| {
-                for (project_path, project_state) in state.projects.iter_mut() {
-                    let mut project_was_updated: bool = false;
-                    let mut removed_paths: Vec<lsp_types::Url> = Vec::new();
-                    'updating_project: for file_change_event in &did_change_watched_files.changes {
-                        match file_change_event.uri.to_file_path() {
-                            Err(()) => {}
-                            Ok(changed_file_path) => {
-                                if changed_file_path.extension().is_none_or(|ext| ext != "elm")
-                                    || !project_state
-                                        .source_directories
-                                        .iter()
-                                        .any(|dir| changed_file_path.starts_with(dir))
-                                {
-                                    continue 'updating_project;
+        }
+        <lsp_types::notification::DidChangeWatchedFiles as lsp_types::notification::Notification>::METHOD => {
+            let arguments:  <lsp_types::notification::DidChangeWatchedFiles as lsp_types::notification::Notification>::Params =
+                serde_json::from_value(notification_arguments_json)?;
+            for (project_path, project_state) in state.projects.iter_mut() {
+                let mut project_was_updated: bool = false;
+                let mut removed_paths: Vec<lsp_types::Url> = Vec::new();
+                'updating_project: for file_change_event in &arguments.changes {
+                    match file_change_event.uri.to_file_path() {
+                        Err(()) => {}
+                        Ok(changed_file_path) => {
+                            if changed_file_path.extension().is_none_or(|ext| ext != "elm")
+                                || !project_state
+                                    .source_directories
+                                    .iter()
+                                    .any(|dir| changed_file_path.starts_with(dir))
+                            {
+                                continue 'updating_project;
+                            }
+                            match file_change_event.typ {
+                                lsp_types::FileChangeType::DELETED => {
+                                    if project_state.modules.remove(&changed_file_path).is_some() {
+                                        project_was_updated = true;
+                                        removed_paths.push(file_change_event.uri.clone());
+                                    }
                                 }
-                                match file_change_event.typ {
-                                    lsp_types::FileChangeType::DELETED => {
-                                        if project_state
-                                            .modules
-                                            .remove(&changed_file_path)
-                                            .is_some()
-                                        {
+                                lsp_types::FileChangeType::CREATED
+                                | lsp_types::FileChangeType::CHANGED => {
+                                    match std::fs::read_to_string(&changed_file_path) {
+                                        Err(_) => {}
+                                        Ok(changed_file_source) => {
                                             project_was_updated = true;
-                                            removed_paths.push(file_change_event.uri.clone());
+                                            project_state.modules.insert(
+                                                changed_file_path,
+                                                initialize_module_state_from_source(
+                                                    changed_file_source,
+                                                ),
+                                            );
                                         }
                                     }
-                                    lsp_types::FileChangeType::CREATED
-                                    | lsp_types::FileChangeType::CHANGED => {
-                                        match std::fs::read_to_string(&changed_file_path) {
-                                            Err(_) => {}
-                                            Ok(changed_file_source) => {
-                                                project_was_updated = true;
-                                                project_state.modules.insert(
-                                                    changed_file_path,
-                                                    initialize_module_state_from_source(
-                                                        changed_file_source,
-                                                    ),
-                                                );
-                                            }
-                                        }
-                                    }
-                                    unknown_file_change_type => {
-                                        eprintln!(
-                                            "unknown file change type sent by LSP client: {:?}",
-                                            unknown_file_change_type
-                                        );
-                                    }
+                                }
+                                unknown_file_change_type => {
+                                    eprintln!(
+                                        "unknown file change type sent by LSP client: {:?}",
+                                        unknown_file_change_type
+                                    );
                                 }
                             }
                         }
-                    }
-                    if project_was_updated {
-                        publish_and_update_state_for_diagnostics_for_document(
-                            &mut state.client_socket,
-                            project_path,
-                            project_state,
-                            removed_paths.into_iter(),
-                        );
                     }
                 }
-                std::ops::ControlFlow::Continue(())
-            },
-        );
-        router.notification::<lsp_types::notification::DidSaveTextDocument>(
-            |state, did_save_text_document_arguments| {
-                if let Ok(saved_path) = &did_save_text_document_arguments
-                    .text_document
-                    .uri
-                    .to_file_path()
-                    && let Some((saved_project_path, saved_project_state)) =
-                        state_get_mut_project_by_module_path(&mut state.projects, saved_path)
-                {
+                if project_was_updated {
                     publish_and_update_state_for_diagnostics_for_document(
-                        &mut state.client_socket,
-                        saved_project_path,
-                        saved_project_state,
-                        std::iter::empty(),
+                        connection,
+                        project_path,
+                        project_state,
+                        removed_paths.into_iter(),
                     );
                 }
-                std::ops::ControlFlow::Continue(())
-            },
-        );
-        router.notification::<lsp_types::notification::DidCloseTextDocument>(|_state, _| {
-            std::ops::ControlFlow::Continue(())
-        });
-        router.notification::<lsp_types::notification::Exit>(|_state, ()| {
-            // ?
-            std::ops::ControlFlow::Continue(())
-        });
-        tower::ServiceBuilder::new()
-            .layer(async_lsp::tracing::TracingLayer::default())
-            .layer(async_lsp::server::LifecycleLayer::default())
-            .layer(async_lsp::panic::CatchUnwindLayer::default())
-            .layer(async_lsp::concurrency::ConcurrencyLayer::default())
-            .layer(async_lsp::client_monitor::ClientProcessMonitorLayer::new(
-                client,
-            ))
-            .service(router)
-    });
-    #[cfg(unix)]
-    let (stdin, stdout) = (
-        async_lsp::stdio::PipeStdin::lock_tokio().unwrap(),
-        async_lsp::stdio::PipeStdout::lock_tokio().unwrap(),
-    );
-    #[cfg(not(unix))]
-    let (stdin, stdout) = (
-        tokio_util::compat::TokioAsyncReadCompatExt::compat(tokio::io::stdin()),
-        tokio_util::compat::TokioAsyncWriteCompatExt::compat_write(tokio::io::stdout()),
-    );
-    server.run_buffered(stdin, stdout).await.unwrap();
+            }
+        }
+        <lsp_types::notification::Exit as lsp_types::notification::Notification>::METHOD => {}
+        _ => {}
+    }
+    Ok(())
+}
+fn handle_request(
+    connection: &lsp_server::Connection,
+    state: &State,
+    request_id: lsp_server::RequestId,
+    request_method: &str,
+    request_arguments_json: serde_json::Value,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let response: Result<serde_json::Value, lsp_server::ResponseError> = match request_method {
+        <lsp_types::request::HoverRequest as lsp_types::request::Request>::METHOD => {
+            let arguments: <lsp_types::request::HoverRequest as lsp_types::request::Request>::Params =
+                serde_json::from_value(request_arguments_json)?;
+            let maybe_hover_result: <lsp_types::request::HoverRequest as lsp_types::request::Request>::Result =
+                respond_to_hover(state, &arguments);
+            Ok(serde_json::to_value(maybe_hover_result)?)
+        }
+        <lsp_types::request::GotoDefinition as lsp_types::request::Request>::METHOD => {
+            let arguments: <lsp_types::request::GotoDefinition as lsp_types::request::Request>::Params =
+                serde_json::from_value(request_arguments_json)?;
+            let maybe_hover_result: <lsp_types::request::GotoDefinition as lsp_types::request::Request>::Result =
+                respond_to_goto_definition(state, arguments);
+            Ok(serde_json::to_value(maybe_hover_result)?)
+        }
+        <lsp_types::request::PrepareRenameRequest as lsp_types::request::Request>::METHOD => {
+            let prepare_rename_arguments: <lsp_types::request::PrepareRenameRequest as lsp_types::request::Request>::Params =
+                serde_json::from_value(request_arguments_json)?;
+            let prepared = respond_to_prepare_rename(state, &prepare_rename_arguments);
+            let response_result: Result<
+                <lsp_types::request::PrepareRenameRequest as lsp_types::request::Request>::Result,
+                lsp_server::ResponseError,
+            > = match prepared {
+                None => Ok(None),
+                Some(result) => result.map(Some),
+            };
+            match response_result {
+                Err(error) => Err(error),
+                Ok(maybe_response) => Ok(serde_json::to_value(maybe_response)?),
+            }
+        }
+        <lsp_types::request::Rename as lsp_types::request::Request>::METHOD => {
+            let arguments: <lsp_types::request::Rename as lsp_types::request::Request>::Params =
+                serde_json::from_value(request_arguments_json)?;
+            let maybe_rename_edits: Option<Vec<lsp_types::TextDocumentEdit>> =
+                respond_to_rename(state, arguments);
+            let result: <lsp_types::request::Rename as lsp_types::request::Request>::Result =
+                maybe_rename_edits.map(|rename_edits| lsp_types::WorkspaceEdit {
+                    changes: None,
+                    document_changes: Some(lsp_types::DocumentChanges::Edits(rename_edits)),
+                    change_annotations: None,
+                });
+            Ok(serde_json::to_value(result)?)
+        }
+        <lsp_types::request::References as lsp_types::request::Request>::METHOD => {
+            let arguments: <lsp_types::request::References as lsp_types::request::Request>::Params =
+                serde_json::from_value(request_arguments_json)?;
+            let result: <lsp_types::request::References as lsp_types::request::Request>::Result =
+                respond_to_references(state, arguments);
+            Ok(serde_json::to_value(result)?)
+        }
+        <lsp_types::request::SemanticTokensFullRequest as lsp_types::request::Request>::METHOD => {
+            let arguments: <lsp_types::request::SemanticTokensFullRequest as lsp_types::request::Request>::Params =
+                serde_json::from_value(request_arguments_json)?;
+            let result: <lsp_types::request::SemanticTokensFullRequest as lsp_types::request::Request>::Result =
+                respond_to_semantic_tokens_full(state, &arguments);
+            Ok(serde_json::to_value(result)?)
+        }
+        <lsp_types::request::Completion as lsp_types::request::Request>::METHOD => {
+            let arguments: <lsp_types::request::Completion as lsp_types::request::Request>::Params =
+                serde_json::from_value(request_arguments_json)?;
+            let result: <lsp_types::request::Completion as lsp_types::request::Request>::Result =
+                respond_to_completion(state, &arguments);
+            Ok(serde_json::to_value(result)?)
+        }
+        <lsp_types::request::Formatting as lsp_types::request::Request>::METHOD => {
+            let arguments: <lsp_types::request::Formatting as lsp_types::request::Request>::Params =
+                serde_json::from_value(request_arguments_json)?;
+            let result: <lsp_types::request::Formatting as lsp_types::request::Request>::Result =
+                respond_to_document_formatting(state, &arguments);
+            Ok(serde_json::to_value(result)?)
+        }
+        <lsp_types::request::Shutdown as lsp_types::request::Request>::METHOD => {
+            let result: <lsp_types::request::Shutdown as lsp_types::request::Request>::Result = ();
+            Ok(serde_json::to_value(result)?)
+        }
+        _ => Err(lsp_server::ResponseError {
+            code: lsp_server::ErrorCode::MethodNotFound as i32,
+            message: "unhandled method".to_string(),
+            data: None,
+        }),
+    };
+    match response {
+        Ok(response_value) => {
+            send_ok(connection, request_id, response_value)?;
+        }
+        Err(response_error) => send_response_error(connection, request_id, response_error)?,
+    }
+    Ok(())
+}
+
+fn send_ok(
+    connection: &lsp_server::Connection,
+    id: lsp_server::RequestId,
+    result: serde_json::Value,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let response: lsp_server::Response = lsp_server::Response {
+        id,
+        result: Some(result),
+        error: None,
+    };
+    connection
+        .sender
+        .send(lsp_server::Message::Response(response))?;
+    Ok(())
+}
+fn send_response_error(
+    connection: &lsp_server::Connection,
+    id: lsp_server::RequestId,
+    error: lsp_server::ResponseError,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let response: lsp_server::Response = lsp_server::Response {
+        id,
+        result: None,
+        error: Some(error),
+    };
+    connection
+        .sender
+        .send(lsp_server::Message::Response(response))?;
+    Ok(())
+}
+fn publish_diagnostics(
+    connection: &lsp_server::Connection,
+    diagnostics: <lsp_types::notification::PublishDiagnostics as lsp_types::notification::Notification>::Params,
+) -> Result<(), Box<dyn std::error::Error>> {
+    connection.sender.send(lsp_server::Message::Notification(
+        lsp_server::Notification {
+            method: <lsp_types::notification::PublishDiagnostics as lsp_types::notification::Notification>::METHOD.to_owned(),
+            params: serde_json::to_value(diagnostics)?,
+        },
+    ))?;
+    Ok(())
 }
 
 fn server_capabilities() -> lsp_types::ServerCapabilities {
@@ -390,7 +457,10 @@ fn update_state_on_did_change_text_document(
     }
 }
 
-fn publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(state: &mut State) {
+fn publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(
+    connection: &lsp_server::Connection,
+    state: &mut State,
+) {
     for (in_workspace_project_path, in_workspace_project_state) in
         state
             .projects
@@ -424,10 +494,7 @@ fn publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(state:
                         })
                         .collect::<Vec<_>>();
                 for file_diagnostics_to_publish in diagnostics_to_publish {
-                    let _ = async_lsp::LanguageClient::publish_diagnostics(
-                        &mut state.client_socket,
-                        file_diagnostics_to_publish,
-                    );
+                    let _ = publish_diagnostics(connection, file_diagnostics_to_publish);
                 }
                 in_workspace_project_state.elm_make_errors = elm_make_errors;
             }
@@ -436,7 +503,7 @@ fn publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(state:
 }
 
 fn publish_and_update_state_for_diagnostics_for_document(
-    client_socket: &mut async_lsp::ClientSocket,
+    connection: &lsp_server::Connection,
     project_path: &std::path::Path,
     project: &mut ProjectState,
     removed_paths: impl Iterator<Item = lsp_types::Url>,
@@ -487,10 +554,7 @@ fn publish_and_update_state_for_diagnostics_for_document(
                 });
             }
             for updated_file_diagnostics_to_publish in updated_diagnostics_to_publish {
-                let _ = async_lsp::LanguageClient::publish_diagnostics(
-                    client_socket,
-                    updated_file_diagnostics_to_publish,
-                );
+                let _ = publish_diagnostics(connection, updated_file_diagnostics_to_publish);
             }
             project.elm_make_errors = elm_make_errors;
         }
@@ -723,9 +787,11 @@ fn parse_elm_make_message_segment<'a>(
 }
 
 fn initialize_state_for_workspace_directories_into(
-    state: &mut State,
     initialize_arguments: &lsp_types::InitializeParams,
-) {
+) -> State {
+    let mut state: State = State {
+        projects: std::collections::HashMap::new(),
+    };
     let workspace_directory_paths = initialize_arguments
         .workspace_folders
         .iter()
@@ -754,7 +820,7 @@ accordingly so that tools like the elm compiler and language server can find the
     let mut skipped_dependencies: std::collections::HashSet<std::path::PathBuf> =
         std::collections::HashSet::new();
     let _modules_exposed_from_workspace_packages = initialize_state_for_projects_into(
-        state,
+        &mut state,
         &mut std::collections::HashMap::new(),
         &mut skipped_dependencies,
         &elm_home_path,
@@ -814,6 +880,7 @@ accordingly so that tools like the elm compiler and language server can find the
             }
         }
     }
+    state
 }
 
 /// returns exposed module names and their origins
@@ -3108,7 +3175,7 @@ fn respond_to_goto_definition(
 fn respond_to_prepare_rename(
     state: &State,
     prepare_rename_arguments: &lsp_types::TextDocumentPositionParams,
-) -> Option<Result<lsp_types::PrepareRenameResponse, async_lsp::ResponseError>> {
+) -> Option<Result<lsp_types::PrepareRenameResponse, lsp_server::ResponseError>> {
     let project_module_state =
         state_get_project_module_by_lsp_url(state, &prepare_rename_arguments.text_document.uri)?;
     let prepare_rename_symbol_node: ElmSyntaxNode<ElmSyntaxSymbol> =
@@ -3174,12 +3241,12 @@ fn respond_to_prepare_rename(
                             placeholder: name.to_string(),
                         })
                     }
-                    LocalBindingOrigin::PatternRecordField(_) => {
-                        Err(async_lsp::ResponseError::new(
-                            async_lsp::ErrorCode::REQUEST_FAILED,
-                            "cannot rename a variable that is bound to a field name",
-                        ))
-                    }
+                    LocalBindingOrigin::PatternRecordField(_) => Err(lsp_server::ResponseError {
+                        code: lsp_server::ErrorCode::RequestFailed as i32,
+                        message: "cannot rename a variable that is bound to a field name"
+                            .to_string(),
+                        data: None,
+                    }),
                 }
             } else {
                 Ok(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
@@ -11085,7 +11152,6 @@ fn elm_syntax_declaration_into(
             variant0_values,
             variant1_up,
         } => {
-            eprintln!("formatting choice type declaration {:?}", maybe_name); // TODO
             elm_syntax_choice_type_declaration_into(
                 so_far,
                 comments,
@@ -11134,7 +11200,6 @@ fn elm_syntax_declaration_into(
             colon_key_symbol_range: _,
             type_: maybe_type,
         } => {
-            eprintln!("formatting port declaration {:?}", maybe_name); // TODO
             elm_syntax_port_declaration_into(
                 so_far,
                 comments,
@@ -11153,7 +11218,6 @@ fn elm_syntax_declaration_into(
             equals_key_symbol_range: _,
             type_: maybe_type,
         } => {
-            eprintln!("formatting type alias declaration {:?}", maybe_name); // TODO
             elm_syntax_type_alias_declaration_into(
                 so_far,
                 comments,
@@ -11173,7 +11237,6 @@ fn elm_syntax_declaration_into(
             equals_key_symbol_range: maybe_equals_key_symbol_range,
             result: maybe_result,
         } => {
-            eprintln!("formatting variable declaration {:?}", start_name_node); // TODO
             elm_syntax_variable_declaration_into(
                 so_far,
                 0,

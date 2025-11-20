@@ -11,10 +11,8 @@ path = "main.rs"
 use_experimental_formatter = []
 
 [dependencies]
-async-lsp = { version = "0.2.2", features = ["tokio"] }
+lsp-server = "0.7.9"
 lsp-types = "0.95.1"
-tower = "0.5.2"
-tokio = { version = "1.47.1", features = ["macros", "rt"] }
 serde_json = "1.0.145"
 
 [profile.dev]
