@@ -1,4 +1,4 @@
-// lsp still reports this specific error, even though it is allowed in the cargo.toml
+// lsp still reports this specific error even when it is allowed in the cargo.toml
 #![allow(non_upper_case_globals)]
 
 struct State {
@@ -3119,7 +3119,7 @@ fn respond_to_prepare_rename(
     Some(match prepare_rename_symbol_node.value {
         ElmSyntaxSymbol::ImportAlias {
             module_origin: _,
-            alias_name: alias_name,
+            alias_name,
         } => Ok(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
             range: prepare_rename_symbol_node.range,
             placeholder: alias_name.to_string(),
@@ -6976,7 +6976,7 @@ fn elm_expose_set_contains_type(expose_set: &ElmExposeSet, name_to_check: &str) 
         ElmExposeSet::All => true,
         ElmExposeSet::Explicit {
             choice_types_including_variants,
-            types: types,
+            types,
             operators: _,
             variables: _,
         } => {
@@ -6993,7 +6993,7 @@ fn elm_expose_set_contains_type_not_including_variants(
         ElmExposeSet::All => true,
         ElmExposeSet::Explicit {
             choice_types_including_variants: _,
-            types: types,
+            types,
             operators: _,
             variables: _,
         } => types.contains(&name_to_check),
@@ -7269,7 +7269,7 @@ fn elm_syntax_module_create_origin_lookup<'a>(
                 equals_key_symbol_range: _,
                 variant0_name: maybe_variant0_name,
                 variant0_values: _,
-                variant1_up: variant1_up,
+                variant1_up,
             } => {
                 if let Some(name_node) = maybe_name {
                     module_origin_lookup
@@ -11717,7 +11717,7 @@ fn elm_syntax_declaration_find_reference_at_position<'a>(
         match elm_syntax_declaration_node.value {
             ElmSyntaxDeclaration::ChoiceType {
                 name: maybe_name,
-                parameters: parameters,
+                parameters,
                 equals_key_symbol_range: _,
                 variant0_name: maybe_variant0_name,
                 variant0_values,
@@ -15580,7 +15580,7 @@ fn elm_syntax_highlight_expression_into(
             }
         }
         ElmSyntaxExpression::String {
-            content: content,
+            content,
             quoting_style,
         } => {
             let quote_count: usize = match quoting_style {
