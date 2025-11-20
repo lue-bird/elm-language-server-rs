@@ -6967,14 +6967,9 @@ struct ElmSyntaxDocumentedDeclaration {
 #[derive(Clone, Debug, PartialEq)]
 struct ElmSyntaxImport {
     module_name: Option<ElmSyntaxNode<String>>,
-    alias: Option<EmSyntaxImportAs>,
+    as_keyword_range: Option<lsp_types::Range>,
+    alias_name: Option<ElmSyntaxNode<String>>,
     exposing: Option<ElmSyntaxExposing>,
-}
-/// TODO inline to make the parser more lenient
-#[derive(Clone, Debug, PartialEq)]
-struct EmSyntaxImportAs {
-    as_keyword_range: lsp_types::Range,
-    name: Option<ElmSyntaxNode<String>>,
 }
 #[derive(Clone, Debug)]
 enum ElmExposeSet<'a> {
@@ -7259,8 +7254,7 @@ fn elm_syntax_imports_create_import_alias_origin_lookup<'a>(
         .iter()
         .filter_map(|import_node| {
             let module_origin_node = import_node.value.module_name.as_ref()?;
-            let alias = import_node.value.alias.as_ref()?;
-            let alias_name_node = alias.name.as_ref()?;
+            let alias_name_node = import_node.value.alias_name.as_ref()?;
             Some(ElmImportAliasAndModuleOrigin {
                 module_origin: &module_origin_node.value,
                 alias: &alias_name_node.value,
@@ -7413,12 +7407,9 @@ fn elm_syntax_module_create_origin_lookup<'a>(
             .as_ref()
             .map(|module_name| (&module_name.value, &import_node.value))
     }) {
-        let allowed_qualification: &str = match import.alias {
+        let allowed_qualification: &str = match &import.alias_name {
             None => import_module_name,
-            Some(ref import_alias) => match import_alias.name {
-                Some(ref import_alias_name) => &import_alias_name.value,
-                None => import_module_name,
-            },
+            Some(import_alias_name) => &import_alias_name.value,
         };
         match module_origin_lookup
             .uniquely_qualified
@@ -11007,11 +10998,15 @@ fn elm_syntax_imports_then_linebreak_into(
     }
     for import_without_module_name_node in imports_without_module_name {
         so_far.push_str("import ");
-        if let Some(import_alias) = &import_without_module_name_node.value.alias {
+        if let Some(import_alias_name_node) = &import_without_module_name_node.value.alias_name {
             so_far.push_str(" as ");
-            if let Some(import_alias_name_node) = &import_alias.name {
-                so_far.push_str(&import_alias_name_node.value);
-            }
+            so_far.push_str(&import_alias_name_node.value);
+        } else if import_without_module_name_node
+            .value
+            .as_keyword_range
+            .is_some()
+        {
+            so_far.push_str(" as ");
         }
         if let Some(import_exposing) = &import_without_module_name_node.value.exposing {
             so_far.push_str(" exposing ");
@@ -11040,12 +11035,8 @@ fn elm_syntax_import_merge_to_summary<'a>(
     elm_syntax_import: &'a ElmSyntaxImport,
 ) -> ElmImportOfModuleNameSummary<'a> {
     ElmImportOfModuleNameSummary {
-        alias_required: elm_syntax_import.alias.is_some(),
-        aliases: match elm_syntax_import
-            .alias
-            .as_ref()
-            .and_then(|alias| alias.name.as_ref())
-        {
+        alias_required: elm_syntax_import.alias_name.is_some(),
+        aliases: match &elm_syntax_import.alias_name {
             None => std::collections::BTreeSet::new(),
             Some(import_alias_name_node) => {
                 std::collections::BTreeSet::from([import_alias_name_node.value.as_str()])
@@ -11073,11 +11064,7 @@ fn elm_syntax_import_merge_into_summary<'a>(
     summary_to_merge_with: &mut ElmImportOfModuleNameSummary<'a>,
     elm_syntax_import: &'a ElmSyntaxImport,
 ) {
-    match elm_syntax_import
-        .alias
-        .as_ref()
-        .and_then(|alias| alias.name.as_ref())
-    {
+    match &elm_syntax_import.alias_name {
         None => {
             summary_to_merge_with.alias_required = false;
         }
@@ -11669,8 +11656,7 @@ fn elm_syntax_import_find_reference_at_position<'a>(
             value: ElmSyntaxSymbol::ModuleName(&module_name_node.value),
             range: module_name_node.range,
         })
-    } else if let Some(import_alias) = &elm_syntax_import_node.value.alias
-        && let Some(import_alias_name_node) = &import_alias.name
+    } else if let Some(import_alias_name_node) = &elm_syntax_import_node.value.alias_name
         && lsp_range_includes_position(import_alias_name_node.range, position)
     {
         Some(ElmSyntaxNode {
@@ -12974,8 +12960,7 @@ fn elm_syntax_import_uses_of_reference_into(
     } = symbol_to_collect_uses_of
     {
         if alias_to_collect_uses_of_origin == import_module_name_node.value
-            && let Some(import_alias) = &elm_syntax_import.alias
-            && let Some(import_alias_name_node) = &import_alias.name
+            && let Some(import_alias_name_node) = &elm_syntax_import.alias_name
             && alias_to_collect_uses_of_name == import_alias_name_node.value
         {
             uses_so_far.push(import_alias_name_node.range);
@@ -14543,17 +14528,17 @@ fn elm_syntax_highlight_import_into(
             value: ElmSyntaxHighlightKind::ModuleNameOrAlias,
         });
     }
-    if let Some(alias_node) = &elm_syntax_import_node.value.alias {
+    if let Some(as_keyword_range) = elm_syntax_import_node.value.as_keyword_range {
         highlighted_so_far.push(ElmSyntaxNode {
-            range: alias_node.as_keyword_range,
+            range: as_keyword_range,
             value: ElmSyntaxHighlightKind::KeySymbol,
         });
-        if let Some(alias_name_node) = &alias_node.name {
-            highlighted_so_far.push(ElmSyntaxNode {
-                range: alias_name_node.range,
-                value: ElmSyntaxHighlightKind::ModuleNameOrAlias,
-            });
-        }
+    }
+    if let Some(alias_name_node) = &elm_syntax_import_node.value.alias_name {
+        highlighted_so_far.push(ElmSyntaxNode {
+            range: alias_name_node.range,
+            value: ElmSyntaxHighlightKind::ModuleNameOrAlias,
+        });
     }
     if let Some(exposing) = &elm_syntax_import_node.value.exposing {
         elm_syntax_highlight_exposing_into(highlighted_so_far, exposing);
@@ -16320,16 +16305,9 @@ fn parse_elm_syntax_import_node(state: &mut ParseState) -> Option<ElmSyntaxNode<
     let maybe_module_name_node: Option<ElmSyntaxNode<String>> =
         parse_elm_standalone_module_name_node(state);
     parse_elm_whitespace_and_comments(state);
-    let maybe_alias: Option<EmSyntaxImportAs> =
-        parse_elm_keyword_as_range(state, "as").map(|as_keyword_range| {
-            parse_elm_whitespace_and_comments(state);
-            let maybe_alias_name_node: Option<ElmSyntaxNode<String>> =
-                parse_elm_uppercase_node(state);
-            EmSyntaxImportAs {
-                as_keyword_range: as_keyword_range,
-                name: maybe_alias_name_node,
-            }
-        });
+    let maybe_as_keyword_range: Option<lsp_types::Range> = parse_elm_keyword_as_range(state, "as");
+    parse_elm_whitespace_and_comments(state);
+    let maybe_alias_name: Option<ElmSyntaxNode<String>> = parse_elm_uppercase_node(state);
     parse_elm_whitespace_and_comments(state);
     let maybe_exposing: Option<ElmSyntaxExposing> = parse_elm_keyword_as_range(state, "exposing")
         .map(|exposing_keyword_range| {
@@ -16350,15 +16328,8 @@ fn parse_elm_syntax_import_node(state: &mut ParseState) -> Option<ElmSyntaxNode<
                 .map(|node| node.range.end)
                 .unwrap_or_else(|| exposing.exposing_keyword_range.end)
         })
-        .or_else(|| {
-            maybe_alias.as_ref().map(|alias| {
-                alias
-                    .name
-                    .as_ref()
-                    .map(|node| node.range.end)
-                    .unwrap_or_else(|| alias.as_keyword_range.end)
-            })
-        })
+        .or_else(|| maybe_alias_name.as_ref().map(|node| node.range.end))
+        .or_else(|| maybe_as_keyword_range.map(|range| range.end))
         .or_else(|| maybe_module_name_node.as_ref().map(|node| node.range.end))
         .unwrap_or(import_keyword_range.end);
     Some(ElmSyntaxNode {
@@ -16368,7 +16339,8 @@ fn parse_elm_syntax_import_node(state: &mut ParseState) -> Option<ElmSyntaxNode<
         },
         value: ElmSyntaxImport {
             module_name: maybe_module_name_node,
-            alias: maybe_alias,
+            as_keyword_range: maybe_as_keyword_range,
+            alias_name: maybe_alias_name,
             exposing: maybe_exposing,
         },
     })
