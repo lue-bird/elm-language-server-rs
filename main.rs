@@ -5622,11 +5622,10 @@ fn respond_to_completion(
                     .iter()
                     .filter_map(|import_node| {
                         let module_name_node = import_node.value.module_name.as_ref()?;
-                        let exposing = import_node.value.exposing.as_ref()?;
-                        let exposing_specific_node = exposing.specific.as_ref()?;
+                        let exposing_node = import_node.value.exposing.as_ref()?;
                         Some((
                             &module_name_node.value,
-                            elm_syntax_exposing_specific_to_set(&exposing_specific_node.value),
+                            elm_syntax_exposing_to_set(&exposing_node.value),
                         ))
                     })
                 {
@@ -5724,11 +5723,10 @@ fn respond_to_completion(
                     .iter()
                     .filter_map(|import_node| {
                         let module_name_node = import_node.value.module_name.as_ref()?;
-                        let exposing = import_node.value.exposing.as_ref()?;
-                        let exposing_specific_node = exposing.specific.as_ref()?;
+                        let exposing_node = import_node.value.exposing.as_ref()?;
                         Some((
                             &module_name_node.value,
-                            elm_syntax_exposing_specific_to_set(&exposing_specific_node.value),
+                            elm_syntax_exposing_to_set(&exposing_node.value),
                         ))
                     })
                 {
@@ -6835,15 +6833,8 @@ struct ElmSyntaxExpressionField {
     value: Option<ElmSyntaxNode<ElmSyntaxExpression>>,
 }
 
-/// TODO inline to make the parser more lenient
 #[derive(Clone, Debug, PartialEq)]
-struct ElmSyntaxExposing {
-    exposing_keyword_range: lsp_types::Range,
-    specific: Option<ElmSyntaxNode<ElmSyntaxExposingSpecific>>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-enum ElmSyntaxExposingSpecific {
+enum ElmSyntaxExposing {
     All(lsp_types::Range),
     Explicit(Vec<ElmSyntaxNode<ElmSyntaxExpose>>),
 }
@@ -6960,7 +6951,8 @@ fn elm_syntax_node_box<Value>(
 struct ElmSyntaxModuleHeader {
     specific: ElmSyntaxModuleHeaderSpecific,
     module_name: Option<ElmSyntaxNode<String>>,
-    exposing: Option<ElmSyntaxExposing>,
+    exposing_keyword_range: Option<lsp_types::Range>,
+    exposing: Option<ElmSyntaxNode<ElmSyntaxExposing>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -6983,7 +6975,8 @@ struct ElmSyntaxImport {
     module_name: Option<ElmSyntaxNode<String>>,
     as_keyword_range: Option<lsp_types::Range>,
     alias_name: Option<ElmSyntaxNode<String>>,
-    exposing: Option<ElmSyntaxExposing>,
+    exposing_keyword_range: Option<lsp_types::Range>,
+    exposing: Option<ElmSyntaxNode<ElmSyntaxExposing>>,
 }
 #[derive(Clone, Debug)]
 enum ElmExposeSet<'a> {
@@ -6998,22 +6991,17 @@ enum ElmExposeSet<'a> {
 fn elm_syntax_module_header_expose_set<'a>(
     elm_syntax_module_header: Option<&'a ElmSyntaxModuleHeader>,
 ) -> ElmExposeSet<'a> {
-    match elm_syntax_module_header
-        .and_then(|header| header.exposing.as_ref())
-        .and_then(|exposing| exposing.specific.as_ref())
-    {
+    match elm_syntax_module_header.and_then(|header| header.exposing.as_ref()) {
         None => ElmExposeSet::All,
         Some(module_header_expose_specific_node) => {
-            elm_syntax_exposing_specific_to_set(&module_header_expose_specific_node.value)
+            elm_syntax_exposing_to_set(&module_header_expose_specific_node.value)
         }
     }
 }
-fn elm_syntax_exposing_specific_to_set<'a>(
-    elm_syntax_exposing_specific: &'a ElmSyntaxExposingSpecific,
-) -> ElmExposeSet<'a> {
-    match elm_syntax_exposing_specific {
-        ElmSyntaxExposingSpecific::All(_) => ElmExposeSet::All,
-        ElmSyntaxExposingSpecific::Explicit(exposes) => {
+fn elm_syntax_exposing_to_set<'a>(elm_syntax_exposing: &'a ElmSyntaxExposing) -> ElmExposeSet<'a> {
+    match elm_syntax_exposing {
+        ElmSyntaxExposing::All(_) => ElmExposeSet::All,
+        ElmSyntaxExposing::Explicit(exposes) => {
             let mut operators: Vec<&str> = Vec::new();
             let mut variables: Vec<&str> = Vec::new();
             let mut types: Vec<&str> = Vec::new();
@@ -7487,9 +7475,8 @@ fn elm_syntax_module_create_origin_lookup<'a>(
             }
         };
         if let Some(import_exposing) = &import.exposing {
-            match import_exposing.specific.as_ref().map(|node| &node.value) {
-                None => {}
-                Some(ElmSyntaxExposingSpecific::All(_)) => {
+            match &import_exposing.value {
+                ElmSyntaxExposing::All(_) => {
                     if let Some((_, imported_module_state)) =
                         project_state_get_module_with_name(state, project_state, import_module_name)
                     {
@@ -7500,7 +7487,7 @@ fn elm_syntax_module_create_origin_lookup<'a>(
                         }
                     }
                 }
-                Some(ElmSyntaxExposingSpecific::Explicit(exposes)) => {
+                ElmSyntaxExposing::Explicit(exposes) => {
                     for expose_node in exposes {
                         match &expose_node.value {
                             ElmSyntaxExpose::ChoiceTypeIncludingVariants {
@@ -7595,11 +7582,10 @@ fn elm_syntax_module_exposed_symbols(elm_syntax_module: &ElmSyntaxModule) -> Vec
         .header
         .as_ref()
         .and_then(|header| header.exposing.as_ref())
-        .and_then(|exposing| exposing.specific.as_ref())
         .as_ref()
         .map(|node| &node.value)
     {
-        None | Some(ElmSyntaxExposingSpecific::All(_)) => {
+        None | Some(ElmSyntaxExposing::All(_)) => {
             for declaration_node in elm_syntax_module
                 .declarations
                 .iter()
@@ -7663,7 +7649,7 @@ fn elm_syntax_module_exposed_symbols(elm_syntax_module: &ElmSyntaxModule) -> Vec
                 }
             }
         }
-        Some(ElmSyntaxExposingSpecific::Explicit(exposes)) => {
+        Some(ElmSyntaxExposing::Explicit(exposes)) => {
             for expose in exposes {
                 match &expose.value {
                     ElmSyntaxExpose::ChoiceTypeIncludingVariants {
@@ -10848,10 +10834,9 @@ fn elm_syntax_module_header_into(
     comments: &[ElmSyntaxNode<ElmSyntaxComment>],
     elm_syntax_module_header: &ElmSyntaxModuleHeader,
 ) -> lsp_types::Position {
-    let before_exposing_specific: lsp_types::Position = elm_syntax_module_header
-        .exposing
-        .as_ref()
-        .map(|x| x.exposing_keyword_range.start)
+    let before_exposing: lsp_types::Position = elm_syntax_module_header
+        .exposing_keyword_range
+        .map(|range| range.start)
         .unwrap_or_else(|| match &elm_syntax_module_header.specific {
             ElmSyntaxModuleHeaderSpecific::Pure {
                 module_keyword_range,
@@ -10888,7 +10873,7 @@ fn elm_syntax_module_header_into(
                     line: 0,
                     character: 0,
                 },
-                end: before_exposing_specific,
+                end: before_exposing,
             },
         ),
     );
@@ -10943,30 +10928,27 @@ fn elm_syntax_module_header_into(
         }
     }
     so_far.push_str(" exposing ");
-    if let Some(module_header_exposing) = &elm_syntax_module_header.exposing
-        && let Some(module_header_exposing_specific_node) = &module_header_exposing.specific
-    {
-        // respect @docs grouping like elm-format does?
-        elm_syntax_exposing_specific_into(so_far, &module_header_exposing_specific_node.value);
-        module_header_exposing_specific_node.range.end
-    } else {
-        so_far.push_str("()");
-        elm_syntax_module_header
-            .exposing
-            .as_ref()
-            .map(|exposing| exposing.exposing_keyword_range.end)
-            .unwrap_or(before_exposing_specific)
+    match &elm_syntax_module_header.exposing {
+        Some(module_header_exposing_node) => {
+            // respect @docs grouping like elm-format does?
+            elm_syntax_exposing_into(so_far, &module_header_exposing_node.value);
+            module_header_exposing_node.range.end
+        }
+        None => {
+            so_far.push_str("()");
+            elm_syntax_module_header
+                .exposing_keyword_range
+                .map(|range| range.end)
+                .unwrap_or(before_exposing)
+        }
     }
 }
-fn elm_syntax_exposing_specific_into(
-    so_far: &mut String,
-    elm_syntax_exposing_specific: &ElmSyntaxExposingSpecific,
-) {
-    match elm_syntax_exposing_specific {
-        ElmSyntaxExposingSpecific::All(_) => {
+fn elm_syntax_exposing_into(so_far: &mut String, elm_syntax_exposing: &ElmSyntaxExposing) {
+    match elm_syntax_exposing {
+        ElmSyntaxExposing::All(_) => {
             so_far.push_str("(..)");
         }
-        ElmSyntaxExposingSpecific::Explicit(exposes) => {
+        ElmSyntaxExposing::Explicit(exposes) => {
             so_far.push('(');
             let mut expose_strings: std::collections::BTreeSet<std::borrow::Cow<str>> =
                 std::collections::BTreeSet::new();
@@ -11066,14 +11048,19 @@ fn elm_syntax_imports_then_linebreak_into(
         {
             so_far.push_str(" as ");
         }
-        if let Some(import_exposing) = &import_without_module_name_node.value.exposing {
+        if import_without_module_name_node
+            .value
+            .exposing_keyword_range
+            .is_some()
+            || import_without_module_name_node.value.exposing.is_some()
+        {
             so_far.push_str(" exposing ");
-            match &import_exposing.specific {
+            match &import_without_module_name_node.value.exposing {
                 None => {
                     so_far.push_str("()");
                 }
-                Some(import_exposing_specific_node) => {
-                    elm_syntax_exposing_specific_into(so_far, &import_exposing_specific_node.value);
+                Some(import_exposing_node) => {
+                    elm_syntax_exposing_into(so_far, &import_exposing_node.value);
                 }
             }
         }
@@ -11100,15 +11087,11 @@ fn elm_syntax_import_merge_to_summary<'a>(
                 std::collections::BTreeSet::from([import_alias_name_node.value.as_str()])
             }
         },
-        exposing: match elm_syntax_import
-            .exposing
-            .as_ref()
-            .and_then(|exposing| exposing.specific.as_ref())
-        {
+        exposing: match &elm_syntax_import.exposing {
             None => ElmExposingStrings::Explicit(std::collections::BTreeSet::new()),
-            Some(import_exposing_specific) => match &import_exposing_specific.value {
-                ElmSyntaxExposingSpecific::All(_) => ElmExposingStrings::All,
-                ElmSyntaxExposingSpecific::Explicit(exposes) => {
+            Some(import_exposing) => match &import_exposing.value {
+                ElmSyntaxExposing::All(_) => ElmExposingStrings::All,
+                ElmSyntaxExposing::Explicit(exposes) => {
                     let mut expose_strings: std::collections::BTreeSet<std::borrow::Cow<str>> =
                         std::collections::BTreeSet::new();
                     elm_syntax_exposes_into_expose_strings(&mut expose_strings, exposes);
@@ -11134,20 +11117,16 @@ fn elm_syntax_import_merge_into_summary<'a>(
     }
     match (
         &mut summary_to_merge_with.exposing,
-        elm_syntax_import
-            .exposing
-            .as_ref()
-            .and_then(|exposing| exposing.specific.as_ref())
-            .map(|node| &node.value),
+        elm_syntax_import.exposing.as_ref().map(|node| &node.value),
     ) {
         (ElmExposingStrings::All, _) => {}
         (_, None) => {}
-        (ElmExposingStrings::Explicit(_), Some(ElmSyntaxExposingSpecific::All(_))) => {
+        (ElmExposingStrings::Explicit(_), Some(ElmSyntaxExposing::All(_))) => {
             summary_to_merge_with.exposing = ElmExposingStrings::All;
         }
         (
             ElmExposingStrings::Explicit(expose_strings_to_merge_with),
-            Some(ElmSyntaxExposingSpecific::Explicit(import_exposes)),
+            Some(ElmSyntaxExposing::Explicit(import_exposes)),
         ) => {
             elm_syntax_exposes_into_expose_strings(expose_strings_to_merge_with, import_exposes);
         }
@@ -11691,11 +11670,10 @@ fn elm_syntax_module_header_find_reference_at_position<'a>(
             range: module_name_node.range,
         })
     } else {
-        let exposing: &ElmSyntaxExposing = elm_syntax_module_header.exposing.as_ref()?;
-        let exposing_specific_node: &ElmSyntaxNode<ElmSyntaxExposingSpecific> =
-            exposing.specific.as_ref()?;
-        elm_syntax_module_header_exposing_specific_from_module_find_reference_at_position(
-            elm_syntax_node_as_ref(exposing_specific_node),
+        let exposing_node: &ElmSyntaxNode<ElmSyntaxExposing> =
+            elm_syntax_module_header.exposing.as_ref()?;
+        elm_syntax_module_header_exposing_from_module_find_reference_at_position(
+            elm_syntax_node_as_ref(exposing_node),
             position,
         )
     }
@@ -11730,26 +11708,25 @@ fn elm_syntax_import_find_reference_at_position<'a>(
             .exposing
             .as_ref()
             .and_then(|exposing| {
-                let exposing_specific = exposing.specific.as_ref()?;
-                elm_syntax_import_exposing_specific_from_module_find_reference_at_position(
+                elm_syntax_import_exposing_from_module_find_reference_at_position(
                     &module_name_node.value,
-                    elm_syntax_node_as_ref(exposing_specific),
+                    elm_syntax_node_as_ref(exposing),
                     position,
                 )
             })
     }
 }
 
-fn elm_syntax_module_header_exposing_specific_from_module_find_reference_at_position<'a>(
-    elm_syntax_exposing_specific_node: ElmSyntaxNode<&'a ElmSyntaxExposingSpecific>,
+fn elm_syntax_module_header_exposing_from_module_find_reference_at_position<'a>(
+    elm_syntax_exposing_node: ElmSyntaxNode<&'a ElmSyntaxExposing>,
     position: lsp_types::Position,
 ) -> Option<ElmSyntaxNode<ElmSyntaxSymbol<'a>>> {
-    if !lsp_range_includes_position(elm_syntax_exposing_specific_node.range, position) {
+    if !lsp_range_includes_position(elm_syntax_exposing_node.range, position) {
         return None;
     }
-    match elm_syntax_exposing_specific_node.value {
-        ElmSyntaxExposingSpecific::All(_) => None,
-        ElmSyntaxExposingSpecific::Explicit(exposes) => exposes.iter().find_map(|expose_node| {
+    match elm_syntax_exposing_node.value {
+        ElmSyntaxExposing::All(_) => None,
+        ElmSyntaxExposing::Explicit(exposes) => exposes.iter().find_map(|expose_node| {
             if lsp_range_includes_position(expose_node.range, position) {
                 let expose_name: &str = match &expose_node.value {
                     ElmSyntaxExpose::ChoiceTypeIncludingVariants {
@@ -11775,17 +11752,17 @@ fn elm_syntax_module_header_exposing_specific_from_module_find_reference_at_posi
         }),
     }
 }
-fn elm_syntax_import_exposing_specific_from_module_find_reference_at_position<'a>(
+fn elm_syntax_import_exposing_from_module_find_reference_at_position<'a>(
     import_origin_module: &'a str,
-    elm_syntax_exposing_specific_node: ElmSyntaxNode<&'a ElmSyntaxExposingSpecific>,
+    elm_syntax_exposing_node: ElmSyntaxNode<&'a ElmSyntaxExposing>,
     position: lsp_types::Position,
 ) -> Option<ElmSyntaxNode<ElmSyntaxSymbol<'a>>> {
-    if !lsp_range_includes_position(elm_syntax_exposing_specific_node.range, position) {
+    if !lsp_range_includes_position(elm_syntax_exposing_node.range, position) {
         return None;
     }
-    match elm_syntax_exposing_specific_node.value {
-        ElmSyntaxExposingSpecific::All(_) => None,
-        ElmSyntaxExposingSpecific::Explicit(exposes) => exposes.iter().find_map(|expose_node| {
+    match elm_syntax_exposing_node.value {
+        ElmSyntaxExposing::All(_) => None,
+        ElmSyntaxExposing::Explicit(exposes) => exposes.iter().find_map(|expose_node| {
             if lsp_range_includes_position(expose_node.range, position) {
                 let expose_name: &str = match &expose_node.value {
                     ElmSyntaxExpose::ChoiceTypeIncludingVariants {
@@ -12960,12 +12937,11 @@ fn elm_syntax_module_uses_of_reference_into(
         .unwrap_or("");
     if let Some(module_header) = &elm_syntax_module.header
         && let Some(exposing) = &module_header.exposing
-        && let Some(exposing_specific) = &exposing.specific
     {
-        elm_syntax_exposing_specific_uses_of_reference_into(
+        elm_syntax_exposing_uses_of_reference_into(
             uses_so_far,
             self_module_name,
-            &exposing_specific.value,
+            &exposing.value,
             symbol_to_collect_uses_of,
         );
     }
@@ -13020,27 +12996,25 @@ fn elm_syntax_import_uses_of_reference_into(
         {
             uses_so_far.push(import_alias_name_node.range);
         }
-    } else if let Some(exposing) = &elm_syntax_import.exposing
-        && let Some(exposing_specific) = &exposing.specific
-    {
-        elm_syntax_exposing_specific_uses_of_reference_into(
+    } else if let Some(exposing) = &elm_syntax_import.exposing {
+        elm_syntax_exposing_uses_of_reference_into(
             uses_so_far,
             &import_module_name_node.value,
-            &exposing_specific.value,
+            &exposing.value,
             symbol_to_collect_uses_of,
         );
     }
 }
 
-fn elm_syntax_exposing_specific_uses_of_reference_into(
+fn elm_syntax_exposing_uses_of_reference_into(
     uses_so_far: &mut Vec<lsp_types::Range>,
     origin_module: &str,
-    elm_syntax_exposing: &ElmSyntaxExposingSpecific,
+    elm_syntax_exposing: &ElmSyntaxExposing,
     symbol_to_collect_uses_of: ElmSymbolToReference,
 ) {
     match elm_syntax_exposing {
-        ElmSyntaxExposingSpecific::All(_) => {}
-        ElmSyntaxExposingSpecific::Explicit(exposes) => {
+        ElmSyntaxExposing::All(_) => {}
+        ElmSyntaxExposing::Explicit(exposes) => {
             for expose in exposes {
                 match &expose.value {
                     ElmSyntaxExpose::ChoiceTypeIncludingVariants {
@@ -14392,8 +14366,14 @@ fn elm_syntax_highlight_module_header_into(
                     value: ElmSyntaxHighlightKind::ModuleNameOrAlias,
                 });
             }
-            if let Some(exposing) = &elm_syntax_module_header.exposing {
-                elm_syntax_highlight_exposing_into(highlighted_so_far, exposing);
+            if let Some(exposing_keyword_range) = elm_syntax_module_header.exposing_keyword_range {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: exposing_keyword_range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+            }
+            if let Some(exposing_node) = &elm_syntax_module_header.exposing {
+                elm_syntax_highlight_exposing_into(highlighted_so_far, &exposing_node.value);
             }
         }
         ElmSyntaxModuleHeaderSpecific::Effect {
@@ -14468,8 +14448,14 @@ fn elm_syntax_highlight_module_header_into(
                     value: ElmSyntaxHighlightKind::ModuleNameOrAlias,
                 });
             }
+            if let Some(exposing_keyword_range) = elm_syntax_module_header.exposing_keyword_range {
+                highlighted_so_far.push(ElmSyntaxNode {
+                    range: exposing_keyword_range,
+                    value: ElmSyntaxHighlightKind::KeySymbol,
+                });
+            }
             if let Some(exposing) = &elm_syntax_module_header.exposing {
-                elm_syntax_highlight_exposing_into(highlighted_so_far, exposing);
+                elm_syntax_highlight_exposing_into(highlighted_so_far, &exposing.value);
             }
         }
     }
@@ -14595,8 +14581,14 @@ fn elm_syntax_highlight_import_into(
             value: ElmSyntaxHighlightKind::ModuleNameOrAlias,
         });
     }
-    if let Some(exposing) = &elm_syntax_import_node.value.exposing {
-        elm_syntax_highlight_exposing_into(highlighted_so_far, exposing);
+    if let Some(exposing_keyword_range) = elm_syntax_import_node.value.exposing_keyword_range {
+        highlighted_so_far.push(ElmSyntaxNode {
+            range: exposing_keyword_range,
+            value: ElmSyntaxHighlightKind::KeySymbol,
+        });
+    }
+    if let Some(exposing_node) = &elm_syntax_import_node.value.exposing {
+        elm_syntax_highlight_exposing_into(highlighted_so_far, &exposing_node.value);
     }
 }
 
@@ -14604,23 +14596,14 @@ fn elm_syntax_highlight_exposing_into(
     highlighted_so_far: &mut Vec<ElmSyntaxNode<ElmSyntaxHighlightKind>>,
     elm_syntax_exposing: &ElmSyntaxExposing,
 ) {
-    highlighted_so_far.push(ElmSyntaxNode {
-        range: elm_syntax_exposing.exposing_keyword_range,
-        value: ElmSyntaxHighlightKind::KeySymbol,
-    });
-    match elm_syntax_exposing
-        .specific
-        .as_ref()
-        .map(|node| &node.value)
-    {
-        None => {}
-        Some(ElmSyntaxExposingSpecific::All(ellipsis_range)) => {
+    match elm_syntax_exposing {
+        ElmSyntaxExposing::All(ellipsis_range) => {
             highlighted_so_far.push(ElmSyntaxNode {
                 range: *ellipsis_range,
                 value: ElmSyntaxHighlightKind::KeySymbol,
             });
         }
-        Some(ElmSyntaxExposingSpecific::Explicit(exposes)) => {
+        ElmSyntaxExposing::Explicit(exposes) => {
             for expose_node in exposes {
                 match &expose_node.value {
                     ElmSyntaxExpose::ChoiceTypeIncludingVariants {
@@ -16364,25 +16347,15 @@ fn parse_elm_syntax_import_node(state: &mut ParseState) -> Option<ElmSyntaxNode<
     parse_elm_whitespace_and_comments(state);
     let maybe_alias_name: Option<ElmSyntaxNode<String>> = parse_elm_uppercase_node(state);
     parse_elm_whitespace_and_comments(state);
-    let maybe_exposing: Option<ElmSyntaxExposing> = parse_elm_keyword_as_range(state, "exposing")
-        .map(|exposing_keyword_range| {
-            parse_elm_whitespace_and_comments(state);
-            let maybe_specific: Option<ElmSyntaxNode<ElmSyntaxExposingSpecific>> =
-                parse_elm_syntax_exposing_specific_node(state);
-            ElmSyntaxExposing {
-                exposing_keyword_range: exposing_keyword_range,
-                specific: maybe_specific,
-            }
-        });
+    let maybe_exposing_keyword_range: Option<lsp_types::Range> =
+        parse_elm_keyword_as_range(state, "exposing");
+    parse_elm_whitespace_and_comments(state);
+    let maybe_exposing: Option<ElmSyntaxNode<ElmSyntaxExposing>> =
+        parse_elm_syntax_exposing_node(state);
     let end_position: lsp_types::Position = maybe_exposing
         .as_ref()
-        .map(|exposing| {
-            exposing
-                .specific
-                .as_ref()
-                .map(|node| node.range.end)
-                .unwrap_or_else(|| exposing.exposing_keyword_range.end)
-        })
+        .map(|exposing| exposing.range.end)
+        .or_else(|| maybe_exposing_keyword_range.map(|range| range.end))
         .or_else(|| maybe_alias_name.as_ref().map(|node| node.range.end))
         .or_else(|| maybe_as_keyword_range.map(|range| range.end))
         .or_else(|| maybe_module_name_node.as_ref().map(|node| node.range.end))
@@ -16396,33 +16369,24 @@ fn parse_elm_syntax_import_node(state: &mut ParseState) -> Option<ElmSyntaxNode<
             module_name: maybe_module_name_node,
             as_keyword_range: maybe_as_keyword_range,
             alias_name: maybe_alias_name,
+            exposing_keyword_range: maybe_exposing_keyword_range,
             exposing: maybe_exposing,
         },
     })
 }
-fn parse_elm_syntax_module_header_exposing(state: &mut ParseState) -> Option<ElmSyntaxExposing> {
-    let exposing_keyword_range: lsp_types::Range = parse_symbol_as_range(state, "exposing")?;
-    parse_elm_whitespace_and_comments(state);
-    let maybe_specific: Option<ElmSyntaxNode<ElmSyntaxExposingSpecific>> =
-        parse_elm_syntax_exposing_specific_node(state);
-    Some(ElmSyntaxExposing {
-        exposing_keyword_range: exposing_keyword_range,
-        specific: maybe_specific,
-    })
-}
-fn parse_elm_syntax_exposing_specific_node(
+fn parse_elm_syntax_exposing_node(
     state: &mut ParseState,
-) -> Option<ElmSyntaxNode<ElmSyntaxExposingSpecific>> {
+) -> Option<ElmSyntaxNode<ElmSyntaxExposing>> {
     let start_position: lsp_types::Position = state.position;
     if !parse_symbol(state, "(") {
         return None;
     }
     parse_elm_whitespace_and_comments(state);
-    let exposing_specific: ElmSyntaxExposingSpecific = match parse_symbol_as_range(state, "..") {
+    let exposing: ElmSyntaxExposing = match parse_symbol_as_range(state, "..") {
         Some(all_range) => {
             parse_elm_whitespace_and_comments(state);
             let _: bool = parse_symbol(state, ")");
-            ElmSyntaxExposingSpecific::All(all_range)
+            ElmSyntaxExposing::All(all_range)
         }
         None => {
             let mut expose_nodes: Vec<ElmSyntaxNode<ElmSyntaxExpose>> = Vec::new();
@@ -16434,7 +16398,7 @@ fn parse_elm_syntax_exposing_specific_node(
                 }
             }
             let _: bool = parse_symbol(state, ")");
-            ElmSyntaxExposingSpecific::Explicit(expose_nodes)
+            ElmSyntaxExposing::Explicit(expose_nodes)
         }
     };
     Some(ElmSyntaxNode {
@@ -16442,7 +16406,7 @@ fn parse_elm_syntax_exposing_specific_node(
             start: start_position,
             end: state.position,
         },
-        value: exposing_specific,
+        value: exposing,
     })
 }
 
@@ -16452,13 +16416,17 @@ fn parse_elm_syntax_module_header(state: &mut ParseState) -> Option<ElmSyntaxMod
         let maybe_module_name_node: Option<ElmSyntaxNode<String>> =
             parse_elm_standalone_module_name_node(state);
         parse_elm_whitespace_and_comments(state);
-        let maybe_exposing: Option<ElmSyntaxExposing> =
-            parse_elm_syntax_module_header_exposing(state);
+        let maybe_exposing_keyword_range: Option<lsp_types::Range> =
+            parse_elm_keyword_as_range(state, "exposing");
+        parse_elm_whitespace_and_comments(state);
+        let maybe_exposing: Option<ElmSyntaxNode<ElmSyntaxExposing>> =
+            parse_elm_syntax_exposing_node(state);
         Some(ElmSyntaxModuleHeader {
             specific: ElmSyntaxModuleHeaderSpecific::Pure {
                 module_keyword_range: module_keyword_range,
             },
             module_name: maybe_module_name_node,
+            exposing_keyword_range: maybe_exposing_keyword_range,
             exposing: maybe_exposing,
         })
     } else if let Some(port_keyword_range) = parse_symbol_as_range(state, "port") {
@@ -16468,14 +16436,18 @@ fn parse_elm_syntax_module_header(state: &mut ParseState) -> Option<ElmSyntaxMod
         let maybe_module_name_node: Option<ElmSyntaxNode<String>> =
             parse_elm_standalone_module_name_node(state);
         parse_elm_whitespace_and_comments(state);
-        let maybe_exposing: Option<ElmSyntaxExposing> =
-            parse_elm_syntax_module_header_exposing(state);
+        let maybe_exposing_keyword_range: Option<lsp_types::Range> =
+            parse_elm_keyword_as_range(state, "exposing");
+        parse_elm_whitespace_and_comments(state);
+        let maybe_exposing: Option<ElmSyntaxNode<ElmSyntaxExposing>> =
+            parse_elm_syntax_exposing_node(state);
         Some(ElmSyntaxModuleHeader {
             specific: ElmSyntaxModuleHeaderSpecific::Port {
                 port_keyword_range: port_keyword_range,
                 module_keyword_range: module_keyword_range,
             },
             module_name: maybe_module_name_node,
+            exposing_keyword_range: maybe_exposing_keyword_range,
             exposing: maybe_exposing,
         })
     } else if let Some(effect_keyword_range) = parse_symbol_as_range(state, "effect") {
@@ -16508,8 +16480,11 @@ fn parse_elm_syntax_module_header(state: &mut ParseState) -> Option<ElmSyntaxMod
         }
 
         parse_elm_whitespace_and_comments(state);
-        let maybe_exposing: Option<ElmSyntaxExposing> =
-            parse_elm_syntax_module_header_exposing(state);
+        let maybe_exposing_keyword_range: Option<lsp_types::Range> =
+            parse_elm_keyword_as_range(state, "exposing");
+        parse_elm_whitespace_and_comments(state);
+        let maybe_exposing: Option<ElmSyntaxNode<ElmSyntaxExposing>> =
+            parse_elm_syntax_exposing_node(state);
         Some(ElmSyntaxModuleHeader {
             specific: ElmSyntaxModuleHeaderSpecific::Effect {
                 effect_keyword_range: effect_keyword_range,
@@ -16519,6 +16494,7 @@ fn parse_elm_syntax_module_header(state: &mut ParseState) -> Option<ElmSyntaxMod
                 subscription: maybe_subscription_entry,
             },
             module_name: maybe_module_name_node,
+            exposing_keyword_range: maybe_exposing_keyword_range,
             exposing: maybe_exposing,
         })
     } else {
