@@ -1,7 +1,7 @@
 Small LSP language server for [elm](https://elm-lang.org/).
 To use, [install rust](https://rust-lang.org/tools/install/) and
 ```bash
-cargo install --git https://github.com/lue-bird/elm-language-server-rs
+cargo +nightly install --git https://github.com/lue-bird/elm-language-server-rs
 ```
 Then point your editor to `elm-language-server-rs`, see also [specific setups](#editor-setups).
 
