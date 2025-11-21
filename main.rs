@@ -991,7 +991,7 @@ fn initialize_state_for_project_into(
         }) => direct_dependencies
             .iter()
             .chain(test_direct_dependencies)
-            .map(|(n, v)| dependency_path(n, v))
+            .map(|(name, version)| dependency_path(name, version))
             .collect::<Vec<_>>(),
         Some(ElmJson::Package {
             dependency_minimum_versions,
@@ -1220,24 +1220,30 @@ fn parse_elm_json<'a>(json: &'a serde_json::Value) -> Result<ElmJson<'a>, String
                         .and_then(|dependencies| dependencies.get("direct"))
                     {
                         Some(serde_json::Value::Object(direct_dependencies_json)) => {
-                            let mut direct_dependencies: std::collections::HashMap<&str, &str> =
-                                std::collections::HashMap::new();
-                            for (direct_dependency_name, direct_dependency_version_json) in
-                                direct_dependencies_json
+                            let mut test_direct_dependencies: std::collections::HashMap<
+                                &str,
+                                &str,
+                            > = std::collections::HashMap::new();
+                            for (
+                                test_direct_dependency_name,
+                                test_direct_dependency_version_json,
+                            ) in direct_dependencies_json
                             {
-                                let direct_dependency_version: &str =
-                                    match direct_dependency_version_json {
+                                let test_direct_dependency_version: &str =
+                                    match test_direct_dependency_version_json {
                                         serde_json::Value::String(v) => Ok(v.as_str()),
                                         _ => Err(format!(
-                                            "{direct_dependency_name} dependency version must be a string"
+                                            "{test_direct_dependency_name} dependency version must be a string"
                                         )),
                                     }?;
-                                direct_dependencies.insert(
-                                    direct_dependency_name.as_str(),
-                                    direct_dependency_version,
+                                test_direct_dependencies.insert(
+                                    test_direct_dependency_name.as_str(),
+                                    test_direct_dependency_version,
                                 );
                             }
-                            Ok::<std::collections::HashMap<&str, &str>, String>(direct_dependencies)
+                            Ok::<std::collections::HashMap<&str, &str>, String>(
+                                test_direct_dependencies,
+                            )
                         }
                         _ => Err("must have field dependencies.direct".to_string()),
                     }?;
@@ -1299,30 +1305,32 @@ fn parse_elm_json<'a>(json: &'a serde_json::Value) -> Result<ElmJson<'a>, String
                 let test_dependency_minimum_versions: std::collections::HashMap<&str, &str> =
                     match json_object.get("test-dependencies") {
                         Some(serde_json::Value::Object(dependencies)) => {
-                            let mut dependency_minimum_versions: std::collections::HashMap<
+                            let mut test_dependency_minimum_versions: std::collections::HashMap<
                                 &str,
                                 &str,
                             > = std::collections::HashMap::new();
-                            for (direct_dependency_name, direct_dependency_version_json) in
-                                dependencies
+                            for (
+                                test_direct_dependency_name,
+                                test_direct_dependency_version_json,
+                            ) in dependencies
                             {
-                                let dependency_version_minimum: &str =
-                                    match direct_dependency_version_json {
+                                let test_dependency_version_minimum: &str =
+                                    match test_direct_dependency_version_json {
                                         serde_json::Value::String(
                                             dependency_version_constraint,
                                         ) => elm_json_version_constraint_to_minimum_version(
                                             dependency_version_constraint,
                                         ),
                                         _ => Err(format!(
-                                            "{direct_dependency_name} dependency version must be a string"
+                                            "{test_direct_dependency_name} dependency version must be a string"
                                         )),
                                     }?;
-                                dependency_minimum_versions.insert(
-                                    direct_dependency_name.as_str(),
-                                    dependency_version_minimum,
+                                test_dependency_minimum_versions.insert(
+                                    test_direct_dependency_name.as_str(),
+                                    test_dependency_version_minimum,
                                 );
                             }
-                            Ok(dependency_minimum_versions)
+                            Ok(test_dependency_minimum_versions)
                         }
                         _ => Err("must have field dependencies".to_string()),
                     }?;
@@ -1512,9 +1520,9 @@ fn respond_to_hover(
             Some(lsp_types::Hover {
                 contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
                     kind: lsp_types::MarkupKind::Markdown,
-                    value: match origin_module_state.syntax.documentation {
+                    value: match &origin_module_state.syntax.documentation {
                         None => "_module has no documentation comment_".to_string(),
-                        Some(ref module_documentation) => {
+                        Some(module_documentation) => {
                             documentation_comment_to_markdown(&module_documentation.value)
                         }
                     },
@@ -2269,10 +2277,10 @@ fn respond_to_hover(
                                     maybe_origin_module_declaration_function.as_ref().and_then(
                                         |origin_module_declaration_function_node| {
                                             origin_module_state.syntax.declarations.iter().find_map(
-                                                |origin_module_declaration_or_err| {
-                                                    let origin_module_declaration = origin_module_declaration_or_err.as_ref().ok()?;
-                                                    let origin_module_declaration_node = origin_module_declaration.declaration.as_ref()?;
-                                                    match &origin_module_declaration_node.value {
+                                                |origin_module_potential_function_declaration_or_err| {
+                                                    let origin_module_potential_function_declaration = origin_module_potential_function_declaration_or_err.as_ref().ok()?;
+                                                    let origin_module_potential_function_declaration_node = origin_module_potential_function_declaration.declaration.as_ref()?;
+                                                    match &origin_module_potential_function_declaration_node.value {
                                                         ElmSyntaxDeclaration::Variable {
                                                             start_name: origin_module_declaration_name,
                                                             signature: origin_module_declaration_signature,
@@ -2281,7 +2289,7 @@ fn respond_to_hover(
                                                             == origin_module_declaration_function_node.value => {
                                                             Some((
                                                                 origin_module_declaration_signature.as_ref(),
-                                                                origin_module_declaration
+                                                                origin_module_potential_function_declaration
                                                                     .documentation
                                                                     .as_ref()
                                                                     .map(|node| node.value.as_str()),
@@ -2700,9 +2708,9 @@ fn respond_to_goto_definition(
             Some(lsp_types::GotoDefinitionResponse::Scalar(
                 lsp_types::Location {
                     uri: origin_module_file_url,
-                    range: match origin_module_state.syntax.header {
-                        Some(ref module_header) => match module_header.module_name {
-                            Some(ref module_name_node) => module_name_node.range,
+                    range: match &origin_module_state.syntax.header {
+                        Some(module_header) => match &module_header.module_name {
+                            Some(module_name_node) => module_name_node.range,
                             None => match module_header.specific {
                                 ElmSyntaxModuleHeaderSpecific::Pure {
                                     module_keyword_range,
@@ -2746,9 +2754,9 @@ fn respond_to_goto_definition(
             Some(lsp_types::GotoDefinitionResponse::Scalar(
                 lsp_types::Location {
                     uri: origin_module_file_url,
-                    range: match origin_module_state.syntax.header {
-                        Some(ref module_header) => match module_header.module_name {
-                            Some(ref module_name_node) => module_name_node.range,
+                    range: match &origin_module_state.syntax.header {
+                        Some(module_header) => match &module_header.module_name {
+                            Some(module_name_node) => module_name_node.range,
                             None => match module_header.specific {
                                 ElmSyntaxModuleHeaderSpecific::Pure {
                                     module_keyword_range,
@@ -4816,9 +4824,9 @@ fn present_operator_declaration_info_markdown(
                 &(match origin_operator_function_maybe_signature {
                     None => "".to_string(),
                     Some(origin_operator_function_signature) => {
-                        match origin_operator_function_signature.type_ {
+                        match &origin_operator_function_signature.type_ {
                             None => "".to_string(),
-                            Some(ref origin_operator_function_type) => {
+                            Some(origin_operator_function_type) => {
                                 " :".to_string()
                                     + match elm_syntax_range_line_span(
                                         origin_operator_function_type.range,
@@ -5491,10 +5499,14 @@ fn respond_to_completion(
                                         .filter_map(|declaration_or_err| {
                                             declaration_or_err.as_ref().ok()
                                         })
-                                        .find_map(|origin_module_declaration| {
-                                            let origin_module_declaration_node =
-                                                origin_module_declaration.declaration.as_ref()?;
-                                            match &origin_module_declaration_node.value {
+                                        .find_map(|origin_module_potential_function_declaration| {
+                                            let origin_module_potential_function_declaration_node =
+                                                origin_module_potential_function_declaration
+                                                    .declaration
+                                                    .as_ref()?;
+                                            match &origin_module_potential_function_declaration_node
+                                                .value
+                                            {
                                                 ElmSyntaxDeclaration::Variable {
                                                     start_name: origin_module_declaration_name,
                                                     signature: origin_module_declaration_signature,
@@ -5506,7 +5518,7 @@ fn respond_to_completion(
                                                     Some((
                                                         origin_module_declaration_signature
                                                             .as_ref(),
-                                                        origin_module_declaration
+                                                        origin_module_potential_function_declaration
                                                             .documentation
                                                             .as_ref()
                                                             .map(|node| node.value.as_str()),
@@ -6664,7 +6676,7 @@ enum ElmSyntaxPattern {
     },
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ElmSyntaxStringQuotingStyle {
+enum ElmSyntaxStringQuotingStyle {
     SingleQuoted,
     TripleQuoted,
 }
@@ -6806,7 +6818,7 @@ enum ElmSyntaxExpression {
     },
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ElmSyntaxIntBase {
+enum ElmSyntaxIntBase {
     IntBase10,
     IntBase16,
 }
@@ -6885,7 +6897,7 @@ enum ElmSyntaxDeclaration {
     },
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ElmSyntaxInfixDirection {
+enum ElmSyntaxInfixDirection {
     Left,
     Non,
     Right,
@@ -8713,7 +8725,7 @@ fn elm_char_needs_unicode_escaping(char: char) -> bool {
 }
 fn elm_unicode_char_escape_into(so_far: &mut String, char: char) {
     for utf16_code in char.encode_utf16(&mut [0; 2]) {
-        use std::fmt::Write;
+        use std::fmt::Write as _;
         let _ = write!(so_far, "\\u{{{:04X}}}", utf16_code);
     }
 }
@@ -8730,23 +8742,23 @@ fn elm_int_into(so_far: &mut String, base: ElmSyntaxIntBase, value_or_err: &Resu
         },
         &Ok(value) => match base {
             ElmSyntaxIntBase::IntBase10 => {
-                use std::fmt::Write;
+                use std::fmt::Write as _;
                 let _ = write!(so_far, "{}", value);
             }
             ElmSyntaxIntBase::IntBase16 => {
-                use std::fmt::Write;
+                use std::fmt::Write as _;
                 let _ = write!(so_far, "0x{:02x}", value);
                 if value <= 0xFF {
-                    use std::fmt::Write;
+                    use std::fmt::Write as _;
                     let _ = write!(so_far, "\\u{{{:02X}}}", value);
                 } else if value <= 0xFFFF {
-                    use std::fmt::Write;
+                    use std::fmt::Write as _;
                     let _ = write!(so_far, "\\u{{{:04X}}}", value);
                 } else if value <= 0xFFFF_FFFF {
-                    use std::fmt::Write;
+                    use std::fmt::Write as _;
                     let _ = write!(so_far, "\\u{{{:08X}}}", value);
                 } else {
-                    use std::fmt::Write;
+                    use std::fmt::Write as _;
                     let _ = write!(so_far, "\\u{{{:016X}}}", value);
                 }
             }
@@ -8977,14 +8989,12 @@ fn elm_syntax_expression_not_parenthesized_into(
                         next_indent(indent),
                         comments_before_matched,
                     );
-                    if let Some(matched_node) = maybe_matched {
-                        elm_syntax_expression_not_parenthesized_into(
-                            so_far,
-                            next_indent(indent),
-                            comments,
-                            elm_syntax_node_unbox(matched_node),
-                        );
-                    }
+                    elm_syntax_expression_not_parenthesized_into(
+                        so_far,
+                        next_indent(indent),
+                        comments,
+                        elm_syntax_node_unbox(matched_node),
+                    );
                     space_or_linebreak_indented_into(so_far, before_cases_line_span, indent);
                     if let Some(of_keyword_range) = maybe_of_keyword_range
                         && !comments_before_of_keyword.is_empty()
@@ -9032,7 +9042,7 @@ fn elm_syntax_expression_not_parenthesized_into(
                 so_far.push_str(whatever);
             }
             Ok(value) => {
-                use std::fmt::Write;
+                use std::fmt::Write as _;
                 let _ = write!(so_far, "{}", *value);
             }
         },
@@ -10639,9 +10649,9 @@ fn elm_syntax_expression_any_sub(
                         result,
                     } => result.as_ref(),
                 })
-                .any(|expression_node| {
+                .any(|declaration_expression_node| {
                     elm_syntax_expression_any_sub(
-                        elm_syntax_node_as_ref(expression_node),
+                        elm_syntax_node_as_ref(declaration_expression_node),
                         is_needle,
                     )
                 })
@@ -11218,7 +11228,7 @@ fn elm_syntax_declaration_into(
             }
             so_far.push(' ');
             if let Some(infix_precedence_node) = maybe_infix_precedence {
-                use std::fmt::Write;
+                use std::fmt::Write as _;
                 let _ = write!(so_far, "{}", infix_precedence_node.value);
             }
             so_far.push_str(" (");
@@ -12633,8 +12643,8 @@ fn elm_syntax_expression_find_reference_at_position<'a>(
         ElmSyntaxExpression::Record(fields) => {
             fields
                 .iter()
-                .try_fold(local_bindings, |local_bindings, field| match field.value {
-                    Some(ref field_value_node) => elm_syntax_expression_find_reference_at_position(
+                .try_fold(local_bindings, |local_bindings, field| match &field.value {
+                    Some(field_value_node) => elm_syntax_expression_find_reference_at_position(
                         local_bindings,
                         scope_declaration,
                         elm_syntax_node_as_ref(field_value_node),
@@ -12673,8 +12683,8 @@ fn elm_syntax_expression_find_reference_at_position<'a>(
             }
             fields
                 .iter()
-                .try_fold(local_bindings, |local_bindings, field| match field.value {
-                    Some(ref field_value_node) => elm_syntax_expression_find_reference_at_position(
+                .try_fold(local_bindings, |local_bindings, field| match &field.value {
+                    Some(field_value_node) => elm_syntax_expression_find_reference_at_position(
                         local_bindings,
                         scope_declaration,
                         elm_syntax_node_as_ref(field_value_node),
@@ -12817,10 +12827,7 @@ fn elm_syntax_let_declaration_find_reference_at_position<'a>(
                         value: ElmSyntaxSymbol::LetDeclarationName {
                             name: &start_name.value,
                             start_name_range: start_name.range,
-                            signature_type: maybe_signature
-                                .as_ref()
-                                .and_then(|signature| signature.type_.as_ref())
-                                .map(elm_syntax_node_as_ref),
+                            signature_type: signature.type_.as_ref().map(elm_syntax_node_as_ref),
                             scope_expression: scope_expression,
                         },
                         range: implementation_name_range,
@@ -16551,9 +16558,9 @@ fn parse_elm_syntax_type_space_separated_node(
         Some(ElmSyntaxNode {
             range: lsp_types::Range {
                 start: start_type_node.range.start,
-                end: match maybe_output_type {
+                end: match &maybe_output_type {
                     None => arrow_key_symbol_range.end,
-                    Some(ref output_type_node) => output_type_node.range.end,
+                    Some(output_type_node) => output_type_node.range.end,
                 },
             },
             value: ElmSyntaxType::Function {
@@ -16856,12 +16863,12 @@ fn parse_elm_syntax_pattern_space_separated_node_starting_at_any_indent(
                 cons_head_key_symbol_range,
                 Some(ElmSyntaxNode {
                     range: lsp_types::Range {
-                        start: match maybe_head {
-                            Some(ref head_node) => head_node.range.start,
+                        start: match &maybe_head {
+                            Some(head_node) => head_node.range.start,
                             None => cons_tail_key_symbol_range.start,
                         },
-                        end: match maybe_tail {
-                            Some(ref tail_node) => tail_node.range.end,
+                        end: match &maybe_tail {
+                            Some(tail_node) => tail_node.range.end,
                             None => cons_tail_key_symbol_range.end,
                         },
                     },
@@ -16879,8 +16886,8 @@ fn parse_elm_syntax_pattern_space_separated_node_starting_at_any_indent(
         Some((cons_key_symbol_range, maybe_tail)) => ElmSyntaxNode {
             range: lsp_types::Range {
                 start: start_pattern.range.start,
-                end: match maybe_tail {
-                    Some(ref tail_node) => tail_node.range.end,
+                end: match &maybe_tail {
+                    Some(tail_node) => tail_node.range.end,
                     None => cons_key_symbol_range.end,
                 },
             },
@@ -16899,8 +16906,8 @@ fn parse_elm_syntax_pattern_space_separated_node_starting_at_any_indent(
             Some(ElmSyntaxNode {
                 range: lsp_types::Range {
                     start: pattern_with_conses.range.start,
-                    end: match maybe_variable {
-                        Some(ref variable_node) => variable_node.range.end,
+                    end: match &maybe_variable {
+                        Some(variable_node) => variable_node.range.end,
                         None => as_keyword_range.end,
                     },
                 },
@@ -17271,12 +17278,13 @@ fn parse_elm_text_content_char(state: &mut ParseState) -> Option<char> {
                         reset_parse_state(state);
                         return None;
                     }
-                    let unicode_hex_start_offset_utf8: usize = state.offset_utf8;
+                    let second_unicode_hex_start_offset_utf8: usize = state.offset_utf8;
                     parse_same_line_while(state, |c| c.is_ascii_hexdigit());
-                    let unicode_hex_str: &str =
-                        &state.source[unicode_hex_start_offset_utf8..state.offset_utf8];
+                    let second_unicode_hex_str: &str =
+                        &state.source[second_unicode_hex_start_offset_utf8..state.offset_utf8];
                     let _: bool = parse_symbol(state, "}");
-                    let Ok(second_utf16_code) = u16::from_str_radix(unicode_hex_str, 16) else {
+                    let Ok(second_utf16_code) = u16::from_str_radix(second_unicode_hex_str, 16)
+                    else {
                         reset_parse_state(state);
                         return None;
                     };
@@ -17328,9 +17336,9 @@ fn parse_elm_syntax_expression_space_separated_node(
                     ElmSyntaxNode {
                         range: lsp_types::Range {
                             start: left_node.range.start,
-                            end: match maybe_right {
+                            end: match &maybe_right {
                                 None => operator_node.range.end,
-                                Some(ref right_node) => right_node.range.end,
+                                Some(right_node) => right_node.range.end,
                             },
                         },
                         value: ElmSyntaxExpression::InfixOperationIgnoringPrecedence {
@@ -17621,9 +17629,9 @@ fn parse_elm_syntax_expression_if_then_else(
                 ElmSyntaxNode {
                     range: lsp_types::Range {
                         start: if_keyword_range.start,
-                        end: match maybe_on_false {
+                        end: match &maybe_on_false {
                             None => else_keyword_range.end,
-                            Some(ref on_false_node) => on_false_node.range.end,
+                            Some(on_false_node) => on_false_node.range.end,
                         },
                     },
                     value: ElmSyntaxExpression::IfThenElse {
@@ -17638,9 +17646,9 @@ fn parse_elm_syntax_expression_if_then_else(
                 ElmSyntaxNode {
                     range: lsp_types::Range {
                         start: if_keyword_range.start,
-                        end: match maybe_on_true {
+                        end: match &maybe_on_true {
                             None => then_keyword_range.end,
-                            Some(ref on_true_node) => on_true_node.range.end,
+                            Some(on_true_node) => on_true_node.range.end,
                         },
                     },
                     value: ElmSyntaxExpression::IfThenElse {
@@ -17656,9 +17664,9 @@ fn parse_elm_syntax_expression_if_then_else(
             ElmSyntaxNode {
                 range: lsp_types::Range {
                     start: if_keyword_range.start,
-                    end: match maybe_condition {
+                    end: match &maybe_condition {
                         None => if_keyword_range.end,
-                        Some(ref condition_node) => condition_node.range.end,
+                        Some(condition_node) => condition_node.range.end,
                     },
                 },
                 value: ElmSyntaxExpression::IfThenElse {
@@ -17699,9 +17707,9 @@ fn parse_elm_syntax_expression_lambda(
     Some(ElmSyntaxNode {
         range: lsp_types::Range {
             start: backslash_key_symbol_range.start,
-            end: match maybe_result {
+            end: match &maybe_result {
                 None => syntax_before_result_end_position,
-                Some(ref result_node) => result_node.range.end,
+                Some(result_node) => result_node.range.end,
             },
         },
         value: ElmSyntaxExpression::Lambda {
@@ -17723,9 +17731,9 @@ fn parse_elm_syntax_expression_case_of(
         None => ElmSyntaxNode {
             range: lsp_types::Range {
                 start: case_keyword_range.start,
-                end: match maybe_matched {
+                end: match &maybe_matched {
                     None => case_keyword_range.end,
-                    Some(ref matched_node) => matched_node.range.end,
+                    Some(matched_node) => matched_node.range.end,
                 },
             },
             value: ElmSyntaxExpression::CaseOf {
@@ -17844,11 +17852,11 @@ fn parse_elm_syntax_expression_let_in(
         ElmSyntaxNode {
             range: lsp_types::Range {
                 start: let_keyword_range.start,
-                end: match maybe_result {
+                end: match &maybe_result {
                     None => maybe_in_keyword_range
                         .map(|range| range.end)
                         .unwrap_or(syntax_before_in_key_symbol_end_position),
-                    Some(ref result_node) => result_node.range.end,
+                    Some(result_node) => result_node.range.end,
                 },
             },
             value: ElmSyntaxExpression::LetIn {
@@ -17890,9 +17898,9 @@ fn parse_elm_syntax_let_destructuring_node(
             ElmSyntaxNode {
                 range: lsp_types::Range {
                     start: pattern_node.range.start,
-                    end: match maybe_expression {
+                    end: match &maybe_expression {
                         None => equals_key_symbol_range.end,
-                        Some(ref expression_node) => expression_node.range.end,
+                        Some(expression_node) => expression_node.range.end,
                     },
                 },
                 value: ElmSyntaxLetDeclaration::Destructuring {
@@ -17963,8 +17971,8 @@ fn parse_elm_syntax_let_variable_declaration_node_after_maybe_signature_and_name
     maybe_signature: Option<ElmSyntaxVariableDeclarationSignature>,
 ) -> ElmSyntaxNode<ElmSyntaxLetDeclaration> {
     let mut syntax_before_equals_key_symbol_end_location: lsp_types::Position =
-        match maybe_signature {
-            Some(ref signature) => signature
+        match &maybe_signature {
+            Some(signature) => signature
                 .implementation_name_range
                 .map(|range| range.end)
                 .or_else(|| signature.type_.as_ref().map(|node| node.range.end))
@@ -18371,8 +18379,8 @@ fn parse_elm_syntax_declaration_variable_node_after_maybe_signature_and_name(
     maybe_signature: Option<ElmSyntaxVariableDeclarationSignature>,
 ) -> ElmSyntaxNode<ElmSyntaxDeclaration> {
     let mut syntax_before_equals_key_symbol_end_location: lsp_types::Position =
-        match maybe_signature {
-            Some(ref signature) => signature
+        match &maybe_signature {
+            Some(signature) => signature
                 .implementation_name_range
                 .map(|range| range.end)
                 .or_else(|| signature.type_.as_ref().map(|node| node.range.end))
