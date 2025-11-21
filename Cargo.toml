@@ -36,11 +36,12 @@ single-use-lifetimes = { level = "warn" }
 # If you want to contribute, you really don't need to bother with clippy
 # I just wanted to try enabling it for myself to maybe find performance issues
 [lints.clippy]
-# consider let_underscore_untyped, arithmetic_side_effects
+# consider arithmetic_side_effects
 todo = { level = "warn" }
 shadow_unrelated = { level = "warn" }
 unused_trait_names = { level = "warn" }
 ref-patterns = { level = "warn" }
+int_plus_one = { level = "allow" }
 
 pedantic = { level = "warn", priority = -1 }
 single_char_pattern = { level = "allow" }

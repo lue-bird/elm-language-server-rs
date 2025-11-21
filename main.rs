@@ -255,7 +255,9 @@ fn handle_request(
         <lsp_types::request::PrepareRenameRequest as lsp_types::request::Request>::METHOD => {
             let prepare_rename_arguments: <lsp_types::request::PrepareRenameRequest as lsp_types::request::Request>::Params =
                 serde_json::from_value(request_arguments_json)?;
-            let prepared = respond_to_prepare_rename(state, &prepare_rename_arguments);
+            let prepared: Option<
+                Result<lsp_types::PrepareRenameResponse, lsp_server::ResponseError>,
+            > = respond_to_prepare_rename(state, &prepare_rename_arguments);
             let response_result: Result<
                 <lsp_types::request::PrepareRenameRequest as lsp_types::request::Request>::Result,
                 lsp_server::ResponseError,
@@ -6391,9 +6393,11 @@ fn markdown_convert_indented_code_blocks_to_elm(markdown_source: &str) -> String
     let mut result_builder: String = String::new();
     let mut current_indent: usize = 0;
     let mut is_in_code_block: bool = false;
+    let mut previous_line_was_blank: bool = false;
     for source_line in markdown_source.lines() {
         if source_line.is_empty() {
             result_builder.push('\n');
+            previous_line_was_blank = true;
         } else {
             let current_line_indent: usize = source_line
                 .chars()
@@ -6403,27 +6407,31 @@ fn markdown_convert_indented_code_blocks_to_elm(markdown_source: &str) -> String
                 // ignore blank line
                 result_builder.push_str(source_line);
                 result_builder.push('\n');
-            } else if is_in_code_block {
-                if current_line_indent <= current_indent - 4 {
-                    is_in_code_block = false;
+                previous_line_was_blank = true;
+            } else {
+                if is_in_code_block {
+                    if current_line_indent <= current_indent - 1 {
+                        is_in_code_block = false;
+                        current_indent = current_line_indent;
+                        result_builder.push_str("```\n");
+                        result_builder.push_str(source_line);
+                        result_builder.push('\n');
+                    } else {
+                        result_builder.push_str(&source_line[current_indent..]);
+                        result_builder.push('\n');
+                    }
+                } else if previous_line_was_blank && (current_line_indent >= current_indent + 4) {
+                    is_in_code_block = true;
                     current_indent = current_line_indent;
-                    result_builder.push_str("```\n");
-                    result_builder.push_str(source_line);
+                    result_builder.push_str("```elm\n");
+                    result_builder.push_str(&source_line[current_line_indent..]);
                     result_builder.push('\n');
                 } else {
-                    result_builder.push_str(&source_line[current_indent..]);
+                    current_indent = current_line_indent;
+                    result_builder.push_str(source_line);
                     result_builder.push('\n');
                 }
-            } else if current_line_indent >= current_indent + 4 {
-                is_in_code_block = true;
-                current_indent = current_line_indent;
-                result_builder.push_str("```elm\n");
-                result_builder.push_str(&source_line[current_line_indent..]);
-                result_builder.push('\n');
-            } else {
-                current_indent = current_line_indent;
-                result_builder.push_str(source_line);
-                result_builder.push('\n');
+                previous_line_was_blank = false;
             }
         }
     }
