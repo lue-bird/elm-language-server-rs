@@ -9067,7 +9067,7 @@ fn elm_syntax_expression_not_parenthesized_into(
                         end: before_then_keyword,
                     },
                 );
-            let before_cases_line_span: LineSpan = if comments_before_condition.is_empty()
+            let before_condition_line_span: LineSpan = if comments_before_condition.is_empty()
                 && comments_before_then_keyword.is_empty()
             {
                 match maybe_condition {
@@ -9080,16 +9080,15 @@ fn elm_syntax_expression_not_parenthesized_into(
             } else {
                 LineSpan::Multiple
             };
-            space_or_linebreak_indented_into(so_far, before_cases_line_span, next_indent(indent));
-            elm_syntax_comments_then_linebreak_indented_into(
+            space_or_linebreak_indented_into(
                 so_far,
+                before_condition_line_span,
                 next_indent(indent),
-                comments_before_condition,
             );
             elm_syntax_comments_then_linebreak_indented_into(
                 so_far,
                 next_indent(indent),
-                comments_before_then_keyword,
+                comments_before_condition,
             );
             if let Some(condition_node) = maybe_condition {
                 elm_syntax_expression_not_parenthesized_into(
@@ -9099,7 +9098,15 @@ fn elm_syntax_expression_not_parenthesized_into(
                     elm_syntax_node_unbox(condition_node),
                 );
             }
-            space_or_linebreak_indented_into(so_far, before_cases_line_span, indent);
+            space_or_linebreak_indented_into(so_far, before_condition_line_span, indent);
+            if !comments_before_then_keyword.is_empty() {
+                linebreak_indented_into(so_far, indent);
+                elm_syntax_comments_then_linebreak_indented_into(
+                    so_far,
+                    indent,
+                    comments_before_then_keyword,
+                );
+            }
             so_far.push_str("then");
             linebreak_indented_into(so_far, next_indent(indent));
             if let Some(on_true_node) = maybe_on_true {
@@ -16008,7 +16015,7 @@ fn parse_same_line_char_if(state: &mut ParseState, char_is_valid: impl Fn(char) 
 fn parse_unsigned_integer_base10(state: &mut ParseState) -> bool {
     if parse_symbol(state, "0") {
         true
-    } else if parse_same_line_char_if(state, |c| ('1'..'9').contains(&c)) {
+    } else if parse_same_line_char_if(state, |c| ('1'..='9').contains(&c)) {
         parse_same_line_while(state, |c| c.is_ascii_digit());
         true
     } else {
@@ -16212,7 +16219,7 @@ fn parse_elm_standalone_module_name_node(state: &mut ParseState) -> Option<ElmSy
 }
 fn parse_elm_operator_node(state: &mut ParseState) -> Option<ElmSyntaxNode<&'static str>> {
     // can be optimized by only slicing once for each symbol length
-    let start_position = state.position;
+    let start_position: lsp_types::Position = state.position;
     parse_symbol_as_str(state, "</>")
         .or_else(|| parse_symbol_as_str(state, "<?>"))
         .or_else(|| parse_symbol_as_str(state, "=="))
@@ -16221,6 +16228,8 @@ fn parse_elm_operator_node(state: &mut ParseState) -> Option<ElmSyntaxNode<&'sta
         .or_else(|| parse_symbol_as_str(state, "++"))
         .or_else(|| parse_symbol_as_str(state, "<|"))
         .or_else(|| parse_symbol_as_str(state, "|>"))
+        .or_else(|| parse_symbol_as_str(state, "<<"))
+        .or_else(|| parse_symbol_as_str(state, ">>"))
         .or_else(|| parse_symbol_as_str(state, "||"))
         .or_else(|| parse_symbol_as_str(state, "&&"))
         .or_else(|| parse_symbol_as_str(state, "<="))
@@ -16228,8 +16237,6 @@ fn parse_elm_operator_node(state: &mut ParseState) -> Option<ElmSyntaxNode<&'sta
         .or_else(|| parse_symbol_as_str(state, "|="))
         .or_else(|| parse_symbol_as_str(state, "|."))
         .or_else(|| parse_symbol_as_str(state, "//"))
-        .or_else(|| parse_symbol_as_str(state, "<<"))
-        .or_else(|| parse_symbol_as_str(state, ">>"))
         .or_else(|| parse_symbol_as_str(state, "<"))
         .or_else(|| parse_symbol_as_str(state, ">"))
         .or_else(|| parse_symbol_as_str(state, "+"))
@@ -16249,7 +16256,7 @@ fn parse_elm_operator_followed_by_closing_paren(
     state: &mut ParseState,
 ) -> Option<ElmSyntaxNode<&'static str>> {
     // can be optimized by only slicing once for each symbol length
-    let start_position = state.position;
+    let start_position: lsp_types::Position = state.position;
     parse_symbol_as(state, "</>)", "</>")
         .or_else(|| parse_symbol_as(state, "<?>)", "<?>"))
         .or_else(|| parse_symbol_as(state, "==)", "=="))
@@ -16258,6 +16265,8 @@ fn parse_elm_operator_followed_by_closing_paren(
         .or_else(|| parse_symbol_as(state, "++)", "++"))
         .or_else(|| parse_symbol_as(state, "<|)", "<|"))
         .or_else(|| parse_symbol_as(state, "|>)", "|>"))
+        .or_else(|| parse_symbol_as(state, "<<)", "<<"))
+        .or_else(|| parse_symbol_as(state, ">>)", ">>"))
         .or_else(|| parse_symbol_as(state, "||)", "||"))
         .or_else(|| parse_symbol_as(state, "&&)", "&&"))
         .or_else(|| parse_symbol_as(state, "<=)", "<="))
@@ -16265,8 +16274,6 @@ fn parse_elm_operator_followed_by_closing_paren(
         .or_else(|| parse_symbol_as(state, "|=)", "|="))
         .or_else(|| parse_symbol_as(state, "|.)", "|."))
         .or_else(|| parse_symbol_as(state, "//)", "//"))
-        .or_else(|| parse_symbol_as(state, "<<)", "<<"))
-        .or_else(|| parse_symbol_as(state, ">>)", ">>"))
         .or_else(|| parse_symbol_as(state, "<)", "<"))
         .or_else(|| parse_symbol_as(state, ">)", ">"))
         .or_else(|| parse_symbol_as(state, "+)", "+"))
@@ -18136,11 +18143,11 @@ fn parse_elm_syntax_declaration_operator_node(
         };
     let _: bool = parse_symbol(state, "(");
     parse_elm_whitespace_and_comments(state);
-    let maybe_operator_symbol = parse_elm_operator_node(state);
+    let maybe_operator_symbol: Option<ElmSyntaxNode<&str>> = parse_elm_operator_node(state);
     parse_elm_whitespace_and_comments(state);
     let _: bool = parse_symbol(state, ")");
     parse_elm_whitespace_and_comments(state);
-    let maybe_equals_key_symbol_range = parse_symbol_as_range(state, "=");
+    let maybe_equals_key_symbol_range: Option<lsp_types::Range> = parse_symbol_as_range(state, "=");
     parse_elm_whitespace_and_comments(state);
     let maybe_function: Option<ElmSyntaxNode<String>> = parse_elm_lowercase_as_node(state);
     Some(ElmSyntaxNode {
