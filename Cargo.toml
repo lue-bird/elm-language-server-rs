@@ -26,10 +26,17 @@ debug = "none"
 # but please do switch to 1 locally if you need faster compile times
 opt-level = 2
 
+[lints.rust]
+unused_qualifications = { level = "warn" }
+ambiguous-negative-literals = { level = "warn" }
+unused_lifetimes = { level = "warn" }
+trivial-numeric-casts = { level = "warn" }
+single-use-lifetimes = { level = "warn" }
 
 # If you want to contribute, you really don't need to bother with clippy
 # I just wanted to try enabling it for myself to maybe find performance issues
 [lints.clippy]
+todo = { level = "warn" }
 pedantic = { level = "warn", priority = -1 }
 single_char_pattern = { level = "allow" }
 # generally useful but too many false positives and cases where returning the same trivial expression is perfectly fine
