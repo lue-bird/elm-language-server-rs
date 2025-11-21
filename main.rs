@@ -49,6 +49,8 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         serde_json::from_value(initialize_arguments_json)?;
     let state: State = initialize_state_for_workspace_directories_into(&initialize_arguments);
     server_loop(&connection, state)?;
+    // shut down gracefully
+    drop(connection);
     io_thread.join()?;
     Ok(())
 }
