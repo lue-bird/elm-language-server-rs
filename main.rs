@@ -18532,6 +18532,9 @@ fn string_replace_lsp_range(
     );
 }
 fn str_offset_after_n_lsp_linebreaks(str: &str, linebreak_count_to_skip: usize) -> usize {
+    if linebreak_count_to_skip == 0 {
+        return 0;
+    }
     let mut offset_after_n_linebreaks: usize = 0;
     let mut encountered_linebreaks: usize = 0;
     'finding_after_n_linebreaks_offset: loop {
