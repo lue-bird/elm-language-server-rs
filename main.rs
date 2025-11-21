@@ -31,7 +31,7 @@ struct ModuleState {
     source: String,
 }
 
-fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (connection, io_thread) = lsp_server::Connection::stdio();
 
     let (initialize_request_id, initialize_arguments_json) = connection.initialize_start()?;
@@ -57,7 +57,7 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
 fn server_loop(
     connection: &lsp_server::Connection,
     mut state: State,
-) -> std::result::Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error>> {
     for client_message in &connection.receiver {
         match client_message {
             lsp_server::Message::Request(request) => {
