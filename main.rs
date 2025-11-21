@@ -8837,8 +8837,10 @@ fn elm_syntax_expression_not_parenthesized_into(
                     },
                 );
             let line_span_before_argument0: LineSpan = if comments_before_argument0.is_empty()
-                && elm_syntax_range_line_span(called_node.range, comments) == LineSpan::Single
-                && elm_syntax_range_line_span(argument0_node.range, comments) == LineSpan::Single
+                && elm_syntax_expression_line_span(comments, elm_syntax_node_unbox(called_node))
+                    == LineSpan::Single
+                && elm_syntax_expression_line_span(comments, elm_syntax_node_unbox(argument0_node))
+                    == LineSpan::Single
             {
                 LineSpan::Single
             } else {
@@ -8846,7 +8848,7 @@ fn elm_syntax_expression_not_parenthesized_into(
             };
             let full_line_span: LineSpan = match line_span_before_argument0 {
                 LineSpan::Multiple => LineSpan::Multiple,
-                LineSpan::Single => elm_syntax_range_line_span(expression_node.range, comments),
+                LineSpan::Single => elm_syntax_expression_line_span(comments, expression_node),
             };
             elm_syntax_expression_parenthesized_if_space_separated_into(
                 so_far,
@@ -9048,6 +9050,10 @@ fn elm_syntax_expression_not_parenthesized_into(
                 .map(|range| range.start)
                 .or_else(|| maybe_condition.as_ref().map(|node| node.range.end))
                 .unwrap_or(expression_node.range.start);
+            let after_on_true: lsp_types::Position = maybe_on_true
+                .as_ref()
+                .map(|node| node.range.end)
+                .unwrap_or(before_then_keyword);
             let comments_before_condition = elm_syntax_comments_in_range(
                 comments,
                 lsp_types::Range {
@@ -9055,13 +9061,14 @@ fn elm_syntax_expression_not_parenthesized_into(
                     end: until_condition,
                 },
             );
-            let comments_before_then_keyword = elm_syntax_comments_in_range(
-                comments,
-                lsp_types::Range {
-                    start: expression_node.range.start,
-                    end: before_then_keyword,
-                },
-            );
+            let comments_before_then_keyword: &[ElmSyntaxNode<ElmSyntaxComment>] =
+                elm_syntax_comments_in_range(
+                    comments,
+                    lsp_types::Range {
+                        start: expression_node.range.start,
+                        end: before_then_keyword,
+                    },
+                );
             let before_cases_line_span: LineSpan = if comments_before_condition.is_empty()
                 && comments_before_then_keyword.is_empty()
             {
@@ -9109,29 +9116,15 @@ fn elm_syntax_expression_not_parenthesized_into(
                         },
                     ),
                 );
-                if let Some(else_keyword_range) = maybe_else_keyword_range {
-                    elm_syntax_comments_then_linebreak_indented_into(
-                        so_far,
-                        next_indent(indent),
-                        elm_syntax_comments_in_range(
-                            comments,
-                            lsp_types::Range {
-                                start: on_true_node.range.end,
-                                end: else_keyword_range.start,
-                            },
-                        ),
-                    );
-                }
                 elm_syntax_expression_not_parenthesized_into(
                     so_far,
                     next_indent(indent),
                     comments,
                     elm_syntax_node_unbox(on_true_node),
                 );
-                linebreak_indented_into(so_far, indent);
-            } else {
-                linebreak_indented_into(so_far, indent);
+                so_far.push('\n');
             }
+            linebreak_indented_into(so_far, indent);
             if maybe_on_false.is_none()
                 && let Some(else_keyword_range) = maybe_else_keyword_range
             {
@@ -9142,32 +9135,85 @@ fn elm_syntax_expression_not_parenthesized_into(
                     elm_syntax_comments_in_range(
                         comments,
                         lsp_types::Range {
-                            start: before_then_keyword,
+                            start: after_on_true,
                             end: else_keyword_range.start,
                         },
                     ),
                 );
             }
             so_far.push_str("else");
-            linebreak_indented_into(so_far, next_indent(indent));
-            if let Some(on_false_node) = maybe_on_false {
-                elm_syntax_comments_then_linebreak_indented_into(
-                    so_far,
-                    next_indent(indent),
-                    elm_syntax_comments_in_range(
-                        comments,
-                        lsp_types::Range {
-                            start: before_then_keyword,
-                            end: on_false_node.range.start,
-                        },
-                    ),
-                );
-                elm_syntax_expression_not_parenthesized_into(
-                    so_far,
-                    next_indent(indent),
-                    comments,
-                    elm_syntax_node_unbox(on_false_node),
-                );
+            match maybe_on_false {
+                None => {
+                    linebreak_indented_into(so_far, next_indent(indent));
+                }
+                Some(on_false_node) => {
+                    let on_false_innermost: ElmSyntaxNode<&ElmSyntaxExpression> =
+                        elm_syntax_expression_to_unparenthesized(elm_syntax_node_unbox(
+                            on_false_node,
+                        ));
+                    let comments_after_on_false_innermost: &[ElmSyntaxNode<ElmSyntaxComment>] =
+                        elm_syntax_comments_in_range(
+                            comments,
+                            lsp_types::Range {
+                                start: on_false_innermost.range.end,
+                                end: on_false_node.range.end,
+                            },
+                        );
+                    if comments_after_on_false_innermost.is_empty()
+                        && let ElmSyntaxExpression::IfThenElse { .. } = on_false_innermost.value
+                    {
+                        let comments_before_on_false_innermost: &[ElmSyntaxNode<
+                            ElmSyntaxComment,
+                        >] = elm_syntax_comments_in_range(
+                            comments,
+                            lsp_types::Range {
+                                start: on_false_node.range.start,
+                                end: on_false_innermost.range.start,
+                            },
+                        );
+                        space_or_linebreak_indented_into(
+                            so_far,
+                            if comments_before_on_false_innermost.is_empty() {
+                                LineSpan::Single
+                            } else {
+                                LineSpan::Multiple
+                            },
+                            indent,
+                        );
+                        elm_syntax_comments_then_linebreak_indented_into(
+                            so_far,
+                            indent,
+                            comments_before_on_false_innermost,
+                        );
+                        // elm-format here _forces_ the if...then to span
+                        // multiple lines which to me seems like a bug
+                        elm_syntax_expression_not_parenthesized_into(
+                            so_far,
+                            indent,
+                            comments,
+                            on_false_innermost,
+                        );
+                    } else {
+                        linebreak_indented_into(so_far, next_indent(indent));
+                        elm_syntax_comments_then_linebreak_indented_into(
+                            so_far,
+                            next_indent(indent),
+                            elm_syntax_comments_in_range(
+                                comments,
+                                lsp_types::Range {
+                                    start: after_on_true,
+                                    end: on_false_node.range.start,
+                                },
+                            ),
+                        );
+                        elm_syntax_expression_not_parenthesized_into(
+                            so_far,
+                            next_indent(indent),
+                            comments,
+                            elm_syntax_node_unbox(on_false_node),
+                        );
+                    }
+                }
             }
         }
         ElmSyntaxExpression::InfixOperationIgnoringPrecedence {
