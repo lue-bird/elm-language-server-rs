@@ -36,7 +36,6 @@ single-use-lifetimes = { level = "warn" }
 # If you want to contribute, you really don't need to bother with clippy
 # I just wanted to try enabling it for myself to maybe find performance issues
 [lints.clippy]
-# consider arithmetic_side_effects
 todo = { level = "warn" }
 shadow_unrelated = { level = "warn" }
 unused_trait_names = { level = "warn" }
