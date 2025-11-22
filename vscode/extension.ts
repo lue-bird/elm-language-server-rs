@@ -29,6 +29,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     diagnosticCollectionName: "elm",
     documentSelector: [
       {
+        scheme: "file",
         language: "elm",
       },
     ],
