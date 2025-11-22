@@ -10812,11 +10812,11 @@ fn elm_syntax_module_format(elm_syntax_module: &ElmSyntaxModule) -> String {
                 },
             ),
         );
-        elm_syntax_module_documentation_comment_then_linebreak_into(
+        elm_syntax_module_documentation_comment_into(
             &mut builder,
             &module_documentation_node.value,
         );
-        builder.push('\n');
+        builder.push_str("\n\n");
         previous_syntax_end = module_documentation_node.range.end;
     }
     if let Some(last_import_node) = elm_syntax_module.imports.last() {
@@ -10903,7 +10903,7 @@ fn elm_syntax_module_level_comments(
         so_far.push_str("\n\n");
     }
 }
-fn elm_syntax_module_documentation_comment_then_linebreak_into(
+fn elm_syntax_module_documentation_comment_into(
     so_far: &mut String,
     module_documentation_elements: &[ElmSyntaxNode<ElmSyntaxModuleDocumentationElement>],
 ) {
@@ -10929,14 +10929,14 @@ fn elm_syntax_module_documentation_comment_then_linebreak_into(
                             expose_name_node
                                 .value
                                 .strip_suffix("(..)")
-                                .unwrap_or(&expose_name0_node.value),
+                                .unwrap_or(&expose_name_node.value),
                         );
                     }
                 }
             }
         }
     }
-    so_far.push_str("-}\n");
+    so_far.push_str("-}");
 }
 fn elm_syntax_documentation_comment_then_linebreak_into(so_far: &mut String, content: &str) {
     so_far.push_str("{-|");
