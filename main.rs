@@ -1537,6 +1537,10 @@ fn respond_to_hover(
         ElmSyntaxSymbol::ModuleHeaderExpose {
             name: hovered_name,
             all_exposes: _,
+        }
+        | ElmSyntaxSymbol::ModuleDocumentationAtDocsMember {
+            name: hovered_name,
+            module_documentation: _,
         } => {
             let hovered_module_origin: &str = hovered_project_module_state
                 .module
@@ -2790,6 +2794,10 @@ fn respond_to_goto_definition(
         ElmSyntaxSymbol::ModuleHeaderExpose {
             name: goto_name,
             all_exposes: _,
+        }
+        | ElmSyntaxSymbol::ModuleDocumentationAtDocsMember {
+            name: goto_name,
+            module_documentation: _,
         } => {
             let declaration_name_range: lsp_types::Range = goto_symbol_project_module_state
                 .module
@@ -3218,6 +3226,10 @@ fn respond_to_prepare_rename(
             name,
             all_exposes: _,
         }
+        | ElmSyntaxSymbol::ModuleDocumentationAtDocsMember {
+            name,
+            module_documentation: _,
+        }
         | ElmSyntaxSymbol::ImportExpose {
             name,
             origin_module: _,
@@ -3438,6 +3450,10 @@ fn respond_to_rename(
         | ElmSyntaxSymbol::ModuleHeaderExpose {
             name: to_rename_declaration_name,
             all_exposes: _,
+        }
+        | ElmSyntaxSymbol::ModuleDocumentationAtDocsMember {
+            name: to_rename_declaration_name,
+            module_documentation: _,
         } => {
             let to_rename_module_origin: &str = to_rename_project_module_state
                 .module
@@ -4027,6 +4043,10 @@ fn respond_to_references(
         ElmSyntaxSymbol::ModuleHeaderExpose {
             name: to_find_name,
             all_exposes: _,
+        }
+        | ElmSyntaxSymbol::ModuleDocumentationAtDocsMember {
+            name: to_find_name,
+            module_documentation: _,
         } => {
             let to_find_module_origin: &str = to_find_project_module_state
                 .module
@@ -5237,6 +5257,220 @@ fn respond_to_completion(
                         result: _,
                     } => {
                         if !existing_expose_names.contains(start_name_node.value.as_ref()) {
+                            completion_items.push(lsp_types::CompletionItem {
+                                label: start_name_node.value.to_string(),
+                                kind: Some(lsp_types::CompletionItemKind::FUNCTION),
+                                documentation: Some(lsp_types::Documentation::MarkupContent(
+                                    lsp_types::MarkupContent {
+                                        kind: lsp_types::MarkupKind::Markdown,
+                                        value: present_variable_declaration_info_markdown(
+                                            &module_origin_lookup,
+                                            module_origin,
+                                            &completion_project_module.module.syntax.comments,
+                                            elm_syntax_node_as_ref_map(
+                                                start_name_node,
+                                                Box::as_ref,
+                                            ),
+                                            origin_module_declaration_documentation,
+                                            maybe_signature
+                                                .as_ref()
+                                                .and_then(|signature| signature.type_.as_ref())
+                                                .map(elm_syntax_node_as_ref),
+                                        ),
+                                    },
+                                )),
+                                ..lsp_types::CompletionItem::default()
+                            });
+                        }
+                    }
+                    ElmSyntaxDeclaration::Operator { .. } => {
+                        // no new operators will ever be added
+                    }
+                }
+            }
+            Some(completion_items)
+        }
+        ElmSyntaxSymbol::ModuleDocumentationAtDocsMember {
+            name: to_complete_header_expose_name,
+            module_documentation,
+        } => {
+            let module_origin: &str = completion_project_module
+                .module
+                .syntax
+                .header
+                .as_ref()
+                .and_then(|header| header.module_name.as_ref())
+                .map(|node| node.value.as_ref())
+                .unwrap_or("");
+            let module_origin_lookup: ModuleOriginLookup = elm_syntax_module_create_origin_lookup(
+                state,
+                completion_project_module.project,
+                &completion_project_module.module.syntax,
+            );
+            let existing_member_names_across_at_docs: std::collections::HashSet<&str> =
+                module_documentation
+                    .iter()
+                    .flat_map(|module_documentation_element| {
+                        match &module_documentation_element.value {
+                            ElmSyntaxModuleDocumentationElement::Markdown(_) => None,
+                            ElmSyntaxModuleDocumentationElement::AtDocs(at_docs_member_names) => {
+                                Some(
+                                    at_docs_member_names
+                                        .iter()
+                                        .map(|node| node.value.as_ref())
+                                        .filter(|&member_name| {
+                                            member_name != to_complete_header_expose_name
+                                        }),
+                                )
+                            }
+                        }
+                        .into_iter()
+                        .flatten()
+                    })
+                    .collect::<std::collections::HashSet<_>>();
+            let mut completion_items: Vec<lsp_types::CompletionItem> = Vec::new();
+            for (origin_module_declaration_node, origin_module_declaration_documentation) in
+                completion_project_module
+                    .module
+                    .syntax
+                    .declarations
+                    .iter()
+                    .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
+                    .filter_map(|documented_declaration| {
+                        let declaration_node = documented_declaration.declaration.as_ref()?;
+                        Some((
+                            declaration_node,
+                            documented_declaration
+                                .documentation
+                                .as_ref()
+                                .map(|node| node.value.as_ref()),
+                        ))
+                    })
+            {
+                match &origin_module_declaration_node.value {
+                    ElmSyntaxDeclaration::ChoiceType {
+                        name: maybe_choice_type_name,
+                        parameters,
+                        equals_key_symbol_range: _,
+                        variant0_name,
+                        variant0_values,
+                        variant1_up,
+                    } => {
+                        if let Some(choice_type_name_node) = maybe_choice_type_name
+                            && !existing_member_names_across_at_docs
+                                .contains(choice_type_name_node.value.as_ref())
+                        {
+                            let info_markdown: String =
+                                present_choice_type_declaration_info_markdown(
+                                    &module_origin_lookup,
+                                    module_origin,
+                                    &completion_project_module.module.syntax.comments,
+                                    origin_module_declaration_node.range,
+                                    Some(elm_syntax_node_as_ref_map(
+                                        choice_type_name_node,
+                                        Box::as_ref,
+                                    )),
+                                    origin_module_declaration_documentation,
+                                    parameters,
+                                    variant0_name
+                                        .as_ref()
+                                        .map(|node| elm_syntax_node_as_ref_map(node, Box::as_ref)),
+                                    variant0_values,
+                                    variant1_up,
+                                );
+                            completion_items.push(lsp_types::CompletionItem {
+                                label: choice_type_name_node.value.to_string(),
+                                kind: Some(lsp_types::CompletionItemKind::ENUM_MEMBER),
+                                documentation: Some(lsp_types::Documentation::MarkupContent(
+                                    lsp_types::MarkupContent {
+                                        kind: lsp_types::MarkupKind::Markdown,
+                                        // should the documentation code indicate the variants are hidden?
+                                        value: info_markdown.clone(),
+                                    },
+                                )),
+                                ..lsp_types::CompletionItem::default()
+                            });
+                        }
+                    }
+                    ElmSyntaxDeclaration::Port {
+                        name: maybe_name,
+                        colon_key_symbol_range: _,
+                        type_,
+                    } => {
+                        if let Some(name_node) = maybe_name
+                            && !existing_member_names_across_at_docs
+                                .contains(name_node.value.as_ref())
+                        {
+                            completion_items.push(lsp_types::CompletionItem {
+                                label: name_node.value.to_string(),
+                                kind: Some(lsp_types::CompletionItemKind::FUNCTION),
+                                documentation: Some(lsp_types::Documentation::MarkupContent(
+                                    lsp_types::MarkupContent {
+                                        kind: lsp_types::MarkupKind::Markdown,
+                                        value: present_port_declaration_info_markdown(
+                                            &module_origin_lookup,
+                                            module_origin,
+                                            &completion_project_module.module.syntax.comments,
+                                            origin_module_declaration_node.range,
+                                            Some(elm_syntax_node_as_ref_map(
+                                                name_node,
+                                                Box::as_ref,
+                                            )),
+                                            origin_module_declaration_documentation,
+                                            type_.as_ref().map(elm_syntax_node_as_ref),
+                                        ),
+                                    },
+                                )),
+                                ..lsp_types::CompletionItem::default()
+                            });
+                        }
+                    }
+                    ElmSyntaxDeclaration::TypeAlias {
+                        alias_keyword_range: _,
+                        name: maybe_name,
+                        parameters,
+                        equals_key_symbol_range: _,
+                        type_: maybe_type,
+                    } => {
+                        if let Some(name_node) = maybe_name
+                            && !existing_member_names_across_at_docs
+                                .contains(name_node.value.as_ref())
+                        {
+                            completion_items.push(lsp_types::CompletionItem {
+                                label: name_node.value.to_string(),
+                                kind: Some(lsp_types::CompletionItemKind::STRUCT),
+                                documentation: Some(lsp_types::Documentation::MarkupContent(
+                                    lsp_types::MarkupContent {
+                                        kind: lsp_types::MarkupKind::Markdown,
+                                        value: present_type_alias_declaration_info_markdown(
+                                            &module_origin_lookup,
+                                            module_origin,
+                                            &completion_project_module.module.syntax.comments,
+                                            origin_module_declaration_node.range,
+                                            Some(elm_syntax_node_as_ref_map(
+                                                name_node,
+                                                Box::as_ref,
+                                            )),
+                                            origin_module_declaration_documentation,
+                                            parameters,
+                                            maybe_type.as_ref().map(elm_syntax_node_as_ref),
+                                        ),
+                                    },
+                                )),
+                                ..lsp_types::CompletionItem::default()
+                            });
+                        }
+                    }
+                    ElmSyntaxDeclaration::Variable {
+                        start_name: start_name_node,
+                        signature: maybe_signature,
+                        parameters: _,
+                        equals_key_symbol_range: _,
+                        result: _,
+                    } => {
+                        if !existing_member_names_across_at_docs
+                            .contains(start_name_node.value.as_ref())
+                        {
                             completion_items.push(lsp_types::CompletionItem {
                                 label: start_name_node.value.to_string(),
                                 kind: Some(lsp_types::CompletionItemKind::FUNCTION),
@@ -11681,6 +11915,10 @@ enum ElmSyntaxSymbol<'a> {
         name: &'a str,
         all_exposes: &'a [ElmSyntaxNode<ElmSyntaxExpose>],
     },
+    ModuleDocumentationAtDocsMember {
+        name: &'a str,
+        module_documentation: &'a [ElmSyntaxNode<ElmSyntaxModuleDocumentationElement>],
+    },
     // includes variant
     ModuleMemberDeclarationName {
         name: &'a str,
@@ -11748,6 +11986,17 @@ fn elm_syntax_module_find_symbol_at_position<'a>(
             elm_syntax_module_header_find_reference_at_position(module_header, position)
         })
         .or_else(|| {
+            elm_syntax_module
+                .documentation
+                .as_ref()
+                .and_then(|module_documentation_node| {
+                    elm_syntax_module_documentation_find_symbol_at_position(
+                        elm_syntax_node_as_ref_map(module_documentation_node, Vec::as_slice),
+                        position,
+                    )
+                })
+        })
+        .or_else(|| {
             elm_syntax_module.imports.iter().find_map(|import_node| {
                 elm_syntax_import_find_reference_at_position(
                     elm_syntax_node_as_ref(import_node),
@@ -11771,6 +12020,39 @@ fn elm_syntax_module_find_symbol_at_position<'a>(
                         position,
                     )
                 })
+        })
+}
+fn elm_syntax_module_documentation_find_symbol_at_position<'a>(
+    elm_syntax_module_documentation: ElmSyntaxNode<
+        &'a [ElmSyntaxNode<ElmSyntaxModuleDocumentationElement>],
+    >,
+    position: lsp_types::Position,
+) -> Option<ElmSyntaxNode<ElmSyntaxSymbol<'a>>> {
+    elm_syntax_module_documentation
+        .value
+        .iter()
+        .find_map(|documentation_element_node| {
+            if !lsp_range_includes_position(documentation_element_node.range, position) {
+                return None;
+            }
+            match &documentation_element_node.value {
+                ElmSyntaxModuleDocumentationElement::Markdown(_) => None,
+                ElmSyntaxModuleDocumentationElement::AtDocs(member_names) => {
+                    member_names.iter().find_map(|member_name_node| {
+                        if lsp_range_includes_position(member_name_node.range, position) {
+                            Some(ElmSyntaxNode {
+                                range: member_name_node.range,
+                                value: ElmSyntaxSymbol::ModuleDocumentationAtDocsMember {
+                                    name: &member_name_node.value,
+                                    module_documentation: elm_syntax_module_documentation.value,
+                                },
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                }
+            }
         })
 }
 fn elm_syntax_module_header_find_reference_at_position<'a>(
