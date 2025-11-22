@@ -54,6 +54,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     io_thread.join()?;
     Ok(())
 }
+fn server_capabilities() -> lsp_types::ServerCapabilities {
+    lsp_types::ServerCapabilities {
+        hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
+        definition_provider: Some(lsp_types::OneOf::Left(true)),
+        semantic_tokens_provider: Some(
+            lsp_types::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                lsp_types::SemanticTokensOptions {
+                    work_done_progress_options: lsp_types::WorkDoneProgressOptions {
+                        work_done_progress: None,
+                    },
+                    legend: lsp_types::SemanticTokensLegend {
+                        token_modifiers: Vec::new(),
+                        token_types: Vec::from(token_types),
+                    },
+                    range: None,
+                    full: Some(lsp_types::SemanticTokensFullOptions::Bool(true)),
+                },
+            ),
+        ),
+        text_document_sync: Some(lsp_types::TextDocumentSyncCapability::Kind(
+            lsp_types::TextDocumentSyncKind::INCREMENTAL,
+        )),
+        rename_provider: Some(lsp_types::OneOf::Right(lsp_types::RenameOptions {
+            prepare_provider: Some(true),
+            work_done_progress_options: lsp_types::WorkDoneProgressOptions {
+                work_done_progress: None,
+            },
+        })),
+        references_provider: Some(lsp_types::OneOf::Left(true)),
+        completion_provider: Some(lsp_types::CompletionOptions {
+            resolve_provider: Some(false),
+            trigger_characters: Some(vec![".".to_string()]),
+            all_commit_characters: None,
+            work_done_progress_options: lsp_types::WorkDoneProgressOptions {
+                work_done_progress: None,
+            },
+            completion_item: Some(lsp_types::CompletionOptionsCompletionItem {
+                label_details_support: None,
+            }),
+        }),
+        document_formatting_provider: Some(lsp_types::OneOf::Left(true)),
+        document_symbol_provider: Some(lsp_types::OneOf::Left(true)),
+        ..lsp_types::ServerCapabilities::default()
+    }
+}
 fn server_loop(
     connection: &lsp_server::Connection,
     mut state: State,
@@ -311,6 +356,13 @@ fn handle_request(
                 respond_to_document_formatting(state, &arguments);
             Ok(serde_json::to_value(result)?)
         }
+        <lsp_types::request::DocumentSymbolRequest as lsp_types::request::Request>::METHOD => {
+            let arguments: <lsp_types::request::DocumentSymbolRequest as lsp_types::request::Request>::Params =
+                serde_json::from_value(request_arguments_json)?;
+            let result: <lsp_types::request::DocumentSymbolRequest as lsp_types::request::Request>::Result =
+                respond_to_document_symbols(state, &arguments);
+            Ok(serde_json::to_value(result)?)
+        }
         <lsp_types::request::Shutdown as lsp_types::request::Request>::METHOD => {
             let result: <lsp_types::request::Shutdown as lsp_types::request::Request>::Result = ();
             Ok(serde_json::to_value(result)?)
@@ -323,14 +375,14 @@ fn handle_request(
     };
     match response {
         Ok(response_value) => {
-            send_ok(connection, request_id, response_value)?;
+            send_response_ok(connection, request_id, response_value)?;
         }
         Err(response_error) => send_response_error(connection, request_id, response_error)?,
     }
     Ok(())
 }
 
-fn send_ok(
+fn send_response_ok(
     connection: &lsp_server::Connection,
     id: lsp_server::RequestId,
     result: serde_json::Value,
@@ -371,51 +423,6 @@ fn publish_diagnostics(
         },
     ))?;
     Ok(())
-}
-
-fn server_capabilities() -> lsp_types::ServerCapabilities {
-    lsp_types::ServerCapabilities {
-        hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
-        definition_provider: Some(lsp_types::OneOf::Left(true)),
-        semantic_tokens_provider: Some(
-            lsp_types::SemanticTokensServerCapabilities::SemanticTokensOptions(
-                lsp_types::SemanticTokensOptions {
-                    work_done_progress_options: lsp_types::WorkDoneProgressOptions {
-                        work_done_progress: None,
-                    },
-                    legend: lsp_types::SemanticTokensLegend {
-                        token_modifiers: Vec::new(),
-                        token_types: Vec::from(token_types),
-                    },
-                    range: None,
-                    full: Some(lsp_types::SemanticTokensFullOptions::Bool(true)),
-                },
-            ),
-        ),
-        text_document_sync: Some(lsp_types::TextDocumentSyncCapability::Kind(
-            lsp_types::TextDocumentSyncKind::INCREMENTAL,
-        )),
-        rename_provider: Some(lsp_types::OneOf::Right(lsp_types::RenameOptions {
-            prepare_provider: Some(true),
-            work_done_progress_options: lsp_types::WorkDoneProgressOptions {
-                work_done_progress: None,
-            },
-        })),
-        references_provider: Some(lsp_types::OneOf::Left(true)),
-        completion_provider: Some(lsp_types::CompletionOptions {
-            resolve_provider: Some(false),
-            trigger_characters: Some(vec![".".to_string()]),
-            all_commit_characters: None,
-            work_done_progress_options: lsp_types::WorkDoneProgressOptions {
-                work_done_progress: None,
-            },
-            completion_item: Some(lsp_types::CompletionOptionsCompletionItem {
-                label_details_support: None,
-            }),
-        }),
-        document_formatting_provider: Some(lsp_types::OneOf::Left(true)),
-        ..lsp_types::ServerCapabilities::default()
-    }
 }
 
 fn update_state_on_did_change_text_document(
@@ -1515,20 +1522,23 @@ fn respond_to_hover(
             module_origin: hovered_module_name,
             alias_name: _,
         } => {
-            let (_, origin_module_state) = project_state_get_module_with_name(
+            let (origin_module_path, origin_module_state) = project_state_get_module_with_name(
                 state,
                 hovered_project_module_state.project,
                 hovered_module_name,
             )?;
+            let origin_module_url: lsp_types::Url =
+                lsp_types::Url::from_file_path(origin_module_path).ok()?;
             // also show list of exports maybe?
             Some(lsp_types::Hover {
                 contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
                     kind: lsp_types::MarkupKind::Markdown,
                     value: match &origin_module_state.syntax.documentation {
                         None => "_module has no documentation comment_".to_string(),
-                        Some(module_documentation) => {
-                            elm_syntax_module_documentation_to_markdown(&module_documentation.value)
-                        }
+                        Some(module_documentation) => elm_syntax_module_documentation_to_markdown(
+                            &origin_module_url,
+                            &module_documentation.value,
+                        ),
                     },
                 }),
                 range: Some(hovered_symbol_node.range),
@@ -6432,6 +6442,167 @@ fn format_using_elm_format(project_path: &std::path::Path, source: &str) -> Opti
         .ok()
 }
 
+fn respond_to_document_symbols(
+    state: &State,
+    formatting_arguments: &lsp_types::DocumentSymbolParams,
+) -> Option<lsp_types::DocumentSymbolResponse> {
+    let document_path: std::path::PathBuf =
+        formatting_arguments.text_document.uri.to_file_path().ok()?;
+    let project_module = state_get_project_module_by_path(state, &document_path)?;
+    Some(lsp_types::DocumentSymbolResponse::Nested(
+        project_module
+            .module
+            .syntax
+            .declarations
+            .iter()
+            .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
+            .filter_map(|documented_declaration| documented_declaration.declaration.as_ref())
+            .filter_map(|declaration_node| match &declaration_node.value {
+                ElmSyntaxDeclaration::ChoiceType {
+                    name: maybe_name,
+                    parameters: _,
+                    equals_key_symbol_range: _,
+                    variant0_name,
+                    variant0_values,
+                    variant1_up,
+                } => {
+                    let name_node = maybe_name.as_ref()?;
+                    Some(lsp_types::DocumentSymbol {
+                        name: name_node.value.to_string(),
+                        detail: None,
+                        kind: lsp_types::SymbolKind::ENUM,
+                        tags: None,
+                        #[allow(deprecated)]
+                        deprecated: None,
+                        range: declaration_node.range,
+                        selection_range: name_node.range,
+                        children: Some(
+                            variant0_name
+                                .as_ref()
+                                .map(|variant0_name_node| {
+                                    (
+                                        variant0_name_node,
+                                        lsp_types::Range {
+                                            start: variant0_name_node.range.start,
+                                            end: variant0_values
+                                                .last()
+                                                .map(|node| node.range.end)
+                                                .unwrap_or(variant0_name_node.range.end),
+                                        },
+                                    )
+                                })
+                                .into_iter()
+                                .chain(variant1_up.iter().filter_map(|variant| {
+                                    let variant_name_node = variant.name.as_ref()?;
+                                    Some((
+                                        variant_name_node,
+                                        lsp_types::Range {
+                                            start: variant_name_node.range.start,
+                                            end: variant
+                                                .values
+                                                .last()
+                                                .map(|node| node.range.end)
+                                                .unwrap_or(variant_name_node.range.end),
+                                        },
+                                    ))
+                                }))
+                                .map(|(variant_name_node, variant_full_range)| {
+                                    lsp_types::DocumentSymbol {
+                                        name: variant_name_node.value.to_string(),
+                                        detail: None,
+                                        kind: lsp_types::SymbolKind::ENUM_MEMBER,
+                                        tags: None,
+                                        #[allow(deprecated)]
+                                        deprecated: None,
+                                        range: variant_full_range,
+                                        selection_range: variant_name_node.range,
+                                        children: None,
+                                    }
+                                })
+                                .collect::<Vec<_>>(),
+                        ),
+                    })
+                }
+                ElmSyntaxDeclaration::Operator {
+                    operator: maybe_operator,
+                    direction: _,
+                    precedence: _,
+                    equals_key_symbol_range: _,
+                    function: _,
+                } => {
+                    let operator_node = maybe_operator.as_ref()?;
+                    Some(lsp_types::DocumentSymbol {
+                        name: operator_node.value.to_string(),
+                        detail: None,
+                        kind: lsp_types::SymbolKind::OPERATOR,
+                        tags: None,
+                        #[allow(deprecated)]
+                        deprecated: None,
+                        range: declaration_node.range,
+                        selection_range: operator_node.range,
+                        children: None,
+                    })
+                }
+                ElmSyntaxDeclaration::Port {
+                    name: maybe_name,
+                    colon_key_symbol_range: _,
+                    type_: _,
+                } => {
+                    let name_node = maybe_name.as_ref()?;
+                    Some(lsp_types::DocumentSymbol {
+                        name: name_node.value.to_string(),
+                        detail: None,
+                        kind: lsp_types::SymbolKind::FUNCTION,
+                        tags: None,
+                        #[allow(deprecated)]
+                        deprecated: None,
+                        range: declaration_node.range,
+                        selection_range: name_node.range,
+                        children: None,
+                    })
+                }
+                ElmSyntaxDeclaration::TypeAlias {
+                    name: maybe_name,
+                    alias_keyword_range: _,
+                    parameters: _,
+                    equals_key_symbol_range: _,
+                    type_: _,
+                } => {
+                    let name_node = maybe_name.as_ref()?;
+                    Some(lsp_types::DocumentSymbol {
+                        name: name_node.value.to_string(),
+                        detail: None,
+                        kind: lsp_types::SymbolKind::STRUCT,
+                        tags: None,
+                        #[allow(deprecated)]
+                        deprecated: None,
+                        range: declaration_node.range,
+                        selection_range: name_node.range,
+                        children: None,
+                    })
+                }
+                ElmSyntaxDeclaration::Variable {
+                    start_name: start_name_node,
+                    signature: _,
+                    parameters: _,
+                    equals_key_symbol_range: _,
+                    result: _,
+                } => Some(lsp_types::DocumentSymbol {
+                    name: start_name_node.value.to_string(),
+                    detail: None,
+                    kind: lsp_types::SymbolKind::FUNCTION,
+                    tags: None,
+                    #[allow(deprecated)]
+                    deprecated: None,
+                    range: declaration_node.range,
+                    selection_range: start_name_node.range,
+                    children: None,
+                }),
+            })
+            .collect::<Vec<_>>(),
+    ))
+}
+
 fn elm_make_file_problem_to_diagnostic(
     problem: &ElmMakeFileInternalCompileProblem,
 ) -> lsp_types::Diagnostic {
@@ -6459,6 +6630,44 @@ fn project_module_name_completions_for_except(
         .rsplit_once(".")
         .map(|(before_last_dot, _)| before_last_dot.to_string() + ".")
         .unwrap_or_else(|| "".to_string());
+    let to_completion_item = |module_path: &std::path::PathBuf,
+                              module_name: &str,
+                              maybe_module_documentation: Option<
+        &ElmSyntaxNode<Vec<ElmSyntaxNode<ElmSyntaxModuleDocumentationElement>>>,
+    >|
+     -> Option<lsp_types::CompletionItem> {
+        let module_url: lsp_types::Url = lsp_types::Url::from_file_path(module_path).ok()?;
+        Some(lsp_types::CompletionItem {
+            label: module_name.to_string(),
+            insert_text: Some(
+                module_name
+                    .strip_prefix(&module_name_base_to_complete)
+                    .unwrap_or(module_name)
+                    .to_string(),
+            ),
+            sort_text: Some(
+                module_name
+                    .strip_prefix(&module_name_base_to_complete)
+                    .unwrap_or(module_name)
+                    .to_string(),
+            ),
+            kind: Some(lsp_types::CompletionItemKind::MODULE),
+            documentation: Some(lsp_types::Documentation::MarkupContent(
+                lsp_types::MarkupContent {
+                    kind: lsp_types::MarkupKind::Markdown,
+                    value: maybe_module_documentation
+                        .map(|module_documentation| {
+                            elm_syntax_module_documentation_to_markdown(
+                                &module_url,
+                                &module_documentation.value,
+                            )
+                        })
+                        .unwrap_or_else(|| "_module has no documentation comment_".to_string()),
+                },
+            )),
+            ..lsp_types::CompletionItem::default()
+        })
+    };
     completion_project
         .dependency_exposed_module_names
         .iter()
@@ -6488,91 +6697,60 @@ fn project_module_name_completions_for_except(
                                     .modules
                                     .get(&importable_dependency_module_origin.module_path)
                             })?;
-                        Some((
+                        to_completion_item(
+                            &importable_dependency_module_origin.module_path,
                             importable_dependency_module_name_or_alias,
                             importable_dependency_module_state
                                 .syntax
                                 .documentation
                                 .as_ref(),
-                        ))
+                        )
                     })
             },
         )
-        .chain(
-            completion_project
-                .modules
-                .iter()
-                .flat_map(|(_, project_module)| {
-                    project_module
-                        .syntax
-                        .header
-                        .as_ref()
-                        .and_then(|header| header.module_name.as_ref())
-                        .map(|project_module_name_node| {
-                            let project_module_name: &str = project_module_name_node.value.as_ref();
-                            let importable_dependency_module_name_or_aliases: Vec<&str> =
-                                look_up_module_origin_import_aliases(
-                                    import_alias_origin_lookup,
-                                    project_module_name,
-                                )
-                                .unwrap_or_else(|| vec![project_module_name]);
-                            importable_dependency_module_name_or_aliases
-                                .into_iter()
-                                .filter_map(|importable_dependency_module_name_or_alias| {
-                                    if !importable_dependency_module_name_or_alias
-                                        .starts_with(&module_name_base_to_complete)
-                                        || module_name_base_to_complete
-                                            .starts_with(importable_dependency_module_name_or_alias)
-                                        || Some(importable_dependency_module_name_or_alias)
-                                            == module_name_exception
-                                    {
-                                        None
-                                    } else {
-                                        Some((
-                                            importable_dependency_module_name_or_alias,
-                                            project_module.syntax.documentation.as_ref(),
-                                        ))
-                                    }
-                                })
-                        })
-                        .into_iter()
-                        .flatten()
-                }),
-        )
-        .map(
-            |(module_name, maybe_module_documentation)| lsp_types::CompletionItem {
-                label: module_name.to_string(),
-                insert_text: Some(
-                    module_name
-                        .strip_prefix(&module_name_base_to_complete)
-                        .unwrap_or(module_name)
-                        .to_string(),
-                ),
-                sort_text: Some(
-                    module_name
-                        .strip_prefix(&module_name_base_to_complete)
-                        .unwrap_or(module_name)
-                        .to_string(),
-                ),
-                kind: Some(lsp_types::CompletionItemKind::MODULE),
-                documentation: Some(lsp_types::Documentation::MarkupContent(
-                    lsp_types::MarkupContent {
-                        kind: lsp_types::MarkupKind::Markdown,
-                        value: maybe_module_documentation
-                            .map(|module_documentation| {
-                                elm_syntax_module_documentation_to_markdown(
-                                    &module_documentation.value,
-                                )
+        .chain(completion_project.modules.iter().flat_map(
+            |(project_module_path, project_module)| {
+                project_module
+                    .syntax
+                    .header
+                    .as_ref()
+                    .and_then(|header| header.module_name.as_ref())
+                    .map(|project_module_name_node| {
+                        let project_module_name: &str = project_module_name_node.value.as_ref();
+                        let importable_dependency_module_name_or_aliases: Vec<&str> =
+                            look_up_module_origin_import_aliases(
+                                import_alias_origin_lookup,
+                                project_module_name,
+                            )
+                            .unwrap_or_else(|| vec![project_module_name]);
+                        importable_dependency_module_name_or_aliases
+                            .into_iter()
+                            .filter_map(|importable_dependency_module_name_or_alias| {
+                                if !importable_dependency_module_name_or_alias
+                                    .starts_with(&module_name_base_to_complete)
+                                    || module_name_base_to_complete
+                                        .starts_with(importable_dependency_module_name_or_alias)
+                                    || Some(importable_dependency_module_name_or_alias)
+                                        == module_name_exception
+                                {
+                                    None
+                                } else {
+                                    to_completion_item(
+                                        project_module_path,
+                                        importable_dependency_module_name_or_alias,
+                                        project_module.syntax.documentation.as_ref(),
+                                    )
+                                }
                             })
-                            .unwrap_or_else(|| "_module has no documentation comment_".to_string()),
-                    },
-                )),
-                ..lsp_types::CompletionItem::default()
+                    })
+                    .into_iter()
+                    .flatten()
             },
-        )
+        ))
         .collect::<Vec<_>>()
 }
 fn elm_syntax_module_documentation_to_markdown(
+    module_url: &lsp_types::Url,
     module_documentation_elements: &[ElmSyntaxNode<ElmSyntaxModuleDocumentationElement>],
 ) -> String {
     let mut result_builder: String = String::new();
@@ -6586,14 +6764,16 @@ fn elm_syntax_module_documentation_to_markdown(
                 result_builder.push_str("_see_ ");
                 if let Some((expose_name_node0, expose_name1_up)) = expose_group_names.split_first()
                 {
-                    name_as_module_exposed_markdown_link_into(
+                    name_as_module_module_member_markdown_link_into(
                         &mut result_builder,
+                        module_url,
                         &expose_name_node0.value,
                     );
                     for expose_name_node in expose_name1_up {
                         result_builder.push_str(", ");
-                        name_as_module_exposed_markdown_link_into(
+                        name_as_module_module_member_markdown_link_into(
                             &mut result_builder,
+                            module_url,
                             &expose_name_node.value,
                         );
                     }
@@ -6603,12 +6783,20 @@ fn elm_syntax_module_documentation_to_markdown(
     }
     result_builder
 }
-fn name_as_module_exposed_markdown_link_into(builder: &mut String, expose_name: &str) {
-    let expose_name_normal: &str = expose_name.strip_suffix("(..)").unwrap_or(expose_name);
+fn name_as_module_module_member_markdown_link_into(
+    builder: &mut String,
+    module_url: &lsp_types::Url,
+    module_member_name: &str,
+) {
+    let expose_name_normal: &str = module_member_name
+        .strip_suffix("(..)")
+        .unwrap_or(module_member_name);
     builder.push('[');
     builder.push_str(expose_name_normal);
-    builder.push_str("](#");
-    builder.push_str(expose_name_normal);
+    builder.push_str("](");
+    builder.push_str(module_url.as_str());
+    builder.push('#');
+    builder.push_str(expose_name_normal); // TODO refer to line numbers instead
     builder.push(')');
 }
 fn documentation_comment_to_markdown(documentation: &str) -> String {
@@ -14839,7 +15027,11 @@ fn elm_syntax_highlight_module_documentation_into(
                 for member_name_node in member_names {
                     highlighted_so_far.push(ElmSyntaxNode {
                         range: member_name_node.range,
-                        value: ElmSyntaxHighlightKind::DeclaredVariable,
+                        value: if member_name_node.value.starts_with(char::is_uppercase) {
+                            ElmSyntaxHighlightKind::Type
+                        } else {
+                            ElmSyntaxHighlightKind::DeclaredVariable
+                        },
                     });
                 }
             }

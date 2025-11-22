@@ -16,7 +16,7 @@ Works with [`elm-format`](https://github.com/avh4/elm-format?tab=readme-ov-file#
 - support for elm version <= 0.18 or inline GLSL blocks
 - type inference
 - directly integrating `elm-test` running
-- codelens, outline symbols, code folding, linked editing
+- codelens, workspace symbols, code folding, linked editing
 - `elm.json` help
 
 ## not sure (Please give me feedback on this)
