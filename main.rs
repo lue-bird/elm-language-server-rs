@@ -13342,6 +13342,14 @@ fn elm_syntax_module_uses_of_reference_into(
             symbol_to_collect_uses_of,
         );
     }
+    if let Some(module_documentation_node) = &elm_syntax_module.documentation {
+        elm_syntax_module_documentation_uses_of_reference_into(
+            uses_so_far,
+            self_module_name,
+            &module_documentation_node.value,
+            symbol_to_collect_uses_of,
+        );
+    }
     for import in elm_syntax_module.imports.iter() {
         elm_syntax_import_uses_of_reference_into(
             uses_so_far,
@@ -13367,7 +13375,54 @@ fn elm_syntax_module_uses_of_reference_into(
         }
     }
 }
-
+fn elm_syntax_module_documentation_uses_of_reference_into(
+    uses_so_far: &mut Vec<lsp_types::Range>,
+    origin_module: &str,
+    elm_syntax_module_documentation: &[ElmSyntaxNode<ElmSyntaxModuleDocumentationElement>],
+    symbol_to_collect_uses_of: ElmSymbolToReference,
+) {
+    let Some(member_to_collect_uses_of) = (match symbol_to_collect_uses_of {
+        ElmSymbolToReference::ModuleName(_) => None,
+        ElmSymbolToReference::ImportAlias { .. } => None,
+        ElmSymbolToReference::TypeVariable(_) => None,
+        ElmSymbolToReference::LocalBinding { .. } => None,
+        ElmSymbolToReference::TypeNotRecordAlias {
+            module_origin: symbol_module_origin,
+            name,
+            including_declaration_name: _,
+        }
+        | ElmSymbolToReference::VariableOrVariant {
+            module_origin: symbol_module_origin,
+            name,
+            including_declaration_name: _,
+        }
+        | ElmSymbolToReference::RecordTypeAlias {
+            module_origin: symbol_module_origin,
+            name,
+            including_declaration_name: _,
+        } => {
+            if symbol_module_origin == origin_module {
+                Some(name)
+            } else {
+                None
+            }
+        }
+    }) else {
+        return;
+    };
+    for elm_syntax_module_documentation_element_node in elm_syntax_module_documentation {
+        match &elm_syntax_module_documentation_element_node.value {
+            ElmSyntaxModuleDocumentationElement::Markdown(_) => {}
+            ElmSyntaxModuleDocumentationElement::AtDocs(at_docs_member_names) => {
+                for at_docs_member_name_node in at_docs_member_names {
+                    if at_docs_member_name_node.value.as_ref() == member_to_collect_uses_of {
+                        uses_so_far.push(at_docs_member_name_node.range);
+                    }
+                }
+            }
+        }
+    }
+}
 fn elm_syntax_import_uses_of_reference_into(
     uses_so_far: &mut Vec<lsp_types::Range>,
     elm_syntax_import: &ElmSyntaxImport,
