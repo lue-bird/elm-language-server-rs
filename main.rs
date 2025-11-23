@@ -10266,7 +10266,11 @@ fn elm_syntax_expression_not_parenthesized_into(
                 );
             }
             so_far.push_str("->");
-            linebreak_indented_into(so_far, next_indent(indent));
+            space_or_linebreak_indented_into(
+                so_far,
+                elm_syntax_expression_line_span(comments, expression_node),
+                next_indent(indent),
+            );
             if let Some(result_node) = maybe_result {
                 elm_syntax_comments_then_linebreak_indented_into(
                     so_far,
