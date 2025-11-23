@@ -19646,10 +19646,11 @@ fn parse_elm_syntax_module(module_source: &str) -> ElmSyntaxModule {
     let mut last_parsed_was_valid: bool = true;
     let mut declarations: Vec<Result<ElmSyntaxDocumentedDeclaration, Box<str>>> = Vec::new();
     'parsing_delarations: loop {
+        let offset_utf8_before_parsing_documeted_declaration: usize = state.offset_utf8;
         match parse_elm_syntax_documented_declaration_followed_by_whitespace_and_comments_and_whatever_indented(&mut state) {
             Some(documented_declaration) => {
                 if !last_parsed_was_valid {
-                    declarations.push(Err(Box::from(&module_source[last_valid_end_offet_utf8..state.offset_utf8])));
+                    declarations.push(Err(Box::from(&module_source[last_valid_end_offet_utf8..offset_utf8_before_parsing_documeted_declaration])));
                 }
                 last_parsed_was_valid = true;
                 declarations.push(Ok(documented_declaration));
