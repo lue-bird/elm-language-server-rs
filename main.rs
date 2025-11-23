@@ -1537,6 +1537,7 @@ fn respond_to_hover(
                         None => "_module has no documentation comment_".to_string(),
                         Some(module_documentation) => elm_syntax_module_documentation_to_markdown(
                             &origin_module_url,
+                            &origin_module_state.syntax,
                             &module_documentation.value,
                         ),
                     },
@@ -6632,9 +6633,7 @@ fn project_module_name_completions_for_except(
         .unwrap_or_else(|| "".to_string());
     let to_completion_item = |module_path: &std::path::PathBuf,
                               module_name: &str,
-                              maybe_module_documentation: Option<
-        &ElmSyntaxNode<Vec<ElmSyntaxNode<ElmSyntaxModuleDocumentationElement>>>,
-    >|
+                              module_syntax: &ElmSyntaxModule|
      -> Option<lsp_types::CompletionItem> {
         let module_url: lsp_types::Url = lsp_types::Url::from_file_path(module_path).ok()?;
         Some(lsp_types::CompletionItem {
@@ -6655,10 +6654,13 @@ fn project_module_name_completions_for_except(
             documentation: Some(lsp_types::Documentation::MarkupContent(
                 lsp_types::MarkupContent {
                     kind: lsp_types::MarkupKind::Markdown,
-                    value: maybe_module_documentation
+                    value: module_syntax
+                        .documentation
+                        .as_ref()
                         .map(|module_documentation| {
                             elm_syntax_module_documentation_to_markdown(
                                 &module_url,
+                                module_syntax,
                                 &module_documentation.value,
                             )
                         })
@@ -6700,10 +6702,7 @@ fn project_module_name_completions_for_except(
                         to_completion_item(
                             &importable_dependency_module_origin.module_path,
                             importable_dependency_module_name_or_alias,
-                            importable_dependency_module_state
-                                .syntax
-                                .documentation
-                                .as_ref(),
+                            &importable_dependency_module_state.syntax,
                         )
                     })
             },
@@ -6738,7 +6737,7 @@ fn project_module_name_completions_for_except(
                                     to_completion_item(
                                         project_module_path,
                                         importable_dependency_module_name_or_alias,
-                                        project_module.syntax.documentation.as_ref(),
+                                        &project_module.syntax,
                                     )
                                 }
                             })
@@ -6751,11 +6750,79 @@ fn project_module_name_completions_for_except(
 }
 fn elm_syntax_module_documentation_to_markdown(
     module_url: &lsp_types::Url,
+    module_syntax: &ElmSyntaxModule,
     module_documentation_elements: &[ElmSyntaxNode<ElmSyntaxModuleDocumentationElement>],
 ) -> String {
+    let all_at_docs_module_members: std::collections::HashSet<&str> = module_documentation_elements
+        .iter()
+        .flat_map(|module_documentation_element_node| {
+            match &module_documentation_element_node.value {
+                ElmSyntaxModuleDocumentationElement::Markdown(_) => None,
+                ElmSyntaxModuleDocumentationElement::AtDocs(expose_group_names) => {
+                    Some(expose_group_names.iter().map(|node| {
+                        node.value
+                            .as_ref()
+                            .trim_start_matches('(')
+                            .trim_end_matches(')')
+                    }))
+                }
+            }
+            .into_iter()
+            .flatten()
+        })
+        .collect::<std::collections::HashSet<_>>();
+    let module_member_declaration_names: std::collections::HashMap<&str, lsp_types::Range> =
+        if all_at_docs_module_members.is_empty() {
+            std::collections::HashMap::new()
+        } else {
+            module_syntax
+                .declarations
+                .iter()
+                .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
+                .filter_map(|documented| documented.declaration.as_ref())
+                .filter_map(|declaration_node| match &declaration_node.value {
+                    ElmSyntaxDeclaration::ChoiceType {
+                        name: maybe_declaration_name,
+                        ..
+                    } => maybe_declaration_name
+                        .as_ref()
+                        .map(|node| (node.value.as_ref(), node.range)),
+                    ElmSyntaxDeclaration::Operator {
+                        operator: maybe_operator,
+                        ..
+                    } => maybe_operator.as_ref().map(|node| (node.value, node.range)),
+                    ElmSyntaxDeclaration::Port {
+                        name: maybe_declaration_name,
+                        ..
+                    } => maybe_declaration_name
+                        .as_ref()
+                        .map(|node| (node.value.as_ref(), node.range)),
+                    ElmSyntaxDeclaration::TypeAlias {
+                        name: maybe_declaration_name,
+                        ..
+                    } => maybe_declaration_name
+                        .as_ref()
+                        .map(|node| (node.value.as_ref(), node.range)),
+                    ElmSyntaxDeclaration::Variable {
+                        start_name: declaration_start_name_node,
+                        ..
+                    } => Some((
+                        declaration_start_name_node.value.as_ref(),
+                        declaration_start_name_node.range,
+                    )),
+                })
+                .filter(|(name, _)| all_at_docs_module_members.contains(name))
+                .collect::<std::collections::HashMap<_, _>>()
+        };
+    let look_up_module_member_declaration_name_range =
+        |expose_name: &str| -> Option<lsp_types::Range> {
+            module_member_declaration_names
+                .get(expose_name.trim_start_matches('(').trim_end_matches(')'))
+                .copied()
+        };
     let mut result_builder: String = String::new();
-    for module_documentation_element in module_documentation_elements {
-        match &module_documentation_element.value {
+    for module_documentation_element_node in module_documentation_elements {
+        match &module_documentation_element_node.value {
             ElmSyntaxModuleDocumentationElement::Markdown(markdown_node) => {
                 markdown_convert_code_blocks_to_elm_into(&mut result_builder, markdown_node);
             }
@@ -6764,18 +6831,38 @@ fn elm_syntax_module_documentation_to_markdown(
                 result_builder.push_str("_see_ ");
                 if let Some((expose_name_node0, expose_name1_up)) = expose_group_names.split_first()
                 {
-                    name_as_module_module_member_markdown_link_into(
-                        &mut result_builder,
-                        module_url,
-                        &expose_name_node0.value,
-                    );
+                    match look_up_module_member_declaration_name_range(
+                        expose_name_node0.value.as_ref(),
+                    ) {
+                        None => {
+                            result_builder.push_str(&expose_name_node0.value);
+                        }
+                        Some(module_member0_declaration_name_range) => {
+                            name_as_module_module_member_markdown_link_into(
+                                &mut result_builder,
+                                module_url,
+                                module_member0_declaration_name_range,
+                                &expose_name_node0.value,
+                            );
+                        }
+                    }
                     for expose_name_node in expose_name1_up {
                         result_builder.push_str(", ");
-                        name_as_module_module_member_markdown_link_into(
-                            &mut result_builder,
-                            module_url,
-                            &expose_name_node.value,
-                        );
+                        match look_up_module_member_declaration_name_range(
+                            expose_name_node.value.as_ref(),
+                        ) {
+                            None => {
+                                result_builder.push_str(&expose_name_node.value);
+                            }
+                            Some(module_member_declaration_name_range) => {
+                                name_as_module_module_member_markdown_link_into(
+                                    &mut result_builder,
+                                    module_url,
+                                    module_member_declaration_name_range,
+                                    &expose_name_node.value,
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -6786,17 +6873,28 @@ fn elm_syntax_module_documentation_to_markdown(
 fn name_as_module_module_member_markdown_link_into(
     builder: &mut String,
     module_url: &lsp_types::Url,
+    module_member_declaration_name_range: lsp_types::Range,
     module_member_name: &str,
 ) {
+    // I've searched a bunch but couldn't find a standardized way to link
+    // to a document symbol. What is done here is only checked to work in vscode-like editors
     let expose_name_normal: &str = module_member_name
         .strip_suffix("(..)")
         .unwrap_or(module_member_name);
-    builder.push('[');
+    builder.push_str("[`");
     builder.push_str(expose_name_normal);
-    builder.push_str("](");
+    builder.push_str("`](");
     builder.push_str(module_url.as_str());
-    builder.push('#');
-    builder.push_str(expose_name_normal); // TODO refer to line numbers instead
+    builder.push_str("#L");
+    {
+        use std::fmt::Write as _;
+        let _ = write!(
+            builder,
+            "{}",
+            // at least in vscode-like editors it's 1-based
+            1 + module_member_declaration_name_range.start.line
+        );
+    }
     builder.push(')');
 }
 fn documentation_comment_to_markdown(documentation: &str) -> String {
@@ -12231,7 +12329,10 @@ fn elm_syntax_module_documentation_find_symbol_at_position<'a>(
                             Some(ElmSyntaxNode {
                                 range: member_name_node.range,
                                 value: ElmSyntaxSymbol::ModuleDocumentationAtDocsMember {
-                                    name: &member_name_node.value,
+                                    name: member_name_node
+                                        .value
+                                        .trim_start_matches('(')
+                                        .trim_end_matches(')'),
                                     module_documentation: elm_syntax_module_documentation.value,
                                 },
                             })
@@ -14932,6 +15033,7 @@ enum ElmSyntaxHighlightKind {
     String,
     Number,
     DeclaredVariable,
+    // TODO split off operator
     KeySymbol,
 }
 
@@ -15029,8 +15131,10 @@ fn elm_syntax_highlight_module_documentation_into(
                         range: member_name_node.range,
                         value: if member_name_node.value.starts_with(char::is_uppercase) {
                             ElmSyntaxHighlightKind::Type
-                        } else {
+                        } else if member_name_node.value.starts_with(char::is_lowercase) {
                             ElmSyntaxHighlightKind::DeclaredVariable
+                        } else {
+                            ElmSyntaxHighlightKind::KeySymbol
                         },
                     });
                 }
@@ -16904,7 +17008,7 @@ fn parse_elm_syntax_module_documentation_node(
             'parsing_at_docs_member_names: loop {
                 if let Some(expose_name_node) =
                     parse_same_line_while_at_least_one_as_node(state, |c| {
-                        c.is_alphanumeric() || c == '_' || c == '(' || c == '.' || c == ')'
+                        c != ',' && (c.is_alphanumeric() || c.is_ascii_punctuation())
                     })
                 {
                     member_names.push(expose_name_node);
