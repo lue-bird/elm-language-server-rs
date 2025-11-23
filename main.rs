@@ -7086,6 +7086,7 @@ fn elm_syntax_highlight_kind_to_lsp_semantic_token_type(
 ) -> lsp_types::SemanticTokenType {
     match elm_syntax_highlight_kind {
         ElmSyntaxHighlightKind::KeySymbol => lsp_types::SemanticTokenType::KEYWORD,
+        ElmSyntaxHighlightKind::Operator => lsp_types::SemanticTokenType::OPERATOR,
         ElmSyntaxHighlightKind::Field => lsp_types::SemanticTokenType::PROPERTY,
         ElmSyntaxHighlightKind::ModuleNameOrAlias => lsp_types::SemanticTokenType::NAMESPACE,
         ElmSyntaxHighlightKind::Type => lsp_types::SemanticTokenType::TYPE,
@@ -15033,7 +15034,7 @@ enum ElmSyntaxHighlightKind {
     String,
     Number,
     DeclaredVariable,
-    // TODO split off operator
+    Operator,
     KeySymbol,
 }
 
@@ -15134,7 +15135,7 @@ fn elm_syntax_highlight_module_documentation_into(
                         } else if member_name_node.value.starts_with(char::is_lowercase) {
                             ElmSyntaxHighlightKind::DeclaredVariable
                         } else {
-                            ElmSyntaxHighlightKind::KeySymbol
+                            ElmSyntaxHighlightKind::Operator
                         },
                     });
                 }
@@ -15426,7 +15427,7 @@ fn elm_syntax_highlight_exposing_into(
                         if let Some(operator_node) = maybe_operator {
                             highlighted_so_far.push(ElmSyntaxNode {
                                 range: operator_node.range,
-                                value: ElmSyntaxHighlightKind::KeySymbol,
+                                value: ElmSyntaxHighlightKind::Operator,
                             });
                         }
                     }
@@ -15602,7 +15603,7 @@ fn elm_syntax_highlight_declaration_into(
             if let Some(operator_node) = maybe_operator {
                 highlighted_so_far.push(ElmSyntaxNode {
                     range: operator_node.range,
-                    value: ElmSyntaxHighlightKind::KeySymbol,
+                    value: ElmSyntaxHighlightKind::Operator,
                 });
             }
             if let &Some(equals_key_symbol_range) = maybe_equals_key_symbol_range {
@@ -15782,7 +15783,7 @@ fn elm_syntax_highlight_pattern_into(
             }
             highlighted_so_far.push(ElmSyntaxNode {
                 range: *cons_key_symbol,
-                value: ElmSyntaxHighlightKind::KeySymbol,
+                value: ElmSyntaxHighlightKind::Operator,
             });
             if let Some(tail_node) = maybe_tail {
                 elm_syntax_highlight_pattern_into(
@@ -16204,7 +16205,7 @@ fn elm_syntax_highlight_expression_into(
             );
             highlighted_so_far.push(ElmSyntaxNode {
                 range: operator_node.range,
-                value: ElmSyntaxHighlightKind::KeySymbol,
+                value: ElmSyntaxHighlightKind::Operator,
             });
             if let Some(right_node) = maybe_right {
                 elm_syntax_highlight_expression_into(
@@ -16320,7 +16321,7 @@ fn elm_syntax_highlight_expression_into(
         ElmSyntaxExpression::OperatorFunction(operator_node) => {
             highlighted_so_far.push(ElmSyntaxNode {
                 range: operator_node.range,
-                value: ElmSyntaxHighlightKind::KeySymbol,
+                value: ElmSyntaxHighlightKind::Operator,
             });
         }
         ElmSyntaxExpression::Parenthesized(in_parens) => {
