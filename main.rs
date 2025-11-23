@@ -96,6 +96,15 @@ fn server_capabilities() -> lsp_types::ServerCapabilities {
         }),
         document_formatting_provider: Some(lsp_types::OneOf::Left(true)),
         document_symbol_provider: Some(lsp_types::OneOf::Left(true)),
+        code_action_provider: Some(lsp_types::CodeActionProviderCapability::Options(
+            lsp_types::CodeActionOptions {
+                code_action_kinds: Some(vec![lsp_types::CodeActionKind::QUICKFIX]),
+                resolve_provider: None,
+                work_done_progress_options: lsp_types::WorkDoneProgressOptions {
+                    work_done_progress: None,
+                },
+            },
+        )),
         ..lsp_types::ServerCapabilities::default()
     }
 }
@@ -361,6 +370,13 @@ fn handle_request(
                 serde_json::from_value(request_arguments_json)?;
             let result: <lsp_types::request::DocumentSymbolRequest as lsp_types::request::Request>::Result =
                 respond_to_document_symbols(state, &arguments);
+            Ok(serde_json::to_value(result)?)
+        }
+        <lsp_types::request::CodeActionRequest as lsp_types::request::Request>::METHOD => {
+            let arguments: <lsp_types::request::CodeActionRequest as lsp_types::request::Request>::Params =
+                serde_json::from_value(request_arguments_json)?;
+            let result: <lsp_types::request::CodeActionRequest as lsp_types::request::Request>::Result =
+                respond_to_code_action(state, arguments);
             Ok(serde_json::to_value(result)?)
         }
         <lsp_types::request::Shutdown as lsp_types::request::Request>::METHOD => {
@@ -3910,16 +3926,19 @@ fn respond_to_rename(
 }
 fn respond_to_references(
     state: &State,
-    reference_arguments: lsp_types::ReferenceParams,
+    references_arguments: lsp_types::ReferenceParams,
 ) -> Option<Vec<lsp_types::Location>> {
     let to_find_project_module_state = state_get_project_module_by_lsp_url(
         state,
-        &reference_arguments.text_document_position.text_document.uri,
+        &references_arguments
+            .text_document_position
+            .text_document
+            .uri,
     )?;
     let symbol_to_find_node: ElmSyntaxNode<ElmSyntaxSymbol> =
         elm_syntax_module_find_symbol_at_position(
             &to_find_project_module_state.module.syntax,
-            reference_arguments.text_document_position.position,
+            references_arguments.text_document_position.position,
         )?;
     Some(match symbol_to_find_node.value {
         ElmSyntaxSymbol::ImportAlias {
@@ -3927,7 +3946,7 @@ fn respond_to_references(
             alias_name: import_alias_to_find,
         } => {
             let mut all_uses_of_found_module_name: Vec<lsp_types::Range> =
-                if reference_arguments.context.include_declaration {
+                if references_arguments.context.include_declaration {
                     vec![symbol_to_find_node.range] // the alias on the import itself
                 } else {
                     Vec::new()
@@ -3969,7 +3988,7 @@ fn respond_to_references(
             all_uses_of_found_module_name
                 .into_iter()
                 .map(|use_range_of_found_module| lsp_types::Location {
-                    uri: reference_arguments
+                    uri: references_arguments
                         .text_document_position
                         .text_document
                         .uri
@@ -4004,7 +4023,7 @@ fn respond_to_references(
             all_uses_of_found_module_name
                 .into_iter()
                 .map(|use_range_of_found_module| lsp_types::Location {
-                    uri: reference_arguments
+                    uri: references_arguments
                         .text_document_position
                         .text_document
                         .uri
@@ -4018,7 +4037,7 @@ fn respond_to_references(
             .modules
             .iter()
             .filter(|(_, project_module)| {
-                if reference_arguments.context.include_declaration
+                if references_arguments.context.include_declaration
                     && let Some(project_module_header) = project_module.syntax.header.as_ref()
                     && let Some(project_module_name_node) =
                         project_module_header.module_name.as_ref()
@@ -4096,20 +4115,24 @@ fn respond_to_references(
                     ElmSymbolToReference::RecordTypeAlias {
                         module_origin: to_find_module_origin,
                         name: to_find_name,
-                        including_declaration_name: reference_arguments.context.include_declaration,
+                        including_declaration_name: references_arguments
+                            .context
+                            .include_declaration,
                     }
                 } else {
                     ElmSymbolToReference::TypeNotRecordAlias {
                         module_origin: to_find_module_origin,
                         name: to_find_name,
-                        including_declaration_name: reference_arguments.context.include_declaration,
+                        including_declaration_name: references_arguments
+                            .context
+                            .include_declaration,
                     }
                 }
             } else {
                 ElmSymbolToReference::VariableOrVariant {
                     module_origin: to_find_module_origin,
                     name: to_find_name,
-                    including_declaration_name: reference_arguments.context.include_declaration,
+                    including_declaration_name: references_arguments.context.include_declaration,
                 }
             };
             to_find_project_module_state
@@ -4183,20 +4206,24 @@ fn respond_to_references(
                     ElmSymbolToReference::RecordTypeAlias {
                         module_origin: to_find_module_origin,
                         name: to_find_name,
-                        including_declaration_name: reference_arguments.context.include_declaration,
+                        including_declaration_name: references_arguments
+                            .context
+                            .include_declaration,
                     }
                 } else {
                     ElmSymbolToReference::TypeNotRecordAlias {
                         module_origin: to_find_module_origin,
                         name: to_find_name,
-                        including_declaration_name: reference_arguments.context.include_declaration,
+                        including_declaration_name: references_arguments
+                            .context
+                            .include_declaration,
                     }
                 }
             } else {
                 ElmSymbolToReference::VariableOrVariant {
                     module_origin: to_find_module_origin,
                     name: to_find_name,
-                    including_declaration_name: reference_arguments.context.include_declaration,
+                    including_declaration_name: references_arguments.context.include_declaration,
                 }
             };
             to_find_project_module_state
@@ -4264,20 +4291,24 @@ fn respond_to_references(
                     ElmSymbolToReference::RecordTypeAlias {
                         module_origin: to_find_import_expose_origin_module,
                         name: to_find_import_expose_name,
-                        including_declaration_name: reference_arguments.context.include_declaration,
+                        including_declaration_name: references_arguments
+                            .context
+                            .include_declaration,
                     }
                 } else {
                     ElmSymbolToReference::TypeNotRecordAlias {
                         module_origin: to_find_import_expose_origin_module,
                         name: to_find_import_expose_name,
-                        including_declaration_name: reference_arguments.context.include_declaration,
+                        including_declaration_name: references_arguments
+                            .context
+                            .include_declaration,
                     }
                 }
             } else {
                 ElmSymbolToReference::VariableOrVariant {
                     module_origin: to_find_import_expose_origin_module,
                     name: to_find_import_expose_name,
-                    including_declaration_name: reference_arguments.context.include_declaration,
+                    including_declaration_name: references_arguments.context.include_declaration,
                 }
             };
             to_find_project_module_state
@@ -4306,9 +4337,12 @@ fn respond_to_references(
                         .into_iter()
                         .flatten()
                 })
-                .chain(if reference_arguments.context.include_declaration {
+                .chain(if references_arguments.context.include_declaration {
                     Some(lsp_types::Location {
-                        uri: reference_arguments.text_document_position.text_document.uri,
+                        uri: references_arguments
+                            .text_document_position
+                            .text_document
+                            .uri,
                         range: symbol_to_find_node.range,
                     })
                 } else {
@@ -4340,13 +4374,15 @@ fn respond_to_references(
                 scope_expression,
                 ElmSymbolToReference::LocalBinding {
                     name: to_find_name,
-                    including_let_declaration_name: reference_arguments.context.include_declaration,
+                    including_let_declaration_name: references_arguments
+                        .context
+                        .include_declaration,
                 },
             );
             all_uses_of_local_binding_to_find
                 .into_iter()
                 .map(|use_range_of_found_module| lsp_types::Location {
-                    uri: reference_arguments
+                    uri: references_arguments
                         .text_document_position
                         .text_document
                         .uri
@@ -4379,12 +4415,12 @@ fn respond_to_references(
                     local_binding_to_find_scope_expression,
                     ElmSymbolToReference::LocalBinding {
                         name: to_find_name,
-                        including_let_declaration_name: reference_arguments
+                        including_let_declaration_name: references_arguments
                             .context
                             .include_declaration,
                     },
                 );
-                if reference_arguments.context.include_declaration {
+                if references_arguments.context.include_declaration {
                     match to_find_local_binding_origin {
                         LocalBindingOrigin::PatternVariable(range) => {
                             all_uses_of_local_binding_to_find.push(range);
@@ -4400,7 +4436,7 @@ fn respond_to_references(
                 all_uses_of_local_binding_to_find
                     .into_iter()
                     .map(|use_range_of_found_module| lsp_types::Location {
-                        uri: reference_arguments
+                        uri: references_arguments
                             .text_document_position
                             .text_document
                             .uri
@@ -4452,13 +4488,17 @@ fn respond_to_references(
                     ElmSymbolToReference::RecordTypeAlias {
                         module_origin: to_find_module_origin,
                         name: to_find_name,
-                        including_declaration_name: reference_arguments.context.include_declaration,
+                        including_declaration_name: references_arguments
+                            .context
+                            .include_declaration,
                     }
                 } else {
                     ElmSymbolToReference::VariableOrVariant {
                         module_origin: to_find_module_origin,
                         name: to_find_name,
-                        including_declaration_name: reference_arguments.context.include_declaration,
+                        including_declaration_name: references_arguments
+                            .context
+                            .include_declaration,
                     }
                 };
                 to_find_project_module_state
@@ -4540,13 +4580,13 @@ fn respond_to_references(
                 ElmSymbolToReference::RecordTypeAlias {
                     module_origin: to_find_module_origin,
                     name: type_name_to_find,
-                    including_declaration_name: reference_arguments.context.include_declaration,
+                    including_declaration_name: references_arguments.context.include_declaration,
                 }
             } else {
                 ElmSymbolToReference::TypeNotRecordAlias {
                     module_origin: to_find_module_origin,
                     name: type_name_to_find,
-                    including_declaration_name: reference_arguments.context.include_declaration,
+                    including_declaration_name: references_arguments.context.include_declaration,
                 }
             };
             to_find_project_module_state
@@ -6445,10 +6485,13 @@ fn format_using_elm_format(project_path: &std::path::Path, source: &str) -> Opti
 
 fn respond_to_document_symbols(
     state: &State,
-    formatting_arguments: &lsp_types::DocumentSymbolParams,
+    document_symbol_arguments: &lsp_types::DocumentSymbolParams,
 ) -> Option<lsp_types::DocumentSymbolResponse> {
-    let document_path: std::path::PathBuf =
-        formatting_arguments.text_document.uri.to_file_path().ok()?;
+    let document_path: std::path::PathBuf = document_symbol_arguments
+        .text_document
+        .uri
+        .to_file_path()
+        .ok()?;
     let project_module = state_get_project_module_by_path(state, &document_path)?;
     Some(lsp_types::DocumentSymbolResponse::Nested(
         project_module
@@ -6602,6 +6645,193 @@ fn respond_to_document_symbols(
             })
             .collect::<Vec<_>>(),
     ))
+}
+fn respond_to_code_action(
+    state: &State,
+    code_action_arguments: lsp_types::CodeActionParams,
+) -> Option<Vec<lsp_types::CodeActionOrCommand>> {
+    let document_path: std::path::PathBuf = code_action_arguments
+        .text_document
+        .uri
+        .to_file_path()
+        .ok()?;
+    let project_module_state = state_get_project_module_by_path(state, &document_path)?;
+    let code_action_symbol_node: ElmSyntaxNode<ElmSyntaxSymbol> =
+        elm_syntax_module_find_symbol_at_position(
+            &project_module_state.module.syntax,
+            code_action_arguments.range.start,
+        )?;
+    match code_action_symbol_node.value {
+        ElmSyntaxSymbol::ModuleName(_) => None,
+        ElmSyntaxSymbol::ImportAlias { .. } => None,
+        ElmSyntaxSymbol::ModuleHeaderExpose { .. } => None,
+        ElmSyntaxSymbol::ModuleDocumentationAtDocsMember { .. } => None,
+        ElmSyntaxSymbol::ModuleMemberDeclarationName { .. } => None,
+        ElmSyntaxSymbol::ImportExpose { .. } => None,
+        ElmSyntaxSymbol::LetDeclarationName { .. } => None,
+        ElmSyntaxSymbol::TypeVariable { .. } => None,
+        ElmSyntaxSymbol::VariableOrVariantOrOperator {
+            qualification,
+            name: _,
+            local_bindings: _,
+        }
+        | ElmSyntaxSymbol::Type {
+            qualification,
+            name: _,
+        } => {
+            if implicit_imports_uniquely_qualified.iter().any(
+                |&(implicit_import_qualification, _)| {
+                    implicit_import_qualification == qualification
+                },
+            ) {
+                return None;
+            }
+            let already_imported: bool =
+                project_module_state
+                    .module
+                    .syntax
+                    .imports
+                    .iter()
+                    .any(|import_node| {
+                        import_node
+                            .value
+                            .module_name
+                            .as_ref()
+                            .is_some_and(|name_node| qualification == name_node.value.as_ref())
+                            || import_node
+                                .value
+                                .alias_name
+                                .as_ref()
+                                .is_some_and(|alias_node| {
+                                    qualification == alias_node.value.as_ref()
+                                })
+                    });
+            if already_imported {
+                return None;
+            }
+            Some(vec![if project_state_get_module_with_name(
+                state,
+                project_module_state.project,
+                qualification,
+            )
+            .is_none()
+            {
+                lsp_types::CodeActionOrCommand::CodeAction(lsp_types::CodeAction {
+                    title: "add missing import".to_string(),
+                    kind: Some(lsp_types::CodeActionKind::QUICKFIX),
+                    diagnostics: None,
+                    edit: None,
+                    command: None,
+                    is_preferred: None,
+                    disabled: Some(lsp_types::CodeActionDisabled {
+                        reason: "could not find a module with this name in this project"
+                            .to_string(),
+                    }),
+                    data: None,
+                })
+            } else {
+                let maybe_before_import_insert_position: Option<lsp_types::Position> =
+                    project_module_state
+                        .module
+                        .syntax
+                        .imports
+                        .last()
+                        .map(|node| node.range.end)
+                        .or_else(|| {
+                            project_module_state
+                                .module
+                                .syntax
+                                .documentation
+                                .as_ref()
+                                .map(|node| node.range.end)
+                        })
+                        .or_else(|| {
+                            project_module_state
+                                .module
+                                .syntax
+                                .header
+                                .as_ref()
+                                .map(elm_syntax_module_header_end_position)
+                        });
+                let import_insert_position = maybe_before_import_insert_position
+                    .map(|end| lsp_types::Position {
+                        line: end.line + 1,
+                        character: 0,
+                    })
+                    .unwrap_or_else(|| lsp_types::Position {
+                        line: 0,
+                        character: 0,
+                    });
+                lsp_types::CodeActionOrCommand::CodeAction(lsp_types::CodeAction {
+                    title: "add missing import".to_string(),
+                    kind: Some(lsp_types::CodeActionKind::QUICKFIX),
+                    diagnostics: None,
+                    edit: Some(lsp_types::WorkspaceEdit {
+                        changes: None,
+                        change_annotations: None,
+                        document_changes: Some(lsp_types::DocumentChanges::Edits(vec![
+                            lsp_types::TextDocumentEdit {
+                                text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
+                                    uri: code_action_arguments.text_document.uri,
+                                    version: None,
+                                },
+                                edits: vec![lsp_types::OneOf::Left(lsp_types::TextEdit {
+                                    range: lsp_types::Range {
+                                        start: import_insert_position,
+                                        end: import_insert_position,
+                                    },
+                                    new_text: format!("import {qualification}\n"),
+                                })],
+                            },
+                        ])),
+                    }),
+                    command: None,
+                    is_preferred: Some(true),
+                    disabled: None,
+                    data: None,
+                })
+            }])
+        }
+    }
+}
+/// caveat: for effect modules, this does not respect the { command, subscription }
+/// does not matter if you only look at lines as effect modules are currently all single-line
+fn elm_syntax_module_header_end_position(
+    elm_syntax_module_header: &ElmSyntaxModuleHeader,
+) -> lsp_types::Position {
+    elm_syntax_module_header
+        .exposing
+        .as_ref()
+        .map(|node| node.range.end)
+        .or_else(|| {
+            elm_syntax_module_header
+                .exposing_keyword_range
+                .map(|range| range.end)
+        })
+        .unwrap_or_else(|| match &elm_syntax_module_header.specific {
+            ElmSyntaxModuleHeaderSpecific::Pure {
+                module_keyword_range,
+            } => elm_syntax_module_header
+                .module_name
+                .as_ref()
+                .map(|node| node.range.end)
+                .unwrap_or(module_keyword_range.end),
+            ElmSyntaxModuleHeaderSpecific::Port {
+                port_keyword_range: _,
+                module_keyword_range,
+            } => elm_syntax_module_header
+                .module_name
+                .as_ref()
+                .map(|node| node.range.end)
+                .unwrap_or(module_keyword_range.end),
+            ElmSyntaxModuleHeaderSpecific::Effect {
+                effect_keyword_range: _,
+                module_keyword_range: _,
+                where_keyword_range,
+                command: _,
+                subscription: _,
+            } => where_keyword_range.end,
+        })
 }
 
 fn elm_make_file_problem_to_diagnostic(
@@ -7804,22 +8034,23 @@ fn module_origin_lookup_for_implicit_imports() -> ModuleOriginLookup<'static> {
             ("Cmd", "Platform.Cmd"),
             ("Sub", "Platform.Sub"),
         ]),
-        uniquely_qualified: std::collections::HashMap::from([
-            ("Basics", "Basics"),
-            ("List", "List"),
-            ("Maybe", "Maybe"),
-            ("Result", "Result"),
-            ("String", "String"),
-            ("Char", "Char"),
-            ("Tuple", "Tuple"),
-            ("Debug", "Debug"),
-            ("Platform", "Platform"),
-            ("Cmd", "Platform.Cmd"),
-            ("Sub", "Platform.Sub"),
-        ]),
+        uniquely_qualified: std::collections::HashMap::from(implicit_imports_uniquely_qualified),
         ambiguously_qualified: std::collections::HashMap::new(),
     }
 }
+const implicit_imports_uniquely_qualified: [(&str, &str); 11] = [
+    ("Basics", "Basics"),
+    ("List", "List"),
+    ("Maybe", "Maybe"),
+    ("Result", "Result"),
+    ("String", "String"),
+    ("Char", "Char"),
+    ("Tuple", "Tuple"),
+    ("Debug", "Debug"),
+    ("Platform", "Platform"),
+    ("Cmd", "Platform.Cmd"),
+    ("Sub", "Platform.Sub"),
+];
 
 fn look_up_origin_module<'a>(
     module_origin_lookup: &ModuleOriginLookup<'a>,

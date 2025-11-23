@@ -41,6 +41,7 @@ shadow_unrelated = { level = "warn" }
 unused_trait_names = { level = "warn" }
 ref-patterns = { level = "warn" }
 int_plus_one = { level = "allow" }
+question_mark = { level = "allow" }
 
 pedantic = { level = "warn", priority = -1 }
 single_char_pattern = { level = "allow" }
