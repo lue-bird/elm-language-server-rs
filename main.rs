@@ -17013,13 +17013,13 @@ fn parse_elm_syntax_module_documentation_node(
                 {
                     member_names.push(expose_name_node);
                 } else if (state.source[state.offset_utf8..].starts_with('\n')
-                    && state.source[state.offset_utf8..]
+                    && !state.source[state.offset_utf8..]
                         .chars()
                         .skip(1)
                         .next()
                         .is_some_and(|c| c.is_ascii_whitespace()))
                     || (state.source[state.offset_utf8..].starts_with("\r\n")
-                        && state.source[state.offset_utf8..]
+                        && !state.source[state.offset_utf8..]
                             .chars()
                             .skip(2)
                             .next()
