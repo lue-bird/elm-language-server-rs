@@ -17048,6 +17048,9 @@ fn parse_same_line_while_at_least_one_as_node(
         value: Box::from(&state.source[start_offset_utf8..state.offset_utf8]),
     })
 }
+fn parse_before_next_linebreak(state: &mut ParseState) {
+    parse_same_line_while(state, |c| c != '\r' && c != '\n');
+}
 /// given condition must not succeed on linebreak
 fn parse_same_line_char_if(state: &mut ParseState, char_is_valid: impl Fn(char) -> bool) -> bool {
     if let Some(next_char) = state.source[state.offset_utf8..].chars().next()
@@ -19253,7 +19256,12 @@ fn parse_elm_syntax_declaration_node(
     parse_elm_syntax_declaration_choice_type_or_type_alias_node(state)
         .or_else(|| parse_elm_syntax_declaration_port_node(state))
         .or_else(|| parse_elm_syntax_declaration_operator_node(state))
-        .or_else(|| parse_elm_syntax_declaration_variable_node(state))
+        .or_else(|| {
+            if state.indent != 0 {
+                return None;
+            }
+            parse_elm_syntax_declaration_variable_node(state)
+        })
 }
 fn parse_elm_syntax_declaration_port_node(
     state: &mut ParseState,
@@ -19633,7 +19641,8 @@ fn parse_elm_syntax_module(module_source: &str) -> ElmSyntaxModule {
                 last_valid_end_offet_utf8 = state.offset_utf8;
             }
             None => {
-                if parse_linebreak(&mut state) || parse_any_guaranteed_non_linebreak_char(&mut state) {
+                parse_before_next_linebreak(&mut state);
+                if parse_linebreak(&mut state) {
                     last_parsed_was_valid = false;
                 } else {
                     break 'parsing_delarations;
