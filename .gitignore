@@ -13,3 +13,4 @@ zombie
 # for experimentation
 perf.data
 testing/
+run-profiling.sh

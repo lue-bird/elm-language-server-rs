@@ -26,6 +26,10 @@ debug = "none"
 # but please do switch to 1 locally if you need faster compile times
 opt-level = 2
 
+[profile.profiling]
+inherits = "release"
+debug = true
+
 [lints.rust]
 unused_qualifications = { level = "warn" }
 ambiguous-negative-literals = { level = "warn" }
