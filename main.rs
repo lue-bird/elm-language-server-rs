@@ -873,20 +873,23 @@ accordingly so that tools like the elm compiler and language server can find the
     }
     let (fully_parsed_project_sender, fully_parsed_project_receiver) = std::sync::mpsc::channel();
     std::thread::scope(|thread_scope| {
-        for (not_fully_parsed_project_path, not_fully_parsed_project_state) in &state.projects {
+        for (uninitialized_project_path, uninitialized_project_state) in &state.projects {
             let projects_that_finished_full_parse_sender = fully_parsed_project_sender.clone();
             thread_scope.spawn(move || {
-                let mut fully_parsed_modules = Vec::new();
-                for (not_fully_parsed_module_path, not_fully_parsed_module_state) in
-                    &not_fully_parsed_project_state.modules
-                {
-                    fully_parsed_modules.push((
-                        not_fully_parsed_module_path.clone(),
-                        parse_elm_syntax_module(&not_fully_parsed_module_state.source),
-                    ));
+                let mut fully_parsed_modules: std::collections::HashMap<
+                    std::path::PathBuf,
+                    ModuleState,
+                > = std::collections::HashMap::new();
+                for uninitialized_module_path in uninitialized_project_state.modules.keys() {
+                    if let Ok(module_source) = std::fs::read_to_string(uninitialized_module_path) {
+                        fully_parsed_modules.insert(
+                            uninitialized_module_path.clone(),
+                            initialize_module_state_from_source(module_source),
+                        );
+                    }
                 }
                 projects_that_finished_full_parse_sender
-                    .send((not_fully_parsed_project_path.clone(), fully_parsed_modules))
+                    .send((uninitialized_project_path.clone(), fully_parsed_modules))
             });
         }
     });
@@ -895,16 +898,7 @@ accordingly so that tools like the elm compiler and language server can find the
         fully_parsed_project_receiver.recv()
     {
         if let Some(project_state_to_update) = state.projects.get_mut(&fully_parsed_project_path) {
-            for (fully_parsed_project_module_path, fully_parsed_project_module_syntax) in
-                fully_parsed_project_modules
-            {
-                if let Some(module_state_to_update) = project_state_to_update
-                    .modules
-                    .get_mut(&fully_parsed_project_module_path)
-                {
-                    module_state_to_update.syntax = fully_parsed_project_module_syntax;
-                }
-            }
+            project_state_to_update.modules = fully_parsed_project_modules;
         }
     }
     state
@@ -1031,12 +1025,7 @@ fn initialize_state_for_project_into(
     let module_states: std::collections::HashMap<std::path::PathBuf, ModuleState> =
         list_elm_files_in_directory_at_paths(elm_json_source_directories.iter().cloned())
             .into_iter()
-            .map(|(module_path, module_source)| {
-                (
-                    module_path,
-                    initialize_header_only_module_state_from_source(module_source),
-                )
-            })
+            .map(|module_path| (module_path, uninitialized_module_state))
             .collect::<std::collections::HashMap<_, _>>();
     let mut exposed_module_names: std::collections::HashMap<String, ProjectModuleOrigin> =
         std::collections::HashMap::new();
@@ -1047,26 +1036,12 @@ fn initialize_state_for_project_into(
     }) = &maybe_elm_json
     {
         for &exposed_module_name in exposed_modules {
-            let maybe_module_origin_path: Option<&std::path::PathBuf> = module_states
-                .iter()
-                .find_map(|(module_path, module_state)| {
-                    if module_state
-                        .syntax
-                        .header
-                        .as_ref()
-                        .is_some_and(|header_node| {
-                            header_node
-                                .module_name
-                                .as_ref()
-                                .is_some_and(|module_name_node| {
-                                    module_name_node.value.as_ref() == exposed_module_name
-                                })
+            let maybe_module_origin_path: Option<&std::path::PathBuf> =
+                module_states.keys().find(|module_path| {
+                    derive_module_name_from_path(&elm_json_source_directories, module_path)
+                        .is_some_and(|derived_module_name| {
+                            derived_module_name == exposed_module_name
                         })
-                    {
-                        Some(module_path)
-                    } else {
-                        None
-                    }
                 });
             if let Some(module_origin_path) = maybe_module_origin_path {
                 exposed_module_names.insert(
@@ -1148,12 +1123,7 @@ fn initialize_state_for_project_into(
                     tests_source_directory_path.clone(),
                 ))
                 .into_iter()
-                .map(|(module_path, module_source)| {
-                    (
-                        module_path,
-                        initialize_header_only_module_state_from_source(module_source),
-                    )
-                })
+                .map(|module_path| (module_path, uninitialized_module_state))
                 .collect::<std::collections::HashMap<_, _>>();
             state.projects.insert(
                 tests_source_directory_path.clone(),
@@ -1182,15 +1152,21 @@ fn initialize_state_for_project_into(
     }
     exposed_module_names
 }
+/// A yet to be initialized, dummy [`ModuleState`]. Probably a sign that I should change the code
+/// to only keep the interesting info instead and only really use the [`State`] type when the modules are actually initialized
+const uninitialized_module_state: ModuleState = ModuleState {
+    source: String::new(),
+    syntax: ElmSyntaxModule {
+        header: None,
+        documentation: None,
+        comments: vec![],
+        imports: vec![],
+        declarations: vec![],
+    },
+};
 fn initialize_module_state_from_source(source: String) -> ModuleState {
     ModuleState {
         syntax: parse_elm_syntax_module(&source),
-        source: source,
-    }
-}
-fn initialize_header_only_module_state_from_source(source: String) -> ModuleState {
-    ModuleState {
-        syntax: parse_elm_syntax_module_until_including_header_only(&source),
         source: source,
     }
 }
@@ -7330,10 +7306,28 @@ fn elm_syntax_highlight_kind_to_lsp_semantic_token_type(
     }
 }
 
+fn derive_module_name_from_path(
+    source_directories: &[std::path::PathBuf],
+    module_path: &std::path::Path,
+) -> Option<String> {
+    source_directories
+        .iter()
+        .filter_map(|source_directory_path| module_path.strip_prefix(source_directory_path).ok())
+        .filter_map(std::path::Path::to_str)
+        .max_by(|a, b| a.len().cmp(&b.len()))
+        .map(|path_in_source_directory| {
+            path_in_source_directory
+                // I'm certain there is a better way to convert path separators independent of OS
+                .trim_start_matches(std::path::MAIN_SEPARATOR)
+                .trim_end_matches(".elm")
+                .replace(std::path::MAIN_SEPARATOR, ".")
+        })
+}
+
 fn list_elm_files_in_directory_at_paths(
     paths: impl Iterator<Item = std::path::PathBuf>,
-) -> Vec<(std::path::PathBuf, String)> {
-    let mut result: Vec<(std::path::PathBuf, String)> = Vec::new();
+) -> Vec<std::path::PathBuf> {
+    let mut result: Vec<std::path::PathBuf> = Vec::new();
     for path in paths {
         list_files_passing_test_in_directory_at_path_into(&mut result, path, |file_path| {
             file_path
@@ -7384,7 +7378,7 @@ fn list_elm_project_directories_in_directory_at_path_into(
 }
 
 fn list_files_passing_test_in_directory_at_path_into(
-    so_far: &mut Vec<(std::path::PathBuf, String)>,
+    so_far: &mut Vec<std::path::PathBuf>,
     path: std::path::PathBuf,
     should_add_file: fn(&std::path::PathBuf) -> bool,
 ) {
@@ -7399,10 +7393,8 @@ fn list_files_passing_test_in_directory_at_path_into(
             }
         }
     } else {
-        if should_add_file(&path)
-            && let Ok(file_content) = std::fs::read_to_string(&path)
-        {
-            so_far.push((path, file_content));
+        if should_add_file(&path) {
+            so_far.push(path);
         }
     }
 }
@@ -19594,28 +19586,6 @@ fn parse_elm_syntax_documented_declaration_followed_by_whitespace_and_comments_a
                 declaration: maybe_declaration,
             })
         }
-    }
-}
-fn parse_elm_syntax_module_until_including_header_only(module_source: &str) -> ElmSyntaxModule {
-    let mut state: ParseState = ParseState {
-        source: module_source,
-        offset_utf8: 0,
-        position: lsp_types::Position {
-            line: 0,
-            character: 0,
-        },
-        indent: 0,
-        lower_indents_stack: vec![],
-        comments: vec![],
-    };
-    parse_elm_whitespace_and_comments(&mut state);
-    let maybe_header: Option<ElmSyntaxModuleHeader> = parse_elm_syntax_module_header(&mut state);
-    ElmSyntaxModule {
-        header: maybe_header,
-        documentation: None,
-        comments: state.comments,
-        imports: vec![],
-        declarations: vec![],
     }
 }
 fn parse_elm_syntax_module(module_source: &str) -> ElmSyntaxModule {
