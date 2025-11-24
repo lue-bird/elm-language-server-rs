@@ -65,7 +65,7 @@ fn server_capabilities() -> lsp_types::ServerCapabilities {
                         work_done_progress: None,
                     },
                     legend: lsp_types::SemanticTokensLegend {
-                        token_modifiers: Vec::new(),
+                        token_modifiers: vec![],
                         token_types: Vec::from(token_types),
                     },
                     range: None,
@@ -540,7 +540,8 @@ fn publish_and_update_state_for_diagnostics_for_document(
             eprintln!("{error}");
         }
         Ok(elm_make_errors) => {
-            let mut updated_diagnostics_to_publish = Vec::new();
+            let mut updated_diagnostics_to_publish: Vec<lsp_types::PublishDiagnosticsParams> =
+                Vec::new();
             for elm_make_file_error in project.modules.keys() {
                 // O(modules*errors), might be problematic in large projects
                 let maybe_new = elm_make_errors
@@ -3347,9 +3348,9 @@ fn respond_to_rename(
             module_origin: import_alias_to_rename_module_origin,
             alias_name: import_alias_to_rename,
         } => {
-            let mut all_uses_of_renamed_module_name: Vec<lsp_types::Range> = Vec::new();
+            let mut all_uses_of_renamed_import_alias: Vec<lsp_types::Range> = Vec::new();
             elm_syntax_module_uses_of_reference_into(
-                &mut all_uses_of_renamed_module_name,
+                &mut all_uses_of_renamed_import_alias,
                 state,
                 to_rename_project_module_state.project,
                 &to_rename_project_module_state.module.syntax,
@@ -3363,7 +3364,7 @@ fn respond_to_rename(
                     uri: rename_arguments.text_document_position.text_document.uri,
                     version: None,
                 },
-                edits: all_uses_of_renamed_module_name
+                edits: all_uses_of_renamed_import_alias
                     .into_iter()
                     .map(|use_range_of_renamed_module| {
                         lsp_types::OneOf::Left(lsp_types::TextEdit {
@@ -3378,9 +3379,9 @@ fn respond_to_rename(
             scope_declaration,
             name: type_variable_to_rename,
         } => {
-            let mut all_uses_of_renamed_module_name: Vec<lsp_types::Range> = Vec::new();
+            let mut all_uses_of_renamed_type_variable: Vec<lsp_types::Range> = Vec::new();
             elm_syntax_declaration_uses_of_reference_into(
-                &mut all_uses_of_renamed_module_name,
+                &mut all_uses_of_renamed_type_variable,
                 to_rename_project_module_state
                     .module
                     .syntax
@@ -3402,7 +3403,7 @@ fn respond_to_rename(
                     uri: rename_arguments.text_document_position.text_document.uri,
                     version: None,
                 },
-                edits: all_uses_of_renamed_module_name
+                edits: all_uses_of_renamed_type_variable
                     .into_iter()
                     .map(|use_range_of_renamed_module| {
                         lsp_types::OneOf::Left(lsp_types::TextEdit {
@@ -3513,9 +3514,9 @@ fn respond_to_rename(
             };
             state_iter_all_modules(state)
                 .filter_map(move |project_module| {
-                    let mut all_uses_of_renamed_module_name: Vec<lsp_types::Range> = Vec::new();
+                    let mut all_uses_of_at_docs_module_member: Vec<lsp_types::Range> = Vec::new();
                     elm_syntax_module_uses_of_reference_into(
-                        &mut all_uses_of_renamed_module_name,
+                        &mut all_uses_of_at_docs_module_member,
                         state,
                         project_module.project_state,
                         &project_module.module_state.syntax,
@@ -3528,7 +3529,7 @@ fn respond_to_rename(
                             uri: elm_module_uri,
                             version: None,
                         },
-                        edits: all_uses_of_renamed_module_name
+                        edits: all_uses_of_at_docs_module_member
                             .into_iter()
                             .map(|use_range_of_renamed_module| {
                                 lsp_types::OneOf::Left(lsp_types::TextEdit {
@@ -3595,9 +3596,9 @@ fn respond_to_rename(
                 };
             state_iter_all_modules(state)
                 .filter_map(move |project_module| {
-                    let mut all_uses_of_renamed_module_name: Vec<lsp_types::Range> = Vec::new();
+                    let mut all_uses_import_exposed_member: Vec<lsp_types::Range> = Vec::new();
                     elm_syntax_module_uses_of_reference_into(
-                        &mut all_uses_of_renamed_module_name,
+                        &mut all_uses_import_exposed_member,
                         state,
                         project_module.project_state,
                         &project_module.module_state.syntax,
@@ -3610,7 +3611,7 @@ fn respond_to_rename(
                             uri: elm_module_uri,
                             version: None,
                         },
-                        edits: all_uses_of_renamed_module_name
+                        edits: all_uses_import_exposed_member
                             .into_iter()
                             .map(|use_range_of_renamed_module| {
                                 lsp_types::OneOf::Left(lsp_types::TextEdit {
@@ -3629,9 +3630,9 @@ fn respond_to_rename(
             signature_type: _,
             scope_expression,
         } => {
-            let mut all_uses_of_local_binding_to_rename: Vec<lsp_types::Range> = Vec::new();
+            let mut all_uses_of_let_declaration_to_rename: Vec<lsp_types::Range> = Vec::new();
             elm_syntax_expression_uses_of_reference_into(
-                &mut all_uses_of_local_binding_to_rename,
+                &mut all_uses_of_let_declaration_to_rename,
                 &elm_syntax_module_create_origin_lookup(
                     state,
                     to_rename_project_module_state.project,
@@ -3655,7 +3656,7 @@ fn respond_to_rename(
                     uri: rename_arguments.text_document_position.text_document.uri,
                     version: None,
                 },
-                edits: all_uses_of_local_binding_to_rename
+                edits: all_uses_of_let_declaration_to_rename
                     .into_iter()
                     .map(|use_range_of_renamed_module| {
                         lsp_types::OneOf::Left(lsp_types::TextEdit {
@@ -3778,9 +3779,9 @@ fn respond_to_rename(
                 };
                 state_iter_all_modules(state)
                     .filter_map(|project_module| {
-                        let mut all_uses_of_renamed_module_name: Vec<lsp_types::Range> = Vec::new();
+                        let mut all_uses_of_renamed_reference: Vec<lsp_types::Range> = Vec::new();
                         elm_syntax_module_uses_of_reference_into(
-                            &mut all_uses_of_renamed_module_name,
+                            &mut all_uses_of_renamed_reference,
                             state,
                             project_module.project_state,
                             &project_module.module_state.syntax,
@@ -3793,7 +3794,7 @@ fn respond_to_rename(
                                 uri: elm_module_uri,
                                 version: None,
                             },
-                            edits: all_uses_of_renamed_module_name
+                            edits: all_uses_of_renamed_reference
                                 .into_iter()
                                 .map(|use_range_of_renamed_module| {
                                     lsp_types::OneOf::Left(lsp_types::TextEdit {
@@ -3869,9 +3870,9 @@ fn respond_to_rename(
                 };
             state_iter_all_modules(state)
                 .filter_map(|project_module| {
-                    let mut all_uses_of_renamed_module_name: Vec<lsp_types::Range> = Vec::new();
+                    let mut all_uses_of_renamed_type: Vec<lsp_types::Range> = Vec::new();
                     elm_syntax_module_uses_of_reference_into(
-                        &mut all_uses_of_renamed_module_name,
+                        &mut all_uses_of_renamed_type,
                         state,
                         project_module.project_state,
                         &project_module.module_state.syntax,
@@ -3884,7 +3885,7 @@ fn respond_to_rename(
                             uri: elm_module_uri,
                             version: None,
                         },
-                        edits: all_uses_of_renamed_module_name
+                        edits: all_uses_of_renamed_type
                             .into_iter()
                             .map(|use_range_of_renamed_module| {
                                 lsp_types::OneOf::Left(lsp_types::TextEdit {
@@ -3920,7 +3921,7 @@ fn respond_to_references(
             module_origin: import_alias_to_find_module_origin,
             alias_name: import_alias_to_find,
         } => {
-            let mut all_uses_of_found_module_name: Vec<lsp_types::Range> =
+            let mut all_uses_of_found_import_alias: Vec<lsp_types::Range> =
                 if references_arguments.context.include_declaration {
                     vec![symbol_to_find_node.range] // the alias on the import itself
                 } else {
@@ -3952,7 +3953,7 @@ fn respond_to_references(
             {
                 if let Some(declaration_node) = &documented_declaration.declaration {
                     elm_syntax_declaration_uses_of_reference_into(
-                        &mut all_uses_of_found_module_name,
+                        &mut all_uses_of_found_import_alias,
                         to_find_module_name,
                         &module_origin_lookup,
                         &declaration_node.value,
@@ -3960,7 +3961,7 @@ fn respond_to_references(
                     );
                 }
             }
-            all_uses_of_found_module_name
+            all_uses_of_found_import_alias
                 .into_iter()
                 .map(|use_range_of_found_module| lsp_types::Location {
                     uri: references_arguments
@@ -3976,9 +3977,9 @@ fn respond_to_references(
             scope_declaration,
             name: type_variable_to_find,
         } => {
-            let mut all_uses_of_found_module_name: Vec<lsp_types::Range> = Vec::new();
+            let mut all_uses_of_found_type_variable: Vec<lsp_types::Range> = Vec::new();
             elm_syntax_declaration_uses_of_reference_into(
-                &mut all_uses_of_found_module_name,
+                &mut all_uses_of_found_type_variable,
                 to_find_project_module_state
                     .module
                     .syntax
@@ -3995,7 +3996,7 @@ fn respond_to_references(
                 scope_declaration,
                 ElmSymbolToReference::TypeVariable(type_variable_to_find),
             );
-            all_uses_of_found_module_name
+            all_uses_of_found_type_variable
                 .into_iter()
                 .map(|use_range_of_found_module| lsp_types::Location {
                     uri: references_arguments
@@ -4118,16 +4119,16 @@ fn respond_to_references(
                     lsp_types::Url::from_file_path(project_module_path)
                         .ok()
                         .map(|elm_module_uri| {
-                            let mut all_uses_of_found_module_name: Vec<lsp_types::Range> =
+                            let mut all_uses_of_found_at_docs_module_member: Vec<lsp_types::Range> =
                                 Vec::new();
                             elm_syntax_module_uses_of_reference_into(
-                                &mut all_uses_of_found_module_name,
+                                &mut all_uses_of_found_at_docs_module_member,
                                 state,
                                 to_find_project_module_state.project,
                                 &project_module_state.syntax,
                                 elm_declared_symbol_to_find,
                             );
-                            all_uses_of_found_module_name.into_iter().map(
+                            all_uses_of_found_at_docs_module_member.into_iter().map(
                                 move |use_range_of_found_module| lsp_types::Location {
                                     uri: elm_module_uri.clone(),
                                     range: use_range_of_found_module,
@@ -4206,9 +4207,9 @@ fn respond_to_references(
                 .modules
                 .iter()
                 .flat_map(move |(project_module_path, project_module_state)| {
-                    let mut all_uses_of_found_module_name: Vec<lsp_types::Range> = Vec::new();
+                    let mut all_uses_of_found_module_member: Vec<lsp_types::Range> = Vec::new();
                     elm_syntax_module_uses_of_reference_into(
-                        &mut all_uses_of_found_module_name,
+                        &mut all_uses_of_found_module_member,
                         state,
                         to_find_project_module_state.project,
                         &project_module_state.syntax,
@@ -4217,7 +4218,7 @@ fn respond_to_references(
                     lsp_types::Url::from_file_path(project_module_path)
                         .ok()
                         .map(|elm_module_uri| {
-                            all_uses_of_found_module_name.into_iter().map(
+                            all_uses_of_found_module_member.into_iter().map(
                                 move |use_range_of_found_module| lsp_types::Location {
                                     uri: elm_module_uri.clone(),
                                     range: use_range_of_found_module,
@@ -4291,9 +4292,10 @@ fn respond_to_references(
                 .modules
                 .iter()
                 .flat_map(|(project_module_path, project_module_state)| {
-                    let mut all_uses_of_found_module_name: Vec<lsp_types::Range> = Vec::new();
+                    let mut all_uses_of_found_import_exposed_member: Vec<lsp_types::Range> =
+                        Vec::new();
                     elm_syntax_module_uses_of_reference_into(
-                        &mut all_uses_of_found_module_name,
+                        &mut all_uses_of_found_import_exposed_member,
                         state,
                         to_find_project_module_state.project,
                         &project_module_state.syntax,
@@ -4302,7 +4304,7 @@ fn respond_to_references(
                     lsp_types::Url::from_file_path(project_module_path)
                         .ok()
                         .map(|elm_module_uri| {
-                            all_uses_of_found_module_name.into_iter().map(
+                            all_uses_of_found_import_exposed_member.into_iter().map(
                                 move |use_range_of_found_module| lsp_types::Location {
                                     uri: elm_module_uri.clone(),
                                     range: use_range_of_found_module,
@@ -4331,9 +4333,9 @@ fn respond_to_references(
             signature_type: _,
             scope_expression,
         } => {
-            let mut all_uses_of_local_binding_to_find: Vec<lsp_types::Range> = Vec::new();
+            let mut all_uses_of_found_let_declaration: Vec<lsp_types::Range> = Vec::new();
             elm_syntax_expression_uses_of_reference_into(
-                &mut all_uses_of_local_binding_to_find,
+                &mut all_uses_of_found_let_declaration,
                 &elm_syntax_module_create_origin_lookup(
                     state,
                     to_find_project_module_state.project,
@@ -4354,7 +4356,7 @@ fn respond_to_references(
                         .include_declaration,
                 },
             );
-            all_uses_of_local_binding_to_find
+            all_uses_of_found_let_declaration
                 .into_iter()
                 .map(|use_range_of_found_module| lsp_types::Location {
                     uri: references_arguments
@@ -4375,9 +4377,9 @@ fn respond_to_references(
                 && let Some((to_find_local_binding_origin, local_binding_to_find_scope_expression)) =
                     find_local_binding_scope_expression(&local_bindings, to_find_name)
             {
-                let mut all_uses_of_local_binding_to_find: Vec<lsp_types::Range> = Vec::new();
+                let mut all_uses_of_found_local_binding: Vec<lsp_types::Range> = Vec::new();
                 elm_syntax_expression_uses_of_reference_into(
-                    &mut all_uses_of_local_binding_to_find,
+                    &mut all_uses_of_found_local_binding,
                     &elm_syntax_module_create_origin_lookup(
                         state,
                         to_find_project_module_state.project,
@@ -4398,17 +4400,17 @@ fn respond_to_references(
                 if references_arguments.context.include_declaration {
                     match to_find_local_binding_origin {
                         LocalBindingOrigin::PatternVariable(range) => {
-                            all_uses_of_local_binding_to_find.push(range);
+                            all_uses_of_found_local_binding.push(range);
                         }
                         LocalBindingOrigin::PatternRecordField(range) => {
-                            all_uses_of_local_binding_to_find.push(range);
+                            all_uses_of_found_local_binding.push(range);
                         }
                         LocalBindingOrigin::LetDeclaredVariable { .. } => {
                             // already included in scope
                         }
                     }
                 }
-                all_uses_of_local_binding_to_find
+                all_uses_of_found_local_binding
                     .into_iter()
                     .map(|use_range_of_found_module| lsp_types::Location {
                         uri: references_arguments
@@ -4481,9 +4483,9 @@ fn respond_to_references(
                     .modules
                     .iter()
                     .flat_map(|(project_module_path, project_module_state)| {
-                        let mut all_uses_of_found_module_name: Vec<lsp_types::Range> = Vec::new();
+                        let mut all_uses_of_found_reference: Vec<lsp_types::Range> = Vec::new();
                         elm_syntax_module_uses_of_reference_into(
-                            &mut all_uses_of_found_module_name,
+                            &mut all_uses_of_found_reference,
                             state,
                             to_find_project_module_state.project,
                             &project_module_state.syntax,
@@ -4492,7 +4494,7 @@ fn respond_to_references(
                         lsp_types::Url::from_file_path(project_module_path)
                             .ok()
                             .map(|elm_module_uri| {
-                                all_uses_of_found_module_name.into_iter().map(
+                                all_uses_of_found_reference.into_iter().map(
                                     move |use_range_of_found_module| lsp_types::Location {
                                         uri: elm_module_uri.clone(),
                                         range: use_range_of_found_module,
@@ -4569,9 +4571,9 @@ fn respond_to_references(
                 .modules
                 .iter()
                 .flat_map(|(project_module_path, project_module_state)| {
-                    let mut all_uses_of_found_module_name: Vec<lsp_types::Range> = Vec::new();
+                    let mut all_uses_of_found_type: Vec<lsp_types::Range> = Vec::new();
                     elm_syntax_module_uses_of_reference_into(
-                        &mut all_uses_of_found_module_name,
+                        &mut all_uses_of_found_type,
                         state,
                         to_find_project_module_state.project,
                         &project_module_state.syntax,
@@ -4580,7 +4582,7 @@ fn respond_to_references(
                     lsp_types::Url::from_file_path(project_module_path)
                         .ok()
                         .map(|elm_module_uri| {
-                            all_uses_of_found_module_name.into_iter().map(
+                            all_uses_of_found_type.into_iter().map(
                                 move |use_range_of_found_module| lsp_types::Location {
                                     uri: elm_module_uri.clone(),
                                     range: use_range_of_found_module,
@@ -4601,7 +4603,8 @@ fn respond_to_semantic_tokens_full(
 ) -> Option<lsp_types::SemanticTokensResult> {
     let project_module_state =
         state_get_project_module_by_lsp_url(state, &semantic_tokens_arguments.text_document.uri)?;
-    let mut highlighting: Vec<ElmSyntaxNode<ElmSyntaxHighlightKind>> = Vec::new();
+    let mut highlighting: Vec<ElmSyntaxNode<ElmSyntaxHighlightKind>> =
+        Vec::with_capacity(project_module_state.module.source.len() / 16);
     elm_syntax_highlight_module_into(&mut highlighting, &project_module_state.module.syntax);
     Some(lsp_types::SemanticTokensResult::Tokens(
         lsp_types::SemanticTokens {
@@ -5134,7 +5137,8 @@ fn respond_to_completion(
                     }
                 })
                 .collect::<std::collections::HashSet<_>>();
-            let mut completion_items: Vec<lsp_types::CompletionItem> = Vec::new();
+            let mut completion_items: Vec<lsp_types::CompletionItem> =
+                Vec::with_capacity(completion_project_module.module.syntax.declarations.len());
             for (origin_module_declaration_node, origin_module_declaration_documentation) in
                 completion_project_module
                     .module
@@ -7818,7 +7822,7 @@ fn elm_syntax_exposing_to_set<'a>(elm_syntax_exposing: &'a ElmSyntaxExposing) ->
         ElmSyntaxExposing::All(_) => ElmExposeSet::All,
         ElmSyntaxExposing::Explicit(exposes) => {
             let mut operators: Vec<&str> = Vec::new();
-            let mut variables: Vec<&str> = Vec::new();
+            let mut variables: Vec<&str> = Vec::with_capacity(exposes.len());
             let mut types: Vec<&str> = Vec::new();
             let mut choice_types_including_variants: Vec<&str> = Vec::new();
             for expose_node in exposes {
@@ -8393,7 +8397,6 @@ fn elm_syntax_module_create_origin_lookup<'a>(
 }
 
 fn elm_syntax_module_exposed_symbols(elm_syntax_module: &ElmSyntaxModule) -> Vec<&str> {
-    let mut exposed_symbols: Vec<&str> = Vec::new();
     match elm_syntax_module
         .header
         .as_ref()
@@ -8402,6 +8405,8 @@ fn elm_syntax_module_exposed_symbols(elm_syntax_module: &ElmSyntaxModule) -> Vec
         .map(|node| &node.value)
     {
         None | Some(ElmSyntaxExposing::All(_)) => {
+            let mut exposed_symbols: Vec<&str> =
+                Vec::with_capacity(elm_syntax_module.declarations.len());
             for declaration_node in elm_syntax_module
                 .declarations
                 .iter()
@@ -8464,8 +8469,10 @@ fn elm_syntax_module_exposed_symbols(elm_syntax_module: &ElmSyntaxModule) -> Vec
                     }
                 }
             }
+            exposed_symbols
         }
         Some(ElmSyntaxExposing::Explicit(exposes)) => {
+            let mut exposed_symbols: Vec<&str> = Vec::with_capacity(exposes.len());
             for expose in exposes {
                 match &expose.value {
                     ElmSyntaxExpose::ChoiceTypeIncludingVariants {
@@ -8524,9 +8531,9 @@ fn elm_syntax_module_exposed_symbols(elm_syntax_module: &ElmSyntaxModule) -> Vec
                     }
                 }
             }
+            exposed_symbols
         }
     }
-    exposed_symbols
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LineSpan {
@@ -14220,7 +14227,7 @@ fn elm_syntax_declaration_uses_of_reference_into(
                     symbol_to_collect_uses_of,
                 );
             }
-            let mut parameter_bindings = Vec::new();
+            let mut parameter_bindings: Vec<ElmLocalBinding> = Vec::new();
             for parameter_node in parameters {
                 elm_syntax_pattern_bindings_into(
                     &mut parameter_bindings,
@@ -19611,7 +19618,8 @@ fn parse_elm_syntax_module(module_source: &str) -> ElmSyntaxModule {
     }
     let mut last_valid_end_offet_utf8: usize = state.offset_utf8;
     let mut last_parsed_was_valid: bool = true;
-    let mut declarations: Vec<Result<ElmSyntaxDocumentedDeclaration, Box<str>>> = Vec::new();
+    let mut declarations: Vec<Result<ElmSyntaxDocumentedDeclaration, Box<str>>> =
+        Vec::with_capacity(8);
     'parsing_delarations: loop {
         let offset_utf8_before_parsing_documeted_declaration: usize = state.offset_utf8;
         match parse_elm_syntax_documented_declaration_followed_by_whitespace_and_comments_and_whatever_indented(&mut state) {
