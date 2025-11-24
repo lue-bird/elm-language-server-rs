@@ -10249,18 +10249,20 @@ fn elm_syntax_expression_not_parenthesized_into(
             }
             if maybe_result.is_none()
                 && let Some(arrow_key_symbol_range) = maybe_arrow_key_symbol_range
+                && let comments_before_arrow_key_symbol = elm_syntax_comments_in_range(
+                    comments,
+                    lsp_types::Range {
+                        start: previous_parameter_end,
+                        end: arrow_key_symbol_range.start,
+                    },
+                )
+                && !comments_before_arrow_key_symbol.is_empty()
             {
                 linebreak_indented_into(so_far, indent);
                 elm_syntax_comments_then_linebreak_indented_into(
                     so_far,
                     indent,
-                    elm_syntax_comments_in_range(
-                        comments,
-                        lsp_types::Range {
-                            start: previous_parameter_end,
-                            end: arrow_key_symbol_range.start,
-                        },
-                    ),
+                    comments_before_arrow_key_symbol,
                 );
             }
             so_far.push_str("->");
@@ -11146,19 +11148,21 @@ fn elm_syntax_variable_declaration_into(
     }
     space_or_linebreak_indented_into(so_far, parameters_line_span, next_indent(indent));
     if maybe_result.is_none()
-        && let Some(arrow_equals_symbol_range) = maybe_equals_key_symbol_range
+        && let Some(equals_key_symbol_range) = maybe_equals_key_symbol_range
+        && let comments_before_equals_key_symbol = elm_syntax_comments_in_range(
+            comments,
+            lsp_types::Range {
+                start: previous_parameter_end,
+                end: equals_key_symbol_range.start,
+            },
+        )
+        && !comments_before_equals_key_symbol.is_empty()
     {
         linebreak_indented_into(so_far, indent);
         elm_syntax_comments_then_linebreak_indented_into(
             so_far,
             next_indent(indent),
-            elm_syntax_comments_in_range(
-                comments,
-                lsp_types::Range {
-                    start: previous_parameter_end,
-                    end: arrow_equals_symbol_range.start,
-                },
-            ),
+            comments_before_equals_key_symbol,
         );
     }
     so_far.push('=');
