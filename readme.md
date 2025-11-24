@@ -97,6 +97,7 @@ Then point your editor to the created `???/target/debug/elm-language-server-rs`.
 ### optimizations to try
 - switch most syntax tree `Box<str>`s to https://docs.rs/smallstr/0.3.1/smallstr/
   to for example speed up collecting references (e.g. for rename)
+- switch some syntax tree `Vec`s to https://docs.rs/smallvec/1.15.1/smallvec/ (since e.g. calls, lambdas, variant values etc are usually just a small number not worth going to heap for). The trade-off is that each syntax tree step is probably get bigger
 - reparse incrementally (somewhat easy to implement but somehow it's for me at least pretty much fast enough already without? More data points welcome)
 - switch to `position_encoding: Some(lsp_types::PositionEncodingKind::UTF8)`. This makes source edits and parsing easier and faster at the cost of compatibility with lsp clients below version 3.17.0. Is that acceptable? (leaning towards yes).
   Also validate if elm --report region column is UTF-8 or UTF-16 (seems to be UTF-16 strangely)
