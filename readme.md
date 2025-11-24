@@ -92,3 +92,7 @@ Rebuild the project with
 cargo build
 ```
 Then point your editor to the created `???/target/debug/elm-language-server-rs`.
+
+### log of failed optimizations
+- switching to mimalloc, no visible change
+- `declarations.shrink_to_fit();` saves around 0.6% of memory at the cost of a bit of speed
