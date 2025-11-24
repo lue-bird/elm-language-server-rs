@@ -7318,9 +7318,9 @@ fn derive_module_name_from_path(
         .map(|path_in_source_directory| {
             path_in_source_directory
                 // I'm certain there is a better way to convert path separators independent of OS
-                .trim_start_matches(std::path::MAIN_SEPARATOR)
+                .trim_start_matches(['/', '\\'])
                 .trim_end_matches(".elm")
-                .replace(std::path::MAIN_SEPARATOR, ".")
+                .replace(['/', '\\'], ".")
         })
 }
 
