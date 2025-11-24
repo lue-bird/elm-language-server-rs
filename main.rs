@@ -1152,8 +1152,7 @@ fn initialize_state_for_project_into(
     }
     exposed_module_names
 }
-/// A yet to be initialized, dummy [`ModuleState`]. Probably a sign that I should change the code
-/// to only keep the interesting info instead and only really use the [`State`] type when the modules are actually initialized
+/// A yet to be initialized dummy [`ModuleState`]
 const uninitialized_module_state: ModuleState = ModuleState {
     source: String::new(),
     syntax: ElmSyntaxModule {
@@ -17106,9 +17105,6 @@ fn parse_elm_comment_until_linebreak(state: &mut ParseState) -> bool {
         start: position_before,
         end: state.position,
     };
-    // because content.len() does not include the line break
-    // TODO don't include linebreak in parse_elm_comment_until_linebreak
-    let _: bool = parse_linebreak(state);
     state.comments.push(ElmSyntaxNode {
         range: full_range,
         value: ElmSyntaxComment {
