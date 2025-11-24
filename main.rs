@@ -6388,7 +6388,7 @@ fn respond_to_document_formatting(
         formatting_arguments.text_document.uri.to_file_path().ok()?;
     let to_format_project_module = state_get_project_module_by_path(state, &document_path)?;
     let formatted: String = if cfg!(feature = "use_experimental_formatter") {
-        elm_syntax_module_format(&to_format_project_module.module.syntax)
+        elm_syntax_module_format(to_format_project_module.module)
     } else {
         format_using_elm_format(
             to_format_project_module.project_path,
@@ -11528,8 +11528,9 @@ fn elm_syntax_expression_any_sub(
         }
     }
 }
-fn elm_syntax_module_format(elm_syntax_module: &ElmSyntaxModule) -> String {
-    let mut builder: String = String::new();
+fn elm_syntax_module_format(module_state: &ModuleState) -> String {
+    let elm_syntax_module: &ElmSyntaxModule = &module_state.syntax;
+    let mut builder: String = String::with_capacity(module_state.source.len());
     let mut previous_syntax_end: lsp_types::Position;
     match &elm_syntax_module.header {
         None => {
