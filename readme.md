@@ -94,6 +94,9 @@ Then point your editor to the created `???/target/debug/elm-language-server-rs`.
 - switching to mimalloc, ~>25% faster (really nice) at the cost of 25% more memory consumption.
   Might be worth for some people but I'm already worried about our memory footprint!
 - `declarations.shrink_to_fit();` saves around 0.6% of memory at the cost of a bit of speed
+- upgrading `lto` to `"thin"` to `"fat"` both improve runtime speed by ~13% compared to the default (and reduce binary size) but increase build time by about 30% (default to thin) and 15% (thin to fat).
+  As this prolongs installation and prevents people from quickly trying it, the default is kept.
+  If this language server get distributed as a binary or people end up using this language server a lot, this `"thin"` might become a reasonable trade-off.
 
 ### optimizations to try
 - switch most syntax tree `Box<str>`s to https://docs.rs/smallstr/0.3.1/smallstr/
