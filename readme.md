@@ -91,7 +91,8 @@ cargo build
 Then point your editor to the created `???/target/debug/elm-language-server-rs`.
 
 ### log of failed optimizations
-- switching to mimalloc, no visible change
+- switching to mimalloc, ~>25% faster (really nice) at the cost of 25% more memory consumption.
+  Might be worth for some people but I'm already worried about our memory footprint!
 - `declarations.shrink_to_fit();` saves around 0.6% of memory at the cost of a bit of speed
 
 ### optimizations to try
