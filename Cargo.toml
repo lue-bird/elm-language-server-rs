@@ -6,10 +6,6 @@ edition = "2024"
 name = "elm-language-server-rs"
 path = "main.rs"
 
-[features]
-# switch out elm-format for a fast rust formatter that is mostly but not fully compatible
-use_experimental_formatter = []
-
 [dependencies]
 lsp-server = "0.7.9"
 lsp-types = "0.95.1"

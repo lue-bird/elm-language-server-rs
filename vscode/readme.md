@@ -1,9 +1,9 @@
 vscode extension for [elm](https://elm-lang.org/) using [elm-language-server-rs](https://github.com/lue-bird/elm-language-server-rs). Having it installed is a strict requirement.
 
-## (not used, yet!) extension settings
-- `elm-language-server-rs.elmPath`: The path to your elm executable.
-- `elm-language-server-rs.elmFormatPath`: The path to your elm-format executable.
-- `elm-language-server-rs.elmTestPath`: The path to your elm-test executable.
+## settings
+- `elm-language-server-rs.elmPath: string`: compiler executable, default `"elm"`
+- `elm-language-server-rs.elmTestPath: string`: test runner executable, default `"elm-test"`
+- `elm-language-server-rs.elmFormatPath: "builtin" | string`: formatter executable, default `"elm-format"`. `"builtin"` is a fast rust formatter that is mostly but not fully compatible
 
 ## setup for developing
 ```bash

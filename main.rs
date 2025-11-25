@@ -6,6 +6,13 @@ struct State {
         /* path to directory containing elm.json */ std::path::PathBuf,
         ProjectState,
     >,
+    configured_elm_path: Option<String>,
+    configured_elm_test_path: Option<String>,
+    configured_elm_formatter: Option<ConfiguredElmFormatter>,
+}
+enum ConfiguredElmFormatter {
+    Builtin,
+    Custom { path: String },
 }
 
 struct ProjectState {
@@ -47,12 +54,79 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let initialize_arguments: lsp_types::InitializeParams =
         serde_json::from_value(initialize_arguments_json)?;
-    let state: State = initialize_state_for_workspace_directories_into(&initialize_arguments);
+    let state: State = initialize(&connection, &initialize_arguments)?;
     server_loop(&connection, state)?;
     // shut down gracefully
     drop(connection);
     io_thread.join()?;
     Ok(())
+}
+fn initialize(
+    connection: &lsp_server::Connection,
+    initialize_arguments: &lsp_types::InitializeParams,
+) -> Result<State, Box<dyn std::error::Error>> {
+    let mut state: State = initialize_state_for_workspace_directories_into(initialize_arguments);
+    if let Some(config_json) = &initialize_arguments.initialization_options {
+        update_state_with_configuration(&mut state, config_json);
+    } else {
+        connection
+            .sender
+            .send(lsp_server::Message::Request(configuration_request()?))?;
+    }
+    // only initializing diagnostics once the `elmPath` configuration is received would be better
+    publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(connection, &mut state);
+    connection.sender.send(lsp_server::Message::Notification(
+        lsp_server::Notification {
+            method: <lsp_types::request::RegisterCapability as lsp_types::request::Request>::METHOD
+                .to_string(),
+            params: serde_json::to_value(lsp_types::RegistrationParams {
+                registrations: initial_additional_capability_registrations(&state)?,
+            })?,
+        },
+    ))?;
+    Ok(state)
+}
+fn initial_additional_capability_registrations(
+    state: &State,
+) -> Result<Vec<lsp_types::Registration>, Box<dyn std::error::Error>> {
+    let file_watch_registration_options: lsp_types::DidChangeWatchedFilesRegistrationOptions =
+        lsp_types::DidChangeWatchedFilesRegistrationOptions {
+            watchers: state
+                .projects
+                .values()
+                .flat_map(|project| &project.source_directories)
+                .filter_map(|source_directory_path| {
+                    lsp_types::Url::from_directory_path(source_directory_path).ok()
+                })
+                .map(|source_directory_url| lsp_types::FileSystemWatcher {
+                    glob_pattern: lsp_types::GlobPattern::Relative(lsp_types::RelativePattern {
+                        base_uri: lsp_types::OneOf::Right(source_directory_url),
+                        pattern: "**/*.elm".to_string(),
+                    }),
+                    kind: Some(
+                        lsp_types::WatchKind::Create
+                            | lsp_types::WatchKind::Change
+                            | lsp_types::WatchKind::Delete,
+                    ),
+                })
+                .collect::<Vec<lsp_types::FileSystemWatcher>>(),
+        };
+    let file_watch_registration_options_json: serde_json::Value =
+        serde_json::to_value(file_watch_registration_options)?;
+    let file_watch_registration: lsp_types::Registration = lsp_types::Registration {
+        id: "file-watch".to_string(),
+        method: <lsp_types::notification::DidChangeWatchedFiles as lsp_types::notification::Notification>::METHOD.to_string(),
+        register_options: Some(file_watch_registration_options_json),
+    };
+    let workspace_configuration_change_registration: lsp_types::Registration = lsp_types::Registration {
+        id: "workspace-configuration".to_string(),
+        method: <lsp_types::notification::DidChangeConfiguration as lsp_types::notification::Notification>::METHOD.to_string(),
+        register_options: None,
+    };
+    Ok(vec![
+        file_watch_registration,
+        workspace_configuration_change_registration,
+    ])
 }
 fn server_capabilities() -> lsp_types::ServerCapabilities {
     lsp_types::ServerCapabilities {
@@ -138,8 +212,10 @@ fn server_loop(
                     eprintln!("notification {} failed: {err}", notification.method);
                 }
             }
-            lsp_server::Message::Response(resp) => {
-                eprintln!("client response: {resp:?}");
+            lsp_server::Message::Response(response) => {
+                if let Err(err) = handle_response(&mut state, &response.id, response.result) {
+                    eprintln!("failed to handle response {}: {err}", response.id);
+                }
             }
         }
     }
@@ -152,48 +228,6 @@ fn handle_notification(
     notification_arguments_json: serde_json::Value,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match notification_method {
-        <lsp_types::notification::Initialized as lsp_types::notification::Notification>::METHOD => {
-            publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(connection, state);
-            let file_watch_registration_options: lsp_types::DidChangeWatchedFilesRegistrationOptions =
-                lsp_types::DidChangeWatchedFilesRegistrationOptions {
-                    watchers: state
-                        .projects
-                        .values()
-                        .flat_map(|project| &project.source_directories)
-                        .filter_map(|source_directory_path| {
-                            lsp_types::Url::from_directory_path(source_directory_path).ok()
-                        })
-                        .map(|source_directory_url| lsp_types::FileSystemWatcher {
-                            glob_pattern: lsp_types::GlobPattern::Relative(
-                                lsp_types::RelativePattern {
-                                    base_uri: lsp_types::OneOf::Right(source_directory_url),
-                                    pattern: "**/*.elm".to_string(),
-                                },
-                            ),
-                            kind: Some(
-                                lsp_types::WatchKind::Create
-                                    | lsp_types::WatchKind::Change
-                                    | lsp_types::WatchKind::Delete,
-                            ),
-                        })
-                        .collect::<Vec<lsp_types::FileSystemWatcher>>(),
-                };
-            let file_watch_registration_options_json: serde_json::Value =
-                serde_json::to_value(file_watch_registration_options)?;
-            let file_watch_registration: lsp_types::Registration = lsp_types::Registration {
-                id: "file-watch".to_string(),
-                method: <lsp_types::notification::DidChangeWatchedFiles as lsp_types::notification::Notification>::METHOD.to_string(),
-                register_options: Some(file_watch_registration_options_json),
-            };
-            connection.sender.send(lsp_server::Message::Notification(
-                lsp_server::Notification {
-                    method: <lsp_types::request::RegisterCapability as lsp_types::request::Request>::METHOD.to_string(),
-                    params: serde_json::to_value(lsp_types::RegistrationParams {
-                        registrations: vec![file_watch_registration],
-                    })?,
-                },
-            ))?;
-        }
         <lsp_types::notification::DidOpenTextDocument as lsp_types::notification::Notification>::METHOD => {}
         <lsp_types::notification::DidCloseTextDocument as lsp_types::notification::Notification>::METHOD => {}
         <lsp_types::notification::DidChangeTextDocument as lsp_types::notification::Notification>::METHOD => {
@@ -213,6 +247,8 @@ fn handle_notification(
             {
                 publish_and_update_state_for_diagnostics_for_document(
                     connection,
+                    state.configured_elm_path.as_deref(),
+                    state.configured_elm_test_path.as_deref(),
                     saved_project_path,
                     saved_project_state,
                     std::iter::empty(),
@@ -272,6 +308,8 @@ fn handle_notification(
                 if project_was_updated {
                     publish_and_update_state_for_diagnostics_for_document(
                         connection,
+                        state.configured_elm_path.as_deref(),
+                        state.configured_elm_test_path.as_deref(),
                         project_path,
                         project_state,
                         removed_paths.into_iter(),
@@ -279,8 +317,49 @@ fn handle_notification(
                 }
             }
         }
+        <lsp_types::notification::DidChangeConfiguration as lsp_types::notification::Notification>::METHOD => {
+            connection.sender.send(lsp_server::Message::Request(
+                configuration_request()?
+            ))?;
+        }
         <lsp_types::notification::Exit as lsp_types::notification::Notification>::METHOD => {}
         _ => {}
+    }
+    Ok(())
+}
+fn configuration_request() -> Result<lsp_server::Request, Box<dyn std::error::Error>> {
+    let requested_configuration: <lsp_types::request::WorkspaceConfiguration as lsp_types::request::Request>::Params =
+        lsp_types::ConfigurationParams {
+            items: vec![
+                lsp_types::ConfigurationItem {
+                    scope_uri: None,
+                    section: Some("elm-language-server-rs".to_string())
+                }
+            ]
+        };
+    Ok(lsp_server::Request {
+        id: lsp_server::RequestId::from(ServerRequestId::WorkspaceConfiguration as i32),
+        method: <lsp_types::request::WorkspaceConfiguration as lsp_types::request::Request>::METHOD
+            .to_string(),
+        params: serde_json::to_value(requested_configuration)?,
+    })
+}
+enum ServerRequestId {
+    WorkspaceConfiguration,
+}
+fn handle_response(
+    state: &mut State,
+    response_id: &lsp_server::RequestId,
+    maybe_response_result: Option<serde_json::Value>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if response_id == &lsp_server::RequestId::from(ServerRequestId::WorkspaceConfiguration as i32)
+        && let Some(response_result) = maybe_response_result
+    {
+        let response_parsed: <lsp_types::request::WorkspaceConfiguration as lsp_types::request::Request>::Result =
+            serde_json::from_value(response_result)?;
+        if let Some(config_json) = response_parsed.first() {
+            update_state_with_configuration(state, config_json);
+        }
     }
     Ok(())
 }
@@ -434,7 +513,7 @@ fn publish_diagnostics(
 ) -> Result<(), Box<dyn std::error::Error>> {
     connection.sender.send(lsp_server::Message::Notification(
         lsp_server::Notification {
-            method: <lsp_types::notification::PublishDiagnostics as lsp_types::notification::Notification>::METHOD.to_owned(),
+            method: <lsp_types::notification::PublishDiagnostics as lsp_types::notification::Notification>::METHOD.to_string(),
             params: serde_json::to_value(diagnostics)?,
         },
     ))?;
@@ -497,7 +576,12 @@ fn publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(
                 ProjectKind::Dependency => false,
             })
     {
-        match compute_diagnostics(in_workspace_project_path, in_workspace_project_state) {
+        match compute_diagnostics(
+            state.configured_elm_path.as_deref(),
+            state.configured_elm_test_path.as_deref(),
+            in_workspace_project_path,
+            in_workspace_project_state,
+        ) {
             Err(error) => {
                 eprintln!("{error}");
             }
@@ -531,11 +615,18 @@ fn publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(
 
 fn publish_and_update_state_for_diagnostics_for_document(
     connection: &lsp_server::Connection,
+    configured_elm_path: Option<&str>,
+    configured_elm_test_path: Option<&str>,
     project_path: &std::path::Path,
     project: &mut ProjectState,
     removed_paths: impl Iterator<Item = lsp_types::Url>,
 ) {
-    match compute_diagnostics(project_path, project) {
+    match compute_diagnostics(
+        configured_elm_path,
+        configured_elm_test_path,
+        project_path,
+        project,
+    ) {
         Err(error) => {
             eprintln!("{error}");
         }
@@ -590,6 +681,8 @@ fn publish_and_update_state_for_diagnostics_for_document(
 }
 
 fn compute_diagnostics(
+    configured_elm_path: Option<&str>,
+    configured_elm_test_path: Option<&str>,
     project_path: &std::path::Path,
     project_state: &ProjectState,
 ) -> Result<Vec<ElmMakeFileCompileError>, String> {
@@ -603,8 +696,8 @@ fn compute_diagnostics(
         _ => "/dev/null",
     };
     let compiler_executable_name = match project_state.kind {
-        ProjectKind::Dependency | ProjectKind::InWorkspace => "elm",
-        ProjectKind::Test => "elm-test",
+        ProjectKind::Dependency | ProjectKind::InWorkspace => configured_elm_path.unwrap_or("elm"),
+        ProjectKind::Test => configured_elm_test_path.unwrap_or("elm-test"),
     };
     let elm_make_process: std::process::Child = std::process::Command::new(compiler_executable_name)
         .args(
@@ -623,7 +716,7 @@ fn compute_diagnostics(
         .stderr(std::process::Stdio::piped())
         .spawn().map_err(|error| {
             format!(
-                "I tried to run elm make at path {project_path:?} but it failed: {error}. Try installing elm via `npm install -g elm`."
+                "I tried to run {compiler_executable_name} make at path {project_path:?} but it failed: {error}. Try installing elm via `npm install -g elm`."
             )
         })?;
     let elm_make_output: std::process::Output = elm_make_process
@@ -813,12 +906,52 @@ fn parse_elm_make_message_segment<'a>(
         )),
     }
 }
-
+fn update_state_with_configuration(state: &mut State, config_json: &serde_json::Value) {
+    state.configured_elm_path = config_json
+        .get("elmPath")
+        .and_then(|path_json| path_json.as_str())
+        .and_then(|path| {
+            if path.is_empty() {
+                None
+            } else {
+                Some(path.to_string())
+            }
+        });
+    state.configured_elm_test_path = config_json
+        .get("elmTestPath")
+        .and_then(|path_json| path_json.as_str())
+        .and_then(|path| {
+            if path.is_empty() {
+                None
+            } else {
+                Some(path.to_string())
+            }
+        });
+    state.configured_elm_formatter = config_json
+        .get("elmFormatPath")
+        .and_then(|path_json| path_json.as_str())
+        .and_then(|path| {
+            if path.is_empty() {
+                None
+            } else {
+                Some(if path == "builtin" {
+                    ConfiguredElmFormatter::Builtin
+                } else {
+                    ConfiguredElmFormatter::Custom {
+                        path: path.to_string(),
+                    }
+                })
+            }
+        });
+}
 fn initialize_state_for_workspace_directories_into(
     initialize_arguments: &lsp_types::InitializeParams,
 ) -> State {
     let mut state: State = State {
         projects: std::collections::HashMap::new(),
+        configured_elm_path: None,
+        configured_elm_test_path: None,
+        configured_elm_formatter: None,
     };
     let workspace_directory_paths = initialize_arguments
         .workspace_folders
@@ -6391,13 +6524,22 @@ fn respond_to_document_formatting(
     let document_path: std::path::PathBuf =
         formatting_arguments.text_document.uri.to_file_path().ok()?;
     let to_format_project_module = state_get_project_module_by_path(state, &document_path)?;
-    let formatted: String = if cfg!(feature = "use_experimental_formatter") {
-        elm_syntax_module_format(to_format_project_module.module)
-    } else {
-        format_using_elm_format(
+    let formatted: String = match &state.configured_elm_formatter {
+        Some(ConfiguredElmFormatter::Builtin) => {
+            elm_syntax_module_format(to_format_project_module.module)
+        }
+        None => format_using_elm_format(
+            "elm-format",
             to_format_project_module.project_path,
             &to_format_project_module.module.source,
-        )?
+        )?,
+        Some(ConfiguredElmFormatter::Custom {
+            path: configured_elm_format_path,
+        }) => format_using_elm_format(
+            configured_elm_format_path,
+            to_format_project_module.project_path,
+            &to_format_project_module.module.source,
+        )?,
     };
     // diffing does not seem to be needed here. But maybe it's faster?
     Some(vec![lsp_types::TextEdit {
@@ -6414,8 +6556,13 @@ fn respond_to_document_formatting(
         new_text: formatted,
     }])
 }
-fn format_using_elm_format(project_path: &std::path::Path, source: &str) -> Option<String> {
-    let mut elm_format_cmd: std::process::Command = std::process::Command::new("elm-format");
+fn format_using_elm_format(
+    configured_elm_format_path: &str,
+    project_path: &std::path::Path,
+    source: &str,
+) -> Option<String> {
+    let mut elm_format_cmd: std::process::Command =
+        std::process::Command::new(configured_elm_format_path);
     elm_format_cmd
         .args(["--stdin", "--elm-version", "0.19", "--yes"])
         .current_dir(project_path)
@@ -6426,7 +6573,7 @@ fn format_using_elm_format(project_path: &std::path::Path, source: &str) -> Opti
         elm_format_cmd
         .spawn().map_err(|error| {
             eprintln!(
-                "running elm-format failed: {error}. Try installing elm-format via `npm install -g elm-format`."
+                "running {configured_elm_format_path} failed: {error}. Try installing elm-format via `npm install -g elm-format`."
             );
         }).ok()?;
     {
@@ -6434,13 +6581,13 @@ fn format_using_elm_format(project_path: &std::path::Path, source: &str) -> Opti
         // (otherwise both processes wait, quite the footgun in honestly)
         let mut stdin: std::process::ChildStdin =
             elm_format_process.stdin.take().or_else(|| {
-                eprintln!("couldn't open elm-format stdin");
+                eprintln!("couldn't open {configured_elm_format_path} stdin");
                 let _ = elm_format_process.wait();
                 None
             })?;
         std::io::Write::write_all(&mut stdin, source.as_bytes())
             .map_err(|error| {
-                eprintln!("couldn't write to elm-format stdin: {error}");
+                eprintln!("couldn't write to {configured_elm_format_path} stdin: {error}");
                 let _ = elm_format_process.wait();
             })
             .ok()?;
@@ -6448,7 +6595,7 @@ fn format_using_elm_format(project_path: &std::path::Path, source: &str) -> Opti
     let output: std::process::Output = elm_format_process
         .wait_with_output()
         .map_err(|error| {
-            eprintln!("couldn't read from elm-format stdout: {error}");
+            eprintln!("couldn't read from {configured_elm_format_path} stdout: {error}");
         })
         .ok()?; // ignore output in case of parse errors
     if !output.stderr.is_empty() {
@@ -6457,7 +6604,9 @@ fn format_using_elm_format(project_path: &std::path::Path, source: &str) -> Opti
     }
     String::from_utf8(output.stdout)
         .map_err(|error| {
-            eprintln!("couldn't read from elm-format stdout as UTF-8 string: {error}");
+            eprintln!(
+                "couldn't read from {configured_elm_format_path} stdout as UTF-8 string: {error}"
+            );
         })
         .ok()
 }

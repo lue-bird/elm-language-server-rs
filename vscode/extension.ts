@@ -35,7 +35,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ],
     synchronize: {
       fileEvents: vscode.workspace.createFileSystemWatcher("**/*.elm"),
+      // documentation says this is deprecated but how else
+      // would you get the client to ping on configuration changes?
+      configurationSection: "elm-language-server-rs"
     },
+    // technically not necessary but saves an unnecessary roundtrip
     initializationOptions: getSettings(vscode.workspace.getConfiguration().get<IClientSettings>("elm-language-server-rs")),
   };
   client = new LanguageClient(
@@ -56,7 +60,7 @@ function getSettings(config: IClientSettings | undefined): object {
     : {};
 }
 export interface IClientSettings {
-  elmFormatPath: string;
+  elmFormatPath: "builtin" | string;
   elmPath: string;
   elmTestPath: string;
 }

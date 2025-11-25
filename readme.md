@@ -7,6 +7,11 @@ Then point your editor to `elm-language-server-rs`, see also [specific setups](#
 
 Works with [`elm-format`](https://github.com/avh4/elm-format?tab=readme-ov-file#installation) and [`elm-test`](https://github.com/rtfeldman/node-test-runner?tab=readme-ov-file#installation), install them if you haven't already.
 
+You can also set their paths in the language server settings:
+- `elm-language-server-rs.elmPath: string`: compiler executable, default `"elm"`
+- `elm-language-server-rs.elmTestPath: string`: test runner executable, default `"elm-test"`
+- `elm-language-server-rs.elmFormatPath: "builtin" | string`: formatter executable, default `"elm-format"`. `"builtin"` is a fast rust formatter that is mostly but not fully compatible
+
 ## goals
 - fast (e.g. rename must be instant no matter the project size)
 - reliable (e.g. work well with code that only partially parses)

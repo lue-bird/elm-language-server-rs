@@ -65,19 +65,19 @@
           "scope": "window",
           "type": "string",
           "default": "",
-          "description": "The path to your elm compiler executable. Should be empty by default."
+          "description": "compiler executable, default elm. Should be empty by default."
         },
         "elm-language-server-rs.elmFormatPath": {
           "scope": "window",
           "type": "string",
           "default": "",
-          "description": "The path to your elm-format executable. Should be empty by default."
+          "description": "test runner executable, default elm-test. Should be empty by default."
         },
         "elm-language-server-rs.elmTestPath": {
           "scope": "window",
           "type": "string",
           "default": "",
-          "description": "The path to your elm-test executable. Should be empty by default."
+          "description": "formatter executable, default elm-format. \"builtin\" is a fast rust formatter that is mostly but not fully compatible. Should be empty by default."
         }
       }
     }
