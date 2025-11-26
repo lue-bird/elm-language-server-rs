@@ -36,9 +36,6 @@ You can also set their paths in the language server settings:
 - your idea 👀
 
 ## known limitations
-- when moving a module into an existing project, no syntax highlighting will be shown before you interact with the file, as semantic tokens are requested before the "did change watched files" notification is sent.
-  A band-aid fix would be pre-maturely assuming that requesting semantic tokens on an unknown file means that that file should be added to a project. This would however potentially lead to duplicate parsing etc.
-  There must surely be a better way, right?
 - It is possible that an elm module belongs to multiple projects when source directory paths overlap between projects. This throws a wrench in pretty much all existing code (likely internal document source desync and a more limited lsp feature range in one of the containing projects).
   This situation is, I assume, fixable by special-casing their storage and handling but it would require a _lot_ of work
 

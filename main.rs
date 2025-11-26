@@ -232,7 +232,7 @@ fn handle_notification(
         <lsp_types::notification::DidOpenTextDocument as lsp_types::notification::Notification>::METHOD => {
             let arguments: <lsp_types::notification::DidOpenTextDocument as lsp_types::notification::Notification>::Params =
                 serde_json::from_value(notification_arguments_json)?;
-            state.open_text_document_uris.insert(arguments.text_document.uri);
+            update_state_on_did_open_text_document(state, arguments);
         }
         <lsp_types::notification::DidCloseTextDocument as lsp_types::notification::Notification>::METHOD => {
             let arguments: <lsp_types::notification::DidCloseTextDocument as lsp_types::notification::Notification>::Params =
@@ -279,6 +279,35 @@ fn handle_notification(
     }
     Ok(())
 }
+fn update_state_on_did_open_text_document(
+    state: &mut State,
+    arguments: lsp_types::DidOpenTextDocumentParams,
+) {
+    // Why is the existing handling on DidChangeWatchedFiles not good enough?
+    // When moving a module into an existing project,
+    // no syntax highlighting would be shown before you interact with the file,
+    // as semantic tokens are requested before the DidChangeWatchedFiles notification is sent.
+    // Since DidOpenTextDocumentParams already sends the full file content anyway,
+    // handling it on document open is relatively cheap and straightforward
+    if let Ok(opened_path) = arguments.text_document.uri.to_file_path() {
+        'adding_module_if_necessary: for project_state in state.projects.values_mut() {
+            if opened_path.extension().is_some_and(|ext| ext == "elm")
+                && project_state
+                    .source_directories
+                    .iter()
+                    .any(|source_dir| opened_path.starts_with(source_dir))
+            {
+                project_state.modules.entry(opened_path).or_insert_with(|| {
+                    initialize_module_state_from_source(arguments.text_document.text)
+                });
+                break 'adding_module_if_necessary;
+            }
+        }
+    }
+    state
+        .open_text_document_uris
+        .insert(arguments.text_document.uri);
+}
 fn update_state_on_did_change_watched_files(
     connection: &lsp_server::Connection,
     state: &mut State,
@@ -303,11 +332,13 @@ fn update_state_on_did_change_watched_files(
             match file_change_event.uri.to_file_path() {
                 Err(()) => {}
                 Ok(changed_file_path) => {
-                    if changed_file_path.extension().is_none_or(|ext| ext != "elm")
-                        || !project_state
+                    if !(changed_file_path
+                        .extension()
+                        .is_some_and(|ext| ext == "elm")
+                        && project_state
                             .source_directories
                             .iter()
-                            .any(|dir| changed_file_path.starts_with(dir))
+                            .any(|source_dir| changed_file_path.starts_with(source_dir)))
                     {
                         continue 'updating_project;
                     }
