@@ -106,3 +106,6 @@ Then point your editor to the created `???/target/debug/elm-language-server-rs`.
 - reparse incrementally (somewhat easy to implement but somehow it's for me at least pretty much fast enough already without? More data points welcome)
 - switch to `position_encoding: Some(lsp_types::PositionEncodingKind::UTF8)`. This makes source edits and parsing easier and faster at the cost of compatibility with lsp clients below version 3.17.0. Is that acceptable? (leaning towards yes).
   Also validate if elm --report region column is UTF-8 or UTF-16 (seems to be UTF-16 strangely)
+- if memory consumptions turns out to be a problem, stop storing the source in memory
+  and request full file content on each change (potentially only for dependencies).
+  This adds complexity and is slower so only if necessary.
