@@ -6,6 +6,7 @@ struct State {
         /* path to directory containing elm.json */ std::path::PathBuf,
         ProjectState,
     >,
+    open_text_document_uris: std::collections::HashSet<lsp_types::Url>,
     configured_elm_path: Option<String>,
     configured_elm_test_path: Option<String>,
     configured_elm_formatter: Option<ConfiguredElmFormatter>,
@@ -228,8 +229,16 @@ fn handle_notification(
     notification_arguments_json: serde_json::Value,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match notification_method {
-        <lsp_types::notification::DidOpenTextDocument as lsp_types::notification::Notification>::METHOD => {}
-        <lsp_types::notification::DidCloseTextDocument as lsp_types::notification::Notification>::METHOD => {}
+        <lsp_types::notification::DidOpenTextDocument as lsp_types::notification::Notification>::METHOD => {
+            let arguments: <lsp_types::notification::DidOpenTextDocument as lsp_types::notification::Notification>::Params =
+                serde_json::from_value(notification_arguments_json)?;
+            state.open_text_document_uris.insert(arguments.text_document.uri);
+        }
+        <lsp_types::notification::DidCloseTextDocument as lsp_types::notification::Notification>::METHOD => {
+            let arguments: <lsp_types::notification::DidCloseTextDocument as lsp_types::notification::Notification>::Params =
+                serde_json::from_value(notification_arguments_json)?;
+            state.open_text_document_uris.remove(&arguments.text_document.uri);
+        }
         <lsp_types::notification::DidChangeTextDocument as lsp_types::notification::Notification>::METHOD => {
             let arguments: <lsp_types::notification::DidChangeTextDocument as lsp_types::notification::Notification>::Params =
                 serde_json::from_value(notification_arguments_json)?;
@@ -256,66 +265,9 @@ fn handle_notification(
             }
         }
         <lsp_types::notification::DidChangeWatchedFiles as lsp_types::notification::Notification>::METHOD => {
-            let arguments:  <lsp_types::notification::DidChangeWatchedFiles as lsp_types::notification::Notification>::Params =
+            let arguments: <lsp_types::notification::DidChangeWatchedFiles as lsp_types::notification::Notification>::Params =
                 serde_json::from_value(notification_arguments_json)?;
-            for (project_path, project_state) in state.projects.iter_mut() {
-                let mut project_was_updated: bool = false;
-                let mut removed_paths: Vec<lsp_types::Url> = Vec::new();
-                'updating_project: for file_change_event in &arguments.changes {
-                    match file_change_event.uri.to_file_path() {
-                        Err(()) => {}
-                        Ok(changed_file_path) => {
-                            if changed_file_path.extension().is_none_or(|ext| ext != "elm")
-                                || !project_state
-                                    .source_directories
-                                    .iter()
-                                    .any(|dir| changed_file_path.starts_with(dir))
-                            {
-                                continue 'updating_project;
-                            }
-                            match file_change_event.typ {
-                                lsp_types::FileChangeType::DELETED => {
-                                    if project_state.modules.remove(&changed_file_path).is_some() {
-                                        project_was_updated = true;
-                                        removed_paths.push(file_change_event.uri.clone());
-                                    }
-                                }
-                                lsp_types::FileChangeType::CREATED
-                                | lsp_types::FileChangeType::CHANGED => {
-                                    match std::fs::read_to_string(&changed_file_path) {
-                                        Err(_) => {}
-                                        Ok(changed_file_source) => {
-                                            project_was_updated = true;
-                                            project_state.modules.insert(
-                                                changed_file_path,
-                                                initialize_module_state_from_source(
-                                                    changed_file_source,
-                                                ),
-                                            );
-                                        }
-                                    }
-                                }
-                                unknown_file_change_type => {
-                                    eprintln!(
-                                        "unknown file change type sent by LSP client: {:?}",
-                                        unknown_file_change_type
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-                if project_was_updated {
-                    publish_and_update_state_for_diagnostics_for_document(
-                        connection,
-                        state.configured_elm_path.as_deref(),
-                        state.configured_elm_test_path.as_deref(),
-                        project_path,
-                        project_state,
-                        removed_paths.into_iter(),
-                    );
-                }
-            }
+            update_state_on_did_change_watched_files(connection, state, arguments);
         }
         <lsp_types::notification::DidChangeConfiguration as lsp_types::notification::Notification>::METHOD => {
             connection.sender.send(lsp_server::Message::Request(
@@ -326,6 +278,79 @@ fn handle_notification(
         _ => {}
     }
     Ok(())
+}
+fn update_state_on_did_change_watched_files(
+    connection: &lsp_server::Connection,
+    state: &mut State,
+    mut arguments: lsp_types::DidChangeWatchedFilesParams,
+) {
+    arguments.changes.retain(|file_event| {
+        // exclude changes to opened documents are already handled by DidChangeTextDocument.
+        // Then why listen to DidChangeWatchedFiles at all?
+        // E.g. go to definition needs an up to date module syntax tree
+        // in a potentially un-opened file that could have been changed externally,
+        // e.g. by calling elm-format, elm-codegen, ...
+        !(file_event.typ == lsp_types::FileChangeType::CHANGED
+            && state.open_text_document_uris.contains(&file_event.uri))
+    });
+    if arguments.changes.is_empty() {
+        return;
+    }
+    for (project_path, project_state) in state.projects.iter_mut() {
+        let mut project_was_updated: bool = false;
+        let mut removed_paths: Vec<lsp_types::Url> = Vec::new();
+        'updating_project: for file_change_event in &arguments.changes {
+            match file_change_event.uri.to_file_path() {
+                Err(()) => {}
+                Ok(changed_file_path) => {
+                    if changed_file_path.extension().is_none_or(|ext| ext != "elm")
+                        || !project_state
+                            .source_directories
+                            .iter()
+                            .any(|dir| changed_file_path.starts_with(dir))
+                    {
+                        continue 'updating_project;
+                    }
+                    match file_change_event.typ {
+                        lsp_types::FileChangeType::DELETED => {
+                            if project_state.modules.remove(&changed_file_path).is_some() {
+                                project_was_updated = true;
+                                removed_paths.push(file_change_event.uri.clone());
+                            }
+                        }
+                        lsp_types::FileChangeType::CREATED | lsp_types::FileChangeType::CHANGED => {
+                            match std::fs::read_to_string(&changed_file_path) {
+                                Err(_) => {}
+                                Ok(changed_file_source) => {
+                                    project_was_updated = true;
+                                    project_state.modules.insert(
+                                        changed_file_path,
+                                        initialize_module_state_from_source(changed_file_source),
+                                    );
+                                }
+                            }
+                        }
+                        unknown_file_change_type => {
+                            eprintln!(
+                                "unknown file change type sent by LSP client: {:?}",
+                                unknown_file_change_type
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        if project_was_updated {
+            publish_and_update_state_for_diagnostics_for_document(
+                connection,
+                state.configured_elm_path.as_deref(),
+                state.configured_elm_test_path.as_deref(),
+                project_path,
+                project_state,
+                removed_paths.into_iter(),
+            );
+        }
+    }
 }
 fn configuration_request() -> Result<lsp_server::Request, Box<dyn std::error::Error>> {
     let requested_configuration: <lsp_types::request::WorkspaceConfiguration as lsp_types::request::Request>::Params =
@@ -949,6 +974,7 @@ fn initialize_state_for_workspace_directories_into(
 ) -> State {
     let mut state: State = State {
         projects: std::collections::HashMap::new(),
+        open_text_document_uris: std::collections::HashSet::new(),
         configured_elm_path: None,
         configured_elm_test_path: None,
         configured_elm_formatter: None,
