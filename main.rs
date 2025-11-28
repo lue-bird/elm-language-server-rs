@@ -11438,8 +11438,11 @@ fn elm_syntax_expression_line_span(
             ElmSyntaxExpression::LetIn { .. } => true,
             ElmSyntaxExpression::String {
                 content,
-                quoting_style: _,
-            } => content.contains("\n"),
+                quoting_style,
+            } => {
+                *quoting_style == ElmSyntaxStringQuotingStyle::TripleQuoted
+                    && content.contains('\n')
+            }
             ElmSyntaxExpression::Unit
             | ElmSyntaxExpression::Integer { .. }
             | ElmSyntaxExpression::Float(_)
