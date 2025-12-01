@@ -101,11 +101,13 @@ Then point your editor to the created `???/target/debug/elm-language-server-rs`.
   If this language server get distributed as a binary or people end up using this language server a lot, this `"thin"` might become a reasonable trade-off.
 
 ### optimizations to try
-- switch most syntax tree `Box<str>`s to https://docs.rs/smallstr/0.3.1/smallstr/
-  to for example speed up collecting references (e.g. for rename)
 - reparse incrementally (somewhat easy to implement but somehow it's for me at least pretty much fast enough already without? More data points welcome)
 - switch to `position_encoding: Some(lsp_types::PositionEncodingKind::UTF8)`. This makes source edits and parsing easier and faster at the cost of compatibility with lsp clients below version 3.17.0. Is that acceptable? (leaning towards yes).
   Also validate if elm --report region column is UTF-8 or UTF-16 (seems to be UTF-16 strangely)
 - if memory consumptions turns out to be a problem, stop storing the source in memory
   and request full file content on each change (potentially only for dependencies).
   This adds complexity and is slower so only if necessary.
+- in syntax tree, use separate range type for single-line tokens like keywords, symbols, names etc to save on memory consumption
+- switch most syntax tree `Box<str>`s to https://docs.rs/smallstr/0.3.1/smallstr/
+  to for example speed up collecting references (e.g. for rename)
+- in syntax tree, use `Box<[]>` instead of `Vec` for common nodes like call arguments
