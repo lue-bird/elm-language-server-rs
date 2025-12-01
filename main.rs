@@ -7,19 +7,19 @@ struct State {
         ProjectState,
     >,
     open_text_document_uris: std::collections::HashSet<lsp_types::Url>,
-    configured_elm_path: Option<String>,
-    configured_elm_test_path: Option<String>,
+    configured_elm_path: Option<Box<str>>,
+    configured_elm_test_path: Option<Box<str>>,
     configured_elm_formatter: Option<ConfiguredElmFormatter>,
 }
 enum ConfiguredElmFormatter {
     Builtin,
-    Custom { path: String },
+    Custom { path: Box<str> },
 }
 
 struct ProjectState {
     source_directories: Vec<std::path::PathBuf>,
     modules: std::collections::HashMap<std::path::PathBuf, ModuleState>,
-    dependency_exposed_module_names: std::collections::HashMap<String, ProjectModuleOrigin>,
+    dependency_exposed_module_names: std::collections::HashMap<Box<str>, ProjectModuleOrigin>,
     elm_make_errors: Vec<ElmMakeFileCompileError>,
     kind: ProjectKind,
 }
@@ -647,7 +647,8 @@ fn publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(
                         .iter()
                         .filter_map(|elm_make_file_error| {
                             let url: lsp_types::Url =
-                                lsp_types::Url::from_file_path(&elm_make_file_error.path).ok()?;
+                                lsp_types::Url::from_file_path(elm_make_file_error.path.as_ref())
+                                    .ok()?;
                             let diagnostics: Vec<lsp_types::Diagnostic> = elm_make_file_error
                                 .problems
                                 .iter()
@@ -693,7 +694,7 @@ fn publish_and_update_state_for_diagnostics_for_document(
                 // O(modules*errors), might be problematic in large projects
                 let maybe_new = elm_make_errors
                     .iter()
-                    .find(|&file_error| &file_error.path == elm_make_file_error);
+                    .find(|&file_error| file_error.path.as_ref() == elm_make_file_error);
                 let maybe_updated_diagnostics = match maybe_new {
                     Some(new) => {
                         let diagnostics: Vec<lsp_types::Diagnostic> = new
@@ -707,7 +708,7 @@ fn publish_and_update_state_for_diagnostics_for_document(
                         let was_error: bool = project
                             .elm_make_errors
                             .iter()
-                            .any(|file_error| &file_error.path == elm_make_file_error);
+                            .any(|file_error| file_error.path.as_ref() == elm_make_file_error);
                         if was_error { Some(vec![]) } else { None }
                     }
                 };
@@ -793,12 +794,12 @@ fn compute_diagnostics(
 }
 #[derive(Debug)]
 struct ElmMakeFileCompileError {
-    path: String,
+    path: Box<str>,
     problems: Vec<ElmMakeFileInternalCompileProblem>,
 }
 #[derive(Debug)]
 struct ElmMakeFileInternalCompileProblem {
-    title: String,
+    title: Box<str>,
     range: lsp_types::Range,
     message_markdown: String,
 }
@@ -871,7 +872,7 @@ fn parse_elm_make_file_compile_error(
         .map(parse_elm_make_file_internal_compile_problem)
         .collect::<Result<Vec<_>, _>>()?;
     Ok(ElmMakeFileCompileError {
-        path: path.to_string(),
+        path: Box::from(path),
         problems: problems,
     })
 }
@@ -894,7 +895,7 @@ fn parse_elm_make_file_internal_compile_problem(
         .map(parse_elm_make_message_segment)
         .collect::<Result<Vec<ElmMakeMessageSegment>, _>>()?;
     Ok(ElmMakeFileInternalCompileProblem {
-        title: title.to_string(),
+        title: Box::from(title),
         range: range,
         message_markdown: elm_make_message_segments_to_markdown(message_segments),
     })
@@ -970,7 +971,7 @@ fn update_state_with_configuration(state: &mut State, config_json: &serde_json::
             if path.is_empty() {
                 None
             } else {
-                Some(path.to_string())
+                Some(Box::from(path))
             }
         });
     state.configured_elm_test_path = config_json
@@ -980,7 +981,7 @@ fn update_state_with_configuration(state: &mut State, config_json: &serde_json::
             if path.is_empty() {
                 None
             } else {
-                Some(path.to_string())
+                Some(Box::from(path))
             }
         });
     state.configured_elm_formatter = config_json
@@ -994,7 +995,7 @@ fn update_state_with_configuration(state: &mut State, config_json: &serde_json::
                     ConfiguredElmFormatter::Builtin
                 } else {
                     ConfiguredElmFormatter::Custom {
-                        path: path.to_string(),
+                        path: Box::from(path),
                     }
                 })
             }
@@ -1100,15 +1101,15 @@ fn initialize_state_for_projects_into(
     projects_state: &mut std::collections::HashMap<std::path::PathBuf, ProjectState>,
     all_dependency_exposed_module_names: &mut std::collections::HashMap<
         std::path::PathBuf,
-        std::collections::HashMap<String, ProjectModuleOrigin>,
+        std::collections::HashMap<Box<str>, ProjectModuleOrigin>,
     >,
     skipped_dependencies: &mut std::collections::HashSet<std::path::PathBuf>,
     elm_home_path: &std::path::PathBuf,
     project_kind: ProjectKind,
     project_paths: impl Iterator<Item = std::path::PathBuf>,
-) -> std::collections::HashMap<String, ProjectModuleOrigin> {
+) -> std::collections::HashMap<Box<str>, ProjectModuleOrigin> {
     let mut dependency_exposed_module_names: std::collections::HashMap<
-        String,
+        Box<str>,
         ProjectModuleOrigin,
     > = std::collections::HashMap::new();
     for project_path in project_paths {
@@ -1127,13 +1128,13 @@ fn initialize_state_for_project_into(
     projects_state: &mut std::collections::HashMap<std::path::PathBuf, ProjectState>,
     all_dependency_exposed_module_names: &mut std::collections::HashMap<
         std::path::PathBuf,
-        std::collections::HashMap<String, ProjectModuleOrigin>,
+        std::collections::HashMap<Box<str>, ProjectModuleOrigin>,
     >,
     skipped_dependencies: &mut std::collections::HashSet<std::path::PathBuf>,
     elm_home_path: &std::path::PathBuf,
     project_kind: ProjectKind,
     project_path: std::path::PathBuf,
-) -> std::collections::HashMap<String, ProjectModuleOrigin> {
+) -> std::collections::HashMap<Box<str>, ProjectModuleOrigin> {
     if let Some(project_exposed_module_names) =
         all_dependency_exposed_module_names.get(&project_path)
     {
@@ -1218,7 +1219,7 @@ fn initialize_state_for_project_into(
             .into_iter()
             .map(|module_path| (module_path, uninitialized_module_state))
             .collect::<std::collections::HashMap<_, _>>();
-    let mut exposed_module_names: std::collections::HashMap<String, ProjectModuleOrigin> =
+    let mut exposed_module_names: std::collections::HashMap<Box<str>, ProjectModuleOrigin> =
         std::collections::HashMap::new();
     if let Some(ElmJson::Package {
         exposed_modules,
@@ -1236,7 +1237,7 @@ fn initialize_state_for_project_into(
                 });
             if let Some(module_origin_path) = maybe_module_origin_path {
                 exposed_module_names.insert(
-                    exposed_module_name.to_string(),
+                    Box::from(exposed_module_name),
                     ProjectModuleOrigin {
                         project_path: project_path.clone(),
                         module_path: module_origin_path.clone(),
@@ -1246,7 +1247,7 @@ fn initialize_state_for_project_into(
         }
     }
     let direct_dependency_exposed_module_names: std::collections::HashMap<
-        String,
+        Box<str>,
         ProjectModuleOrigin,
     > = initialize_state_for_projects_into(
         projects_state,
@@ -1284,7 +1285,7 @@ fn initialize_state_for_project_into(
                     ),
                 };
             let mut test_direct_dependency_exposed_module_names: std::collections::HashMap<
-                String,
+                Box<str>,
                 ProjectModuleOrigin,
             > = initialize_state_for_projects_into(
                 projects_state,
@@ -1301,7 +1302,7 @@ fn initialize_state_for_project_into(
                     let module_header = module_state.syntax.header.as_ref()?;
                     let module_name_node = module_header.module_name.as_ref()?;
                     Some((
-                        module_name_node.value.to_string(),
+                        module_name_node.value.clone(),
                         ProjectModuleOrigin {
                             project_path: project_path.clone(),
                             module_path: module_path.clone(),
