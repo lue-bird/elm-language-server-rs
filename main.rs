@@ -1038,7 +1038,7 @@ accordingly so that tools like the elm compiler and language server can find the
     let mut skipped_dependencies: std::collections::HashSet<std::path::PathBuf> =
         std::collections::HashSet::new();
     let _modules_exposed_from_workspace_packages = initialize_state_for_projects_into(
-        &mut state,
+        &mut state.projects,
         &mut std::collections::HashMap::new(),
         &mut skipped_dependencies,
         &elm_home_path,
@@ -1097,7 +1097,7 @@ accordingly so that tools like the elm compiler and language server can find the
 
 /// returns exposed module names and their origins
 fn initialize_state_for_projects_into(
-    state: &mut State,
+    projects_state: &mut std::collections::HashMap<std::path::PathBuf, ProjectState>,
     all_dependency_exposed_module_names: &mut std::collections::HashMap<
         std::path::PathBuf,
         std::collections::HashMap<String, ProjectModuleOrigin>,
@@ -1113,7 +1113,7 @@ fn initialize_state_for_projects_into(
     > = std::collections::HashMap::new();
     for project_path in project_paths {
         dependency_exposed_module_names.extend(initialize_state_for_project_into(
-            state,
+            projects_state,
             all_dependency_exposed_module_names,
             skipped_dependencies,
             elm_home_path,
@@ -1124,7 +1124,7 @@ fn initialize_state_for_projects_into(
     dependency_exposed_module_names
 }
 fn initialize_state_for_project_into(
-    state: &mut State,
+    projects_state: &mut std::collections::HashMap<std::path::PathBuf, ProjectState>,
     all_dependency_exposed_module_names: &mut std::collections::HashMap<
         std::path::PathBuf,
         std::collections::HashMap<String, ProjectModuleOrigin>,
@@ -1249,7 +1249,7 @@ fn initialize_state_for_project_into(
         String,
         ProjectModuleOrigin,
     > = initialize_state_for_projects_into(
-        state,
+        projects_state,
         all_dependency_exposed_module_names,
         skipped_dependencies,
         elm_home_path,
@@ -1287,7 +1287,7 @@ fn initialize_state_for_project_into(
                 String,
                 ProjectModuleOrigin,
             > = initialize_state_for_projects_into(
-                state,
+                projects_state,
                 all_dependency_exposed_module_names,
                 skipped_dependencies,
                 elm_home_path,
@@ -1316,7 +1316,7 @@ fn initialize_state_for_project_into(
                 .into_iter()
                 .map(|module_path| (module_path, uninitialized_module_state))
                 .collect::<std::collections::HashMap<_, _>>();
-            state.projects.insert(
+            projects_state.insert(
                 tests_source_directory_path.clone(),
                 ProjectState {
                     kind: ProjectKind::Test,
@@ -1328,7 +1328,7 @@ fn initialize_state_for_project_into(
             );
         }
     }
-    state.projects.insert(
+    projects_state.insert(
         project_path.clone(),
         ProjectState {
             kind: project_kind,
