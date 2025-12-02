@@ -9014,7 +9014,7 @@ fn elm_syntax_type_not_parenthesized_into<'a>(
                         indent,
                         assign_qualification,
                         comments,
-                        input_unparenthesized.range,
+                        input.range,
                         input_unparenthesized,
                     );
                 }
@@ -9419,24 +9419,30 @@ fn elm_syntax_type_parenthesized_into<'a>(
     full_range: lsp_types::Range,
     innermost: ElmSyntaxNode<&'a ElmSyntaxType>,
 ) {
-    let comments_before_innermost = elm_syntax_comments_in_range(
-        comments,
-        lsp_types::Range {
-            start: full_range.start,
-            end: innermost.range.start,
-        },
-    );
-    let comments_after_innermost = elm_syntax_comments_in_range(
-        comments,
-        lsp_types::Range {
-            start: innermost.range.end,
-            end: full_range.end,
-        },
-    );
     so_far.push('(');
-    elm_syntax_comments_then_linebreak_indented_into(so_far, indent + 1, comments_before_innermost);
-    elm_syntax_comments_then_linebreak_indented_into(so_far, indent + 1, comments_after_innermost);
-    let so_far_length_before_innermost: usize = so_far.len();
+    let start_so_far_length: usize = so_far.len();
+    elm_syntax_comments_then_linebreak_indented_into(
+        so_far,
+        indent + 1,
+        elm_syntax_comments_in_range(
+            comments,
+            lsp_types::Range {
+                start: full_range.start,
+                end: innermost.range.start,
+            },
+        ),
+    );
+    elm_syntax_comments_then_linebreak_indented_into(
+        so_far,
+        indent + 1,
+        elm_syntax_comments_in_range(
+            comments,
+            lsp_types::Range {
+                start: innermost.range.end,
+                end: full_range.end,
+            },
+        ),
+    );
     elm_syntax_type_not_parenthesized_into(
         so_far,
         indent + 1,
@@ -9444,7 +9450,7 @@ fn elm_syntax_type_parenthesized_into<'a>(
         comments,
         innermost,
     );
-    if so_far[so_far_length_before_innermost..].contains('\n') {
+    if so_far[start_so_far_length..].contains('\n') {
         linebreak_indented_into(so_far, indent);
     }
     so_far.push(')');
@@ -11562,26 +11568,32 @@ fn elm_syntax_expression_parenthesized_into(
     full_range: lsp_types::Range,
     innermost: ElmSyntaxNode<&ElmSyntaxExpression>,
 ) {
-    let comments_before_innermost = elm_syntax_comments_in_range(
-        comments,
-        lsp_types::Range {
-            start: full_range.start,
-            end: innermost.range.start,
-        },
-    );
-    let comments_after_innermost = elm_syntax_comments_in_range(
-        comments,
-        lsp_types::Range {
-            start: innermost.range.end,
-            end: full_range.end,
-        },
-    );
     so_far.push('(');
-    elm_syntax_comments_then_linebreak_indented_into(so_far, indent + 1, comments_before_innermost);
-    elm_syntax_comments_then_linebreak_indented_into(so_far, indent + 1, comments_after_innermost);
-    let so_far_length_before_innermost: usize = so_far.len();
+    let start_so_far_length: usize = so_far.len();
+    elm_syntax_comments_then_linebreak_indented_into(
+        so_far,
+        indent + 1,
+        elm_syntax_comments_in_range(
+            comments,
+            lsp_types::Range {
+                start: full_range.start,
+                end: innermost.range.start,
+            },
+        ),
+    );
+    elm_syntax_comments_then_linebreak_indented_into(
+        so_far,
+        indent + 1,
+        elm_syntax_comments_in_range(
+            comments,
+            lsp_types::Range {
+                start: innermost.range.end,
+                end: full_range.end,
+            },
+        ),
+    );
     elm_syntax_expression_not_parenthesized_into(so_far, indent + 1, comments, innermost);
-    if so_far[so_far_length_before_innermost..].contains('\n') {
+    if so_far[start_so_far_length..].contains('\n') {
         linebreak_indented_into(so_far, indent);
     }
     so_far.push(')');
