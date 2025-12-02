@@ -10820,7 +10820,7 @@ fn elm_syntax_expression_not_parenthesized_into(
                     so_far,
                     indent,
                     comments,
-                    in_parens.range,
+                    expression_node.range,
                     innermost,
                 );
             }
