@@ -25,7 +25,6 @@ You can also set their paths in the language server settings:
 - `elm.json` help
 
 ## not sure (Please give me feedback on this)
-- configuring a custom elm compiler, formatter and test runner path. Is there an established way to set it, preferably something like an environment variable outside of LSP configuration? (If there is, I will support it)
 - add support for `elm-review` (depends on how easy it is, which I assume it isn't)
 - show all module exposes when hovering `(..)` (only if I have time and there is interest)
 - add code actions like "expose (including variants)", "inline", "inline all uses" (leaning towards no as it is fairly complicated, though it is very useful for sure)
