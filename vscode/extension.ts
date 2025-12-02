@@ -32,9 +32,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         scheme: "file",
         language: "elm",
       },
+      {
+        scheme: "file",
+        language: "json",
+      },
     ],
     synchronize: {
-      fileEvents: vscode.workspace.createFileSystemWatcher("**/*.elm"),
+      fileEvents: vscode.workspace.createFileSystemWatcher("**/{elm.json,*.elm}"),
       // documentation says this is deprecated but how else
       // would you get the client to ping on configuration changes?
       configurationSection: "elm-language-server-rs"

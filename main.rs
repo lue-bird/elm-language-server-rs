@@ -6,7 +6,7 @@ struct State {
         /* path to directory containing elm.json */ std::path::PathBuf,
         ProjectState,
     >,
-    open_text_document_uris: std::collections::HashSet<lsp_types::Url>,
+    open_elm_text_document_uris: std::collections::HashSet<lsp_types::Url>,
     configured_elm_path: Option<Box<str>>,
     configured_elm_test_path: Option<Box<str>>,
     configured_elm_formatter: Option<ConfiguredElmFormatter>,
@@ -66,7 +66,13 @@ fn initialize(
     connection: &lsp_server::Connection,
     initialize_arguments: &lsp_types::InitializeParams,
 ) -> Result<State, Box<dyn std::error::Error>> {
-    let mut state: State = initialize_state_for_workspace_directories_into(initialize_arguments);
+    let mut state: State = State {
+        projects: initialize_projects_state_for_workspace_directories_into(initialize_arguments),
+        open_elm_text_document_uris: std::collections::HashSet::new(),
+        configured_elm_path: None,
+        configured_elm_test_path: None,
+        configured_elm_formatter: None,
+    };
     if let Some(config_json) = &initialize_arguments.initialization_options {
         update_state_with_configuration(&mut state, config_json);
     } else {
@@ -102,7 +108,7 @@ fn initial_additional_capability_registrations(
                 .map(|source_directory_url| lsp_types::FileSystemWatcher {
                     glob_pattern: lsp_types::GlobPattern::Relative(lsp_types::RelativePattern {
                         base_uri: lsp_types::OneOf::Right(source_directory_url),
-                        pattern: "**/*.elm".to_string(),
+                        pattern: "**/{elm.json,*.elm}".to_string(),
                     }),
                     kind: Some(
                         lsp_types::WatchKind::Create
@@ -237,7 +243,7 @@ fn handle_notification(
         <lsp_types::notification::DidCloseTextDocument as lsp_types::notification::Notification>::METHOD => {
             let arguments: <lsp_types::notification::DidCloseTextDocument as lsp_types::notification::Notification>::Params =
                 serde_json::from_value(notification_arguments_json)?;
-            state.open_text_document_uris.remove(&arguments.text_document.uri);
+            state.open_elm_text_document_uris.remove(&arguments.text_document.uri);
         }
         <lsp_types::notification::DidChangeTextDocument as lsp_types::notification::Notification>::METHOD => {
             let arguments: <lsp_types::notification::DidChangeTextDocument as lsp_types::notification::Notification>::Params =
@@ -289,13 +295,14 @@ fn update_state_on_did_open_text_document(
     // as semantic tokens are requested before the DidChangeWatchedFiles notification is sent.
     // Since DidOpenTextDocumentParams already sends the full file content anyway,
     // handling it on document open is relatively cheap and straightforward
-    if let Ok(opened_path) = arguments.text_document.uri.to_file_path() {
+    if let Ok(opened_path) = arguments.text_document.uri.to_file_path()
+        && opened_path.extension().is_some_and(|ext| ext == "elm")
+    {
         'adding_module_if_necessary: for project_state in state.projects.values_mut() {
-            if opened_path.extension().is_some_and(|ext| ext == "elm")
-                && project_state
-                    .source_directories
-                    .iter()
-                    .any(|source_dir| opened_path.starts_with(source_dir))
+            if project_state
+                .source_directories
+                .iter()
+                .any(|source_dir| opened_path.starts_with(source_dir))
             {
                 project_state.modules.entry(opened_path).or_insert_with(|| {
                     initialize_module_state_from_source(arguments.text_document.text)
@@ -303,10 +310,10 @@ fn update_state_on_did_open_text_document(
                 break 'adding_module_if_necessary;
             }
         }
+        state
+            .open_elm_text_document_uris
+            .insert(arguments.text_document.uri);
     }
-    state
-        .open_text_document_uris
-        .insert(arguments.text_document.uri);
 }
 fn update_state_on_did_change_watched_files(
     connection: &lsp_server::Connection,
@@ -320,53 +327,62 @@ fn update_state_on_did_change_watched_files(
         // in a potentially un-opened file that could have been changed externally,
         // e.g. by calling elm-format, elm-codegen, ...
         !(file_event.typ == lsp_types::FileChangeType::CHANGED
-            && state.open_text_document_uris.contains(&file_event.uri))
+            && state.open_elm_text_document_uris.contains(&file_event.uri))
     });
     if arguments.changes.is_empty() {
         return;
     }
+    let mut edited_elm_json_project_paths: std::collections::HashSet<std::path::PathBuf> =
+        std::collections::HashSet::new();
     for (project_path, project_state) in state.projects.iter_mut() {
         let mut project_was_updated: bool = false;
         let mut removed_paths: Vec<lsp_types::Url> = Vec::new();
-        'updating_project: for file_change_event in &arguments.changes {
-            match file_change_event.uri.to_file_path() {
-                Err(()) => {}
-                Ok(changed_file_path) => {
-                    if !(changed_file_path
-                        .extension()
-                        .is_some_and(|ext| ext == "elm")
-                        && project_state
-                            .source_directories
-                            .iter()
-                            .any(|source_dir| changed_file_path.starts_with(source_dir)))
-                    {
-                        continue 'updating_project;
+        for (file_change_uri, changed_file_path, file_change_type) in
+            arguments.changes.iter().filter_map(|file_change_event| {
+                match file_change_event.uri.to_file_path() {
+                    Ok(changed_file_path) => Some((
+                        &file_change_event.uri,
+                        changed_file_path,
+                        file_change_event.typ,
+                    )),
+                    Err(()) => None,
+                }
+            })
+        {
+            if path_is_elm_json_in_project_path(project_path, &changed_file_path) {
+                edited_elm_json_project_paths.insert(project_path.clone());
+            } else if changed_file_path
+                .extension()
+                .is_some_and(|ext| ext == "elm")
+                && project_state
+                    .source_directories
+                    .iter()
+                    .any(|source_dir| changed_file_path.starts_with(source_dir))
+            {
+                match file_change_type {
+                    lsp_types::FileChangeType::DELETED => {
+                        if project_state.modules.remove(&changed_file_path).is_some() {
+                            project_was_updated = true;
+                            removed_paths.push(file_change_uri.clone());
+                        }
                     }
-                    match file_change_event.typ {
-                        lsp_types::FileChangeType::DELETED => {
-                            if project_state.modules.remove(&changed_file_path).is_some() {
+                    lsp_types::FileChangeType::CREATED | lsp_types::FileChangeType::CHANGED => {
+                        match std::fs::read_to_string(&changed_file_path) {
+                            Err(_) => {}
+                            Ok(changed_file_source) => {
                                 project_was_updated = true;
-                                removed_paths.push(file_change_event.uri.clone());
+                                project_state.modules.insert(
+                                    changed_file_path,
+                                    initialize_module_state_from_source(changed_file_source),
+                                );
                             }
                         }
-                        lsp_types::FileChangeType::CREATED | lsp_types::FileChangeType::CHANGED => {
-                            match std::fs::read_to_string(&changed_file_path) {
-                                Err(_) => {}
-                                Ok(changed_file_source) => {
-                                    project_was_updated = true;
-                                    project_state.modules.insert(
-                                        changed_file_path,
-                                        initialize_module_state_from_source(changed_file_source),
-                                    );
-                                }
-                            }
-                        }
-                        unknown_file_change_type => {
-                            eprintln!(
-                                "unknown file change type sent by LSP client: {:?}",
-                                unknown_file_change_type
-                            );
-                        }
+                    }
+                    unknown_file_change_type => {
+                        eprintln!(
+                            "unknown file change type sent by LSP client: {:?}",
+                            unknown_file_change_type
+                        );
                     }
                 }
             }
@@ -382,6 +398,66 @@ fn update_state_on_did_change_watched_files(
             );
         }
     }
+    if !edited_elm_json_project_paths.is_empty() {
+        update_projects_state_on_elm_json_changes(
+            &mut state.projects,
+            edited_elm_json_project_paths.into_iter(),
+        );
+    }
+}
+fn update_projects_state_on_elm_json_changes(
+    projects_state: &mut std::collections::HashMap<std::path::PathBuf, ProjectState>,
+    edited_elm_json_project_paths: impl Iterator<Item = std::path::PathBuf>,
+) {
+    // can be optimized by keeping more of the existing state
+    // and skipping collecting info about uninitialized projects for already initialized projects
+    let mut uninitialized_projects: std::collections::HashMap<std::path::PathBuf, ProjectState> =
+        std::collections::HashMap::new();
+    initialize_state_for_all_projects_into(
+        &mut uninitialized_projects,
+        edited_elm_json_project_paths,
+    );
+    for (uninitialized_project_path, uninitialized_project) in uninitialized_projects {
+        match projects_state.get_mut(&uninitialized_project_path) {
+            Some(project_state_to_update) => {
+                match project_state_to_update.kind {
+                    ProjectKind::Dependency => {
+                        // will be the same, no need to initialize again
+                    }
+                    ProjectKind::InWorkspace | ProjectKind::Test => {
+                        // in case dependencies were added or removed,
+                        // the only thing that changes are the available dependency modules
+                        project_state_to_update.dependency_exposed_module_names =
+                            uninitialized_project.dependency_exposed_module_names;
+                    }
+                }
+            }
+            None => {
+                projects_state.insert(
+                    uninitialized_project_path,
+                    ProjectState {
+                        modules: initialize_project_modules(
+                            uninitialized_project.modules.into_keys(),
+                        ),
+                        source_directories: uninitialized_project.source_directories,
+                        dependency_exposed_module_names: uninitialized_project
+                            .dependency_exposed_module_names,
+                        elm_make_errors: uninitialized_project.elm_make_errors,
+                        kind: uninitialized_project.kind,
+                    },
+                );
+            }
+        }
+    }
+}
+fn path_is_elm_json_in_project_path(
+    project_path: &std::path::Path,
+    path_to_check: &std::path::Path,
+) -> bool {
+    path_to_check.parent() == Some(project_path)
+        && path_to_check
+            .file_name()
+            .is_some_and(|name| name == "elm.json")
 }
 fn configuration_request() -> Result<lsp_server::Request, Box<dyn std::error::Error>> {
     let requested_configuration: <lsp_types::request::WorkspaceConfiguration as lsp_types::request::Request>::Params =
@@ -580,15 +656,11 @@ fn update_state_on_did_change_text_document(
     state: &mut State,
     did_change_text_document: lsp_types::DidChangeTextDocumentParams,
 ) {
-    let changed_file_path: std::path::PathBuf =
-        if let Ok(changed_file_path) = did_change_text_document.text_document.uri.to_file_path() {
-            changed_file_path
-        } else {
-            return;
-        };
+    let Ok(changed_file_path) = did_change_text_document.text_document.uri.to_file_path() else {
+        return;
+    };
     for project_state in state.projects.values_mut() {
-        if let Some(module_state) = project_state.modules.remove(&changed_file_path) {
-            let mut changed_source: String = module_state.source;
+        if let Some(module_state) = project_state.modules.get_mut(&changed_file_path) {
             for change in did_change_text_document.content_changes {
                 match (change.range, change.range_length) {
                     (None, None) => {
@@ -601,7 +673,7 @@ fn update_state_on_did_change_text_document(
                     }
                     (Some(range), Some(range_length)) => {
                         string_replace_lsp_range(
-                            &mut changed_source,
+                            &mut module_state.source,
                             range,
                             range_length as usize,
                             &change.text,
@@ -610,10 +682,7 @@ fn update_state_on_did_change_text_document(
                     (None, _) | (_, None) => {}
                 }
             }
-            project_state.modules.insert(
-                changed_file_path,
-                initialize_module_state_from_source(changed_source),
-            );
+            module_state.syntax = parse_elm_syntax_module(&module_state.source);
             break;
         }
     }
@@ -1001,21 +1070,62 @@ fn update_state_with_configuration(state: &mut State, config_json: &serde_json::
             }
         });
 }
-fn initialize_state_for_workspace_directories_into(
+fn initialize_projects_state_for_workspace_directories_into(
     initialize_arguments: &lsp_types::InitializeParams,
-) -> State {
-    let mut state: State = State {
-        projects: std::collections::HashMap::new(),
-        open_text_document_uris: std::collections::HashSet::new(),
-        configured_elm_path: None,
-        configured_elm_test_path: None,
-        configured_elm_formatter: None,
-    };
+) -> std::collections::HashMap<std::path::PathBuf, ProjectState> {
+    let mut projects_state: std::collections::HashMap<std::path::PathBuf, ProjectState> =
+        std::collections::HashMap::new();
     let workspace_directory_paths = initialize_arguments
         .workspace_folders
         .iter()
         .flatten()
         .filter_map(|workspace_folder| workspace_folder.uri.to_file_path().ok());
+    initialize_state_for_all_projects_into(
+        &mut projects_state,
+        list_elm_project_directories_in_directory_at_path(workspace_directory_paths).into_iter(),
+    );
+    let (fully_parsed_project_sender, fully_parsed_project_receiver) = std::sync::mpsc::channel();
+    std::thread::scope(|thread_scope| {
+        for (uninitialized_project_path, uninitialized_project_state) in &projects_state {
+            let projects_that_finished_full_parse_sender = fully_parsed_project_sender.clone();
+            thread_scope.spawn(move || {
+                projects_that_finished_full_parse_sender.send((
+                    uninitialized_project_path.clone(),
+                    initialize_project_modules(uninitialized_project_state.modules.keys().cloned()),
+                ))
+            });
+        }
+    });
+    drop(fully_parsed_project_sender);
+    while let Ok((fully_parsed_project_path, fully_parsed_project_modules)) =
+        fully_parsed_project_receiver.recv()
+    {
+        if let Some(project_state_to_update) = projects_state.get_mut(&fully_parsed_project_path) {
+            project_state_to_update.modules = fully_parsed_project_modules;
+        }
+    }
+    projects_state
+}
+fn initialize_project_modules(
+    uninitialized_module_paths: impl Iterator<Item = std::path::PathBuf>,
+) -> std::collections::HashMap<std::path::PathBuf, ModuleState> {
+    let mut fully_parsed_modules: std::collections::HashMap<std::path::PathBuf, ModuleState> =
+        std::collections::HashMap::new();
+    for uninitialized_module_path in uninitialized_module_paths {
+        if let Ok(module_source) = std::fs::read_to_string(&uninitialized_module_path) {
+            fully_parsed_modules.insert(
+                uninitialized_module_path,
+                initialize_module_state_from_source(module_source),
+            );
+        }
+    }
+    fully_parsed_modules
+}
+
+fn initialize_state_for_all_projects_into(
+    projects_state: &mut std::collections::HashMap<std::path::PathBuf, ProjectState>,
+    project_paths: impl Iterator<Item = std::path::PathBuf>,
+) {
     let elm_home_path: std::path::PathBuf = match std::env::var("ELM_HOME") {
         Ok(elm_home_path) => std::path::PathBuf::from(elm_home_path),
         Err(_) => {
@@ -1036,19 +1146,25 @@ accordingly so that tools like the elm compiler and language server can find the
             )
         }
     };
+    let mut all_dependency_exposed_module_names: std::collections::HashMap<
+        std::path::PathBuf,
+        std::collections::HashMap<Box<str>, ProjectModuleOrigin>,
+    > = std::collections::HashMap::new();
     let mut skipped_dependencies: std::collections::HashSet<std::path::PathBuf> =
         std::collections::HashSet::new();
-    let _modules_exposed_from_workspace_packages = initialize_state_for_projects_into(
-        &mut state.projects,
-        &mut std::collections::HashMap::new(),
-        &mut skipped_dependencies,
-        &elm_home_path,
-        ProjectKind::InWorkspace,
-        list_elm_project_directories_in_directory_at_path(workspace_directory_paths).into_iter(),
-    );
+    for project_path in project_paths {
+        initialize_state_for_project_into(
+            projects_state,
+            &mut all_dependency_exposed_module_names,
+            &mut skipped_dependencies,
+            &elm_home_path,
+            ProjectKind::InWorkspace,
+            project_path,
+        );
+    }
     if !skipped_dependencies.is_empty() {
         eprintln!(
-            "I will skip initializing these dependency {}: {}. \
+            "I will skip initializing these dependencies {}: {}. \n  \
             I can only load packages that you've actively downloaded with `elm install`. \
             If you did and don't care about LSP functionality for indirect dependencies, ignore this message.",
             if skipped_dependencies.len() == 1 {
@@ -1063,39 +1179,7 @@ accordingly so that tools like the elm compiler and language server can find the
                 .join(", ")
         );
     }
-    let (fully_parsed_project_sender, fully_parsed_project_receiver) = std::sync::mpsc::channel();
-    std::thread::scope(|thread_scope| {
-        for (uninitialized_project_path, uninitialized_project_state) in &state.projects {
-            let projects_that_finished_full_parse_sender = fully_parsed_project_sender.clone();
-            thread_scope.spawn(move || {
-                let mut fully_parsed_modules: std::collections::HashMap<
-                    std::path::PathBuf,
-                    ModuleState,
-                > = std::collections::HashMap::new();
-                for uninitialized_module_path in uninitialized_project_state.modules.keys() {
-                    if let Ok(module_source) = std::fs::read_to_string(uninitialized_module_path) {
-                        fully_parsed_modules.insert(
-                            uninitialized_module_path.clone(),
-                            initialize_module_state_from_source(module_source),
-                        );
-                    }
-                }
-                projects_that_finished_full_parse_sender
-                    .send((uninitialized_project_path.clone(), fully_parsed_modules))
-            });
-        }
-    });
-    drop(fully_parsed_project_sender);
-    while let Ok((fully_parsed_project_path, fully_parsed_project_modules)) =
-        fully_parsed_project_receiver.recv()
-    {
-        if let Some(project_state_to_update) = state.projects.get_mut(&fully_parsed_project_path) {
-            project_state_to_update.modules = fully_parsed_project_modules;
-        }
-    }
-    state
 }
-
 /// returns exposed module names and their origins
 fn initialize_state_for_projects_into(
     projects_state: &mut std::collections::HashMap<std::path::PathBuf, ProjectState>,

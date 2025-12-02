@@ -29,7 +29,6 @@ You can also set their paths in the language server settings:
 - add support for `elm-review` (depends on how easy it is, which I assume it isn't)
 - show all module exposes when hovering `(..)` (only if I have time and there is interest)
 - add code actions like "expose (including variants)", "inline", "inline all uses" (leaning towards no as it is fairly complicated, though it is very useful for sure)
-- support when the `elm.json` changes (only if I have time and there is interest)
 - show function parameter names (leaning towards no, as they are often confusing if they are curried, reveal non-exposed variant patterns, have more parameters than the type suggests, are undescriptive etc)
 - currently, an exposed member will still be suggested even when a local module-declared reference/local binding with the same name exists. Likewise, a local module-declared reference will still be suggested even when a local binding with the same name exists. (somewhat easily fixable but I don't really see the harm in directly showing this shadowing in your face)
 - add support for using [elm-dev](https://github.com/mdgriffith/elm-dev) as the compiler to speed up compile times and retrieve type info (I assume integrating it is hard and to me it seems kind of bloated with MCP bs etc, currently leaning towards no)
