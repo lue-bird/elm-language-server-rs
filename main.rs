@@ -6315,19 +6315,21 @@ fn respond_to_completion(
                 )
                 .unwrap_or_else(|| vec![to_complete_qualification]);
                 for to_complete_module_origin in to_complete_module_origins {
-                    if let Some((_, origin_module_state)) = project_state_get_module_with_name(
-                        state,
-                        completion_project_module.project,
-                        to_complete_module_origin,
-                    ) {
+                    if let Some((_, to_complete_origin_module_state)) =
+                        project_state_get_module_with_name(
+                            state,
+                            completion_project_module.project,
+                            to_complete_module_origin,
+                        )
+                    {
                         let origin_module_expose_set: ElmExposeSet =
                             elm_syntax_module_header_expose_set(
-                                origin_module_state.syntax.header.as_ref(),
+                                to_complete_origin_module_state.syntax.header.as_ref(),
                             );
                         type_declaration_completions_into(
                             state,
                             completion_project_module.project,
-                            &completion_project_module.module.syntax,
+                            &to_complete_origin_module_state.syntax,
                             &mut completion_items,
                             &origin_module_expose_set,
                         );
