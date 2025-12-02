@@ -111,3 +111,4 @@ Then point your editor to the created `???/target/debug/elm-language-server-rs`.
 - switch most syntax tree `Box<str>`s to https://docs.rs/smallstr/0.3.1/smallstr/
   to for example speed up collecting references (e.g. for rename)
 - in syntax tree, use `Box<[]>` instead of `Vec` for common nodes like call arguments
+- on init, read modules in parallel, not just projects, to even out difference in project size (seems not worth using threads, maybe something more lightweight?)
