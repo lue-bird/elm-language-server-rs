@@ -1164,7 +1164,7 @@ accordingly so that tools like the elm compiler and language server can find the
     }
     if !skipped_dependencies.is_empty() {
         eprintln!(
-            "I will skip initializing these dependencies {}: {}. \n  \
+            "I will skip initializing these dependency {}: {}. \n  \
             I can only load packages that you've actively downloaded with `elm install`. \
             If you did and don't care about LSP functionality for indirect dependencies, ignore this message.",
             if skipped_dependencies.len() == 1 {
