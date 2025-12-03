@@ -67,13 +67,13 @@
           "default": "",
           "description": "compiler executable, default elm. Should be empty by default."
         },
-        "elm-language-server-rs.elmFormatPath": {
+        "elm-language-server-rs.elmTestPath": {
           "scope": "window",
           "type": "string",
           "default": "",
           "description": "test runner executable, default elm-test. Should be empty by default."
         },
-        "elm-language-server-rs.elmTestPath": {
+        "elm-language-server-rs.elmFormatPath": {
           "scope": "window",
           "type": "string",
           "default": "",
