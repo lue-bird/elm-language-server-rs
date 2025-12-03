@@ -3138,7 +3138,6 @@ fn respond_to_goto_definition(
                             name: maybe_origin_module_declaration_name,
                             ..
                         } => {
-                            // record type alias constructor function
                             if let Some(origin_module_declaration_name_node) =
                                 maybe_origin_module_declaration_name
                                 && origin_module_declaration_name_node.value.as_ref() == goto_name
