@@ -1866,7 +1866,7 @@ fn respond_to_hover(
                                     declaration_node.range,
                                     origin_module_declaration_name
                                         .as_ref()
-                                        .map(|node| elm_syntax_node_as_ref_map(node, Box::as_ref)),
+                                        .map(elm_syntax_node_unbox),
                                     documented_declaration
                                         .documentation
                                         .as_ref()
@@ -1874,7 +1874,7 @@ fn respond_to_hover(
                                     origin_module_declaration_parameters,
                                     origin_module_declaration_variant0_name_node
                                         .as_ref()
-                                        .map(|node| elm_syntax_node_as_ref_map(node, Box::as_ref)),
+                                        .map(elm_syntax_node_unbox),
                                     origin_module_declaration_variant0_values,
                                     origin_module_declaration_variant1_up,
                                 ))
@@ -1960,7 +1960,7 @@ fn respond_to_hover(
                                     hovered_module_origin,
                                     &hovered_project_module_state.module.syntax.comments,
                                     declaration_node.range,
-                                    Some(elm_syntax_node_as_ref_map(declaration_name_node, Box::as_ref)),
+                                    Some(elm_syntax_node_unbox(declaration_name_node)),
                                     documented_declaration
                                         .documentation
                                         .as_ref()
@@ -1986,7 +1986,7 @@ fn respond_to_hover(
                                     hovered_module_origin,
                                     &hovered_project_module_state.module.syntax.comments,
                                     declaration_node.range,
-                                    Some(elm_syntax_node_as_ref_map(declaration_name_node, Box::as_ref)),
+                                    Some(elm_syntax_node_unbox(declaration_name_node)),
                                     documented_declaration
                                         .documentation
                                         .as_ref()
@@ -2010,7 +2010,7 @@ fn respond_to_hover(
                                     &origin_module_origin_lookup,
                                     hovered_module_origin,
                                     &hovered_project_module_state.module.syntax.comments,
-                                    elm_syntax_node_as_ref_map(declaration_name_node, Box::as_ref),
+                                    elm_syntax_node_unbox(declaration_name_node),
                                     documented_declaration
                                         .documentation
                                         .as_ref()
@@ -2079,12 +2079,12 @@ fn respond_to_hover(
                             declaration_node.range,
                             origin_module_declaration_name
                                 .as_ref()
-                                .map(|node| elm_syntax_node_as_ref_map(node, Box::as_ref)),
+                                .map(elm_syntax_node_unbox),
                             documentation,
                             origin_module_declaration_parameters,
                             origin_module_declaration_variant0_name_node
                                 .as_ref()
-                                .map(|node| elm_syntax_node_as_ref_map(node, Box::as_ref)),
+                                .map(elm_syntax_node_unbox),
                             origin_module_declaration_variant0_values,
                             origin_module_declaration_variant1_up,
                         )
@@ -2155,9 +2155,7 @@ fn respond_to_hover(
                     hovered_module_origin,
                     &hovered_project_module_state.module.syntax.comments,
                     declaration_node.range,
-                    maybe_declaration_name
-                        .as_ref()
-                        .map(|node| elm_syntax_node_as_ref_map(node, Box::as_ref)),
+                    maybe_declaration_name.as_ref().map(elm_syntax_node_unbox),
                     documentation,
                     type_.as_ref().map(elm_syntax_node_as_ref),
                 ),
@@ -2172,9 +2170,7 @@ fn respond_to_hover(
                     hovered_module_origin,
                     &hovered_project_module_state.module.syntax.comments,
                     declaration_node.range,
-                    maybe_declaration_name
-                        .as_ref()
-                        .map(|node| elm_syntax_node_as_ref_map(node, Box::as_ref)),
+                    maybe_declaration_name.as_ref().map(elm_syntax_node_unbox),
                     documentation,
                     origin_module_declaration_parameters,
                     type_.as_ref().map(elm_syntax_node_as_ref),
@@ -2189,7 +2185,7 @@ fn respond_to_hover(
                     &origin_module_origin_lookup,
                     hovered_module_origin,
                     &hovered_project_module_state.module.syntax.comments,
-                    elm_syntax_node_as_ref_map(origin_module_declaration_name_node, Box::as_ref),
+                    elm_syntax_node_unbox(origin_module_declaration_name_node),
                     documentation,
                     origin_module_declaration_maybe_signature
                         .as_ref()
@@ -2223,61 +2219,59 @@ fn respond_to_hover(
                     hovered_project_module_state.project,
                     &origin_module_state.syntax,
                 );
-            let origin_declaration_info_markdown: String = origin_module_state
-                .syntax
-                .declarations
-                .iter()
-                .find_map(|documented_declaration_or_err| {
-                    let documented_declaration = documented_declaration_or_err.as_ref().ok()?;
-                    let declaration_node = documented_declaration.declaration.as_ref()?;
-                    match &declaration_node.value {
-                        ElmSyntaxDeclaration::ChoiceType {
-                            name: origin_module_declaration_name,
-                            parameters: origin_module_declaration_parameters,
-                            equals_key_symbol_range: _,
-                            variant0_name: origin_module_declaration_variant0_name_node,
-                            variant0_values: origin_module_declaration_variant0_values,
-                            variant1_up: origin_module_declaration_variant1_up,
-                        } => {
-                            if origin_module_declaration_name
-                                .as_ref()
-                                .map(|node| node.value.as_ref())
-                                == Some(hovered_name)
-                            {
-                                Some(present_choice_type_declaration_info_markdown(
-                                    &origin_module_origin_lookup,
-                                    hovered_module_origin,
-                                    &hovered_project_module_state.module.syntax.comments,
-                                    declaration_node.range,
-                                    origin_module_declaration_name
-                                        .as_ref()
-                                        .map(|node| elm_syntax_node_as_ref_map(node, Box::as_ref)),
-                                    documented_declaration
-                                        .documentation
-                                        .as_ref()
-                                        .map(|node| node.value.as_ref()),
-                                    origin_module_declaration_parameters,
-                                    origin_module_declaration_variant0_name_node
-                                        .as_ref()
-                                        .map(|node| elm_syntax_node_as_ref_map(node, Box::as_ref)),
-                                    origin_module_declaration_variant0_values,
-                                    origin_module_declaration_variant1_up,
-                                ))
-                            } else {
-                                None
+            let origin_declaration_info_markdown: String =
+                origin_module_state.syntax.declarations.iter().find_map(
+                    |documented_declaration_or_err| {
+                        let documented_declaration = documented_declaration_or_err.as_ref().ok()?;
+                        let declaration_node = documented_declaration.declaration.as_ref()?;
+                        match &declaration_node.value {
+                            ElmSyntaxDeclaration::ChoiceType {
+                                name: origin_module_declaration_name,
+                                parameters: origin_module_declaration_parameters,
+                                equals_key_symbol_range: _,
+                                variant0_name: origin_module_declaration_variant0_name_node,
+                                variant0_values: origin_module_declaration_variant0_values,
+                                variant1_up: origin_module_declaration_variant1_up,
+                            } => {
+                                if origin_module_declaration_name
+                                    .as_ref()
+                                    .map(|node| node.value.as_ref())
+                                    == Some(hovered_name)
+                                {
+                                    Some(present_choice_type_declaration_info_markdown(
+                                        &origin_module_origin_lookup,
+                                        hovered_module_origin,
+                                        &hovered_project_module_state.module.syntax.comments,
+                                        declaration_node.range,
+                                        origin_module_declaration_name
+                                            .as_ref()
+                                            .map(elm_syntax_node_unbox),
+                                        documented_declaration
+                                            .documentation
+                                            .as_ref()
+                                            .map(|node| node.value.as_ref()),
+                                        origin_module_declaration_parameters,
+                                        origin_module_declaration_variant0_name_node
+                                            .as_ref()
+                                            .map(elm_syntax_node_unbox),
+                                        origin_module_declaration_variant0_values,
+                                        origin_module_declaration_variant1_up,
+                                    ))
+                                } else {
+                                    None
+                                }
                             }
-                        }
-                        ElmSyntaxDeclaration::Operator {
-                            direction: maybe_declaration_direction,
-                            precedence: maybe_declaration_precedence,
-                            operator: maybe_declaration_operator,
-                            equals_key_symbol_range: _,
-                            function: maybe_declaration_function,
-                        } => {
-                            if maybe_declaration_operator.as_ref().map(|node| node.value)
-                                == Some(hovered_name)
-                            {
-                                let maybe_origin_operator_function_declaration =
+                            ElmSyntaxDeclaration::Operator {
+                                direction: maybe_declaration_direction,
+                                precedence: maybe_declaration_precedence,
+                                operator: maybe_declaration_operator,
+                                equals_key_symbol_range: _,
+                                function: maybe_declaration_function,
+                            } => {
+                                if maybe_declaration_operator.as_ref().map(|node| node.value)
+                                    == Some(hovered_name)
+                                {
+                                    let maybe_origin_operator_function_declaration =
                                     maybe_declaration_function.as_ref().and_then(
                                         |origin_module_declaration_function_node| {
                                             origin_module_state.syntax.declarations.iter().find_map(
@@ -2316,107 +2310,102 @@ fn respond_to_hover(
                                             )
                                         },
                                     );
-                                Some(present_operator_declaration_info_markdown(
-                                    &origin_module_origin_lookup,
-                                    hovered_module_origin,
-                                    maybe_declaration_operator.as_ref().map(|node| node.value),
-                                    maybe_origin_operator_function_declaration,
-                                    documented_declaration
-                                        .documentation
-                                        .as_ref()
-                                        .map(|node| node.value.as_ref()),
-                                    maybe_declaration_direction.map(|node| node.value),
-                                    maybe_declaration_precedence.map(|node| node.value),
-                                ))
-                            } else {
-                                None
+                                    Some(present_operator_declaration_info_markdown(
+                                        &origin_module_origin_lookup,
+                                        hovered_module_origin,
+                                        maybe_declaration_operator.as_ref().map(|node| node.value),
+                                        maybe_origin_operator_function_declaration,
+                                        documented_declaration
+                                            .documentation
+                                            .as_ref()
+                                            .map(|node| node.value.as_ref()),
+                                        maybe_declaration_direction.map(|node| node.value),
+                                        maybe_declaration_precedence.map(|node| node.value),
+                                    ))
+                                } else {
+                                    None
+                                }
+                            }
+                            ElmSyntaxDeclaration::Port {
+                                name: maybe_declaration_name,
+                                colon_key_symbol_range: _,
+                                type_,
+                            } => {
+                                if let Some(declaration_name_node) = maybe_declaration_name
+                                    && declaration_name_node.value.as_ref() == hovered_name
+                                {
+                                    Some(present_port_declaration_info_markdown(
+                                        &origin_module_origin_lookup,
+                                        hovered_module_origin,
+                                        &hovered_project_module_state.module.syntax.comments,
+                                        declaration_node.range,
+                                        Some(elm_syntax_node_unbox(declaration_name_node)),
+                                        documented_declaration
+                                            .documentation
+                                            .as_ref()
+                                            .map(|node| node.value.as_ref()),
+                                        type_.as_ref().map(elm_syntax_node_as_ref),
+                                    ))
+                                } else {
+                                    None
+                                }
+                            }
+                            ElmSyntaxDeclaration::TypeAlias {
+                                alias_keyword_range: _,
+                                name: maybe_declaration_name,
+                                parameters: origin_module_declaration_parameters,
+                                equals_key_symbol_range: _,
+                                type_,
+                            } => {
+                                if let Some(declaration_name_node) = maybe_declaration_name
+                                    && declaration_name_node.value.as_ref() == hovered_name
+                                {
+                                    Some(present_type_alias_declaration_info_markdown(
+                                        &origin_module_origin_lookup,
+                                        hovered_module_origin,
+                                        &hovered_project_module_state.module.syntax.comments,
+                                        declaration_node.range,
+                                        Some(elm_syntax_node_unbox(declaration_name_node)),
+                                        documented_declaration
+                                            .documentation
+                                            .as_ref()
+                                            .map(|node| node.value.as_ref()),
+                                        origin_module_declaration_parameters,
+                                        type_.as_ref().map(elm_syntax_node_as_ref),
+                                    ))
+                                } else {
+                                    None
+                                }
+                            }
+                            ElmSyntaxDeclaration::Variable {
+                                start_name: declaration_name_node,
+                                signature: declaration_maybe_signature,
+                                parameters: _,
+                                equals_key_symbol_range: _,
+                                result: _,
+                            } => {
+                                if declaration_name_node.value.as_ref() == hovered_name {
+                                    Some(present_variable_declaration_info_markdown(
+                                        &origin_module_origin_lookup,
+                                        hovered_module_origin,
+                                        &hovered_project_module_state.module.syntax.comments,
+                                        elm_syntax_node_unbox(declaration_name_node),
+                                        documented_declaration
+                                            .documentation
+                                            .as_ref()
+                                            .map(|node| node.value.as_ref()),
+                                        declaration_maybe_signature
+                                            .as_ref()
+                                            .and_then(|signature| signature.type_.as_ref())
+                                            .map(elm_syntax_node_as_ref),
+                                    ))
+                                } else {
+                                    None
+                                }
                             }
                         }
-                        ElmSyntaxDeclaration::Port {
-                            name: maybe_declaration_name,
-                            colon_key_symbol_range: _,
-                            type_,
-                        } => {
-                            if let Some(declaration_name_node) = maybe_declaration_name
-                                && declaration_name_node.value.as_ref() == hovered_name
-                            {
-                                Some(present_port_declaration_info_markdown(
-                                    &origin_module_origin_lookup,
-                                    hovered_module_origin,
-                                    &hovered_project_module_state.module.syntax.comments,
-                                    declaration_node.range,
-                                    Some(elm_syntax_node_as_ref_map(
-                                        declaration_name_node,
-                                        Box::as_ref,
-                                    )),
-                                    documented_declaration
-                                        .documentation
-                                        .as_ref()
-                                        .map(|node| node.value.as_ref()),
-                                    type_.as_ref().map(elm_syntax_node_as_ref),
-                                ))
-                            } else {
-                                None
-                            }
-                        }
-                        ElmSyntaxDeclaration::TypeAlias {
-                            alias_keyword_range: _,
-                            name: maybe_declaration_name,
-                            parameters: origin_module_declaration_parameters,
-                            equals_key_symbol_range: _,
-                            type_,
-                        } => {
-                            if let Some(declaration_name_node) = maybe_declaration_name
-                                && declaration_name_node.value.as_ref() == hovered_name
-                            {
-                                Some(present_type_alias_declaration_info_markdown(
-                                    &origin_module_origin_lookup,
-                                    hovered_module_origin,
-                                    &hovered_project_module_state.module.syntax.comments,
-                                    declaration_node.range,
-                                    Some(elm_syntax_node_as_ref_map(
-                                        declaration_name_node,
-                                        Box::as_ref,
-                                    )),
-                                    documented_declaration
-                                        .documentation
-                                        .as_ref()
-                                        .map(|node| node.value.as_ref()),
-                                    origin_module_declaration_parameters,
-                                    type_.as_ref().map(elm_syntax_node_as_ref),
-                                ))
-                            } else {
-                                None
-                            }
-                        }
-                        ElmSyntaxDeclaration::Variable {
-                            start_name: declaration_name_node,
-                            signature: declaration_maybe_signature,
-                            parameters: _,
-                            equals_key_symbol_range: _,
-                            result: _,
-                        } => {
-                            if declaration_name_node.value.as_ref() == hovered_name {
-                                Some(present_variable_declaration_info_markdown(
-                                    &origin_module_origin_lookup,
-                                    hovered_module_origin,
-                                    &hovered_project_module_state.module.syntax.comments,
-                                    elm_syntax_node_as_ref_map(declaration_name_node, Box::as_ref),
-                                    documented_declaration
-                                        .documentation
-                                        .as_ref()
-                                        .map(|node| node.value.as_ref()),
-                                    declaration_maybe_signature
-                                        .as_ref()
-                                        .and_then(|signature| signature.type_.as_ref())
-                                        .map(elm_syntax_node_as_ref),
-                                ))
-                            } else {
-                                None
-                            }
-                        }
-                    }
-                })?;
+                    },
+                )?;
             Some(lsp_types::Hover {
                 contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
                     kind: lsp_types::MarkupKind::Markdown,
@@ -2529,7 +2518,7 @@ fn respond_to_hover(
                                         origin_module_declaration_node.range,
                                         origin_module_declaration_name
                                             .as_ref()
-                                            .map(|node| elm_syntax_node_as_ref_map(node, Box::as_ref)),
+                                            .map(elm_syntax_node_unbox),
                                         origin_module_declaration
                                             .documentation
                                             .as_ref()
@@ -2537,7 +2526,7 @@ fn respond_to_hover(
                                         origin_module_declaration_parameters,
                                         origin_module_declaration_variant0_name_node
                                             .as_ref()
-                                            .map(|node| elm_syntax_node_as_ref_map(node, Box::as_ref)),
+                                            .map(elm_syntax_node_unbox),
                                         origin_module_declaration_variant0_values,
                                         origin_module_declaration_variant1_up,
                                     )
@@ -2616,7 +2605,7 @@ fn respond_to_hover(
                                     hovered_module_origin,
                                     &hovered_project_module_state.module.syntax.comments,
                                     origin_module_declaration_node.range,
-                                    Some(elm_syntax_node_as_ref_map(origin_module_declaration_name_node, Box::as_ref)),
+                                    Some(elm_syntax_node_unbox(origin_module_declaration_name_node)),
                                     origin_module_declaration
                                         .documentation
                                         .as_ref()
@@ -2644,7 +2633,7 @@ fn respond_to_hover(
                                         hovered_module_origin,
                                         &hovered_project_module_state.module.syntax.comments,
                                         origin_module_declaration_node.range,
-                                        Some(elm_syntax_node_as_ref_map(origin_module_declaration_name_node, Box::as_ref)),
+                                        Some(elm_syntax_node_unbox(origin_module_declaration_name_node)),
                                         origin_module_declaration
                                             .documentation
                                             .as_ref()
@@ -2669,7 +2658,7 @@ fn respond_to_hover(
                                     &origin_module_origin_lookup,
                                     hovered_module_origin,
                                     &hovered_project_module_state.module.syntax.comments,
-                                    elm_syntax_node_as_ref_map(origin_module_declaration_name_node, Box::as_ref),
+                                    elm_syntax_node_unbox(origin_module_declaration_name_node),
                                     origin_module_declaration
                                         .documentation
                                         .as_ref()
@@ -2757,9 +2746,8 @@ fn respond_to_hover(
                                     hovered_module_origin,
                                     &hovered_project_module_state.module.syntax.comments,
                                     origin_module_declaration_node.range,
-                                    Some(elm_syntax_node_as_ref_map(
+                                    Some(elm_syntax_node_unbox(
                                         origin_module_declaration_name_node,
-                                        Box::as_ref,
                                     )),
                                     origin_module_declaration
                                         .documentation
@@ -2768,7 +2756,7 @@ fn respond_to_hover(
                                     origin_module_declaration_parameters,
                                     maybe_origin_module_declaration_variant0_name_node
                                         .as_ref()
-                                        .map(|node| elm_syntax_node_as_ref_map(node, Box::as_ref)),
+                                        .map(elm_syntax_node_unbox),
                                     maybe_origin_module_declaration_variant0_values,
                                     origin_module_declaration_variant1_up,
                                 ))
@@ -2793,9 +2781,8 @@ fn respond_to_hover(
                                     hovered_module_origin,
                                     &hovered_project_module_state.module.syntax.comments,
                                     origin_module_declaration_node.range,
-                                    Some(elm_syntax_node_as_ref_map(
+                                    Some(elm_syntax_node_unbox(
                                         origin_module_declaration_name_node,
-                                        Box::as_ref,
                                     )),
                                     origin_module_declaration
                                         .documentation
@@ -5449,25 +5436,19 @@ fn respond_to_completion(
                                     module_origin,
                                     &completion_project_module.module.syntax.comments,
                                     origin_module_declaration_node.range,
-                                    Some(elm_syntax_node_as_ref_map(
-                                        choice_type_name_node,
-                                        Box::as_ref,
-                                    )),
+                                    Some(elm_syntax_node_unbox(choice_type_name_node)),
                                     origin_module_declaration_documentation,
                                     parameters,
-                                    variant0_name
-                                        .as_ref()
-                                        .map(|node| elm_syntax_node_as_ref_map(node, Box::as_ref)),
+                                    variant0_name.as_ref().map(elm_syntax_node_unbox),
                                     variant0_values,
                                     variant1_up,
                                 );
                             completion_items.push(lsp_types::CompletionItem {
                                 label: choice_type_name_node.value.to_string(),
-                                kind: Some(lsp_types::CompletionItemKind::ENUM_MEMBER),
+                                kind: Some(lsp_types::CompletionItemKind::ENUM),
                                 documentation: Some(lsp_types::Documentation::MarkupContent(
                                     lsp_types::MarkupContent {
                                         kind: lsp_types::MarkupKind::Markdown,
-                                        // should the documentation code indicate the variants are hidden?
                                         value: info_markdown.clone(),
                                     },
                                 )),
@@ -5475,11 +5456,11 @@ fn respond_to_completion(
                             });
                             completion_items.push(lsp_types::CompletionItem {
                                 label: format!("{}(..)", choice_type_name_node.value),
-                                kind: Some(lsp_types::CompletionItemKind::ENUM_MEMBER),
+                                kind: Some(lsp_types::CompletionItemKind::ENUM),
                                 documentation: Some(lsp_types::Documentation::MarkupContent(
                                     lsp_types::MarkupContent {
                                         kind: lsp_types::MarkupKind::Markdown,
-                                        value: info_markdown.clone(),
+                                        value: info_markdown,
                                     },
                                 )),
                                 ..lsp_types::CompletionItem::default()
@@ -5505,10 +5486,7 @@ fn respond_to_completion(
                                             module_origin,
                                             &completion_project_module.module.syntax.comments,
                                             origin_module_declaration_node.range,
-                                            Some(elm_syntax_node_as_ref_map(
-                                                name_node,
-                                                Box::as_ref,
-                                            )),
+                                            Some(elm_syntax_node_unbox(name_node)),
                                             origin_module_declaration_documentation,
                                             type_.as_ref().map(elm_syntax_node_as_ref),
                                         ),
@@ -5539,10 +5517,7 @@ fn respond_to_completion(
                                             module_origin,
                                             &completion_project_module.module.syntax.comments,
                                             origin_module_declaration_node.range,
-                                            Some(elm_syntax_node_as_ref_map(
-                                                name_node,
-                                                Box::as_ref,
-                                            )),
+                                            Some(elm_syntax_node_unbox(name_node)),
                                             origin_module_declaration_documentation,
                                             parameters,
                                             maybe_type.as_ref().map(elm_syntax_node_as_ref),
@@ -5571,10 +5546,7 @@ fn respond_to_completion(
                                             &module_origin_lookup,
                                             module_origin,
                                             &completion_project_module.module.syntax.comments,
-                                            elm_syntax_node_as_ref_map(
-                                                start_name_node,
-                                                Box::as_ref,
-                                            ),
+                                            elm_syntax_node_unbox(start_name_node),
                                             origin_module_declaration_documentation,
                                             maybe_signature
                                                 .as_ref()
@@ -5670,15 +5642,10 @@ fn respond_to_completion(
                                     module_origin,
                                     &completion_project_module.module.syntax.comments,
                                     origin_module_declaration_node.range,
-                                    Some(elm_syntax_node_as_ref_map(
-                                        choice_type_name_node,
-                                        Box::as_ref,
-                                    )),
+                                    Some(elm_syntax_node_unbox(choice_type_name_node)),
                                     origin_module_declaration_documentation,
                                     parameters,
-                                    variant0_name
-                                        .as_ref()
-                                        .map(|node| elm_syntax_node_as_ref_map(node, Box::as_ref)),
+                                    variant0_name.as_ref().map(elm_syntax_node_unbox),
                                     variant0_values,
                                     variant1_up,
                                 );
@@ -5716,10 +5683,7 @@ fn respond_to_completion(
                                             module_origin,
                                             &completion_project_module.module.syntax.comments,
                                             origin_module_declaration_node.range,
-                                            Some(elm_syntax_node_as_ref_map(
-                                                name_node,
-                                                Box::as_ref,
-                                            )),
+                                            Some(elm_syntax_node_unbox(name_node)),
                                             origin_module_declaration_documentation,
                                             type_.as_ref().map(elm_syntax_node_as_ref),
                                         ),
@@ -5751,10 +5715,7 @@ fn respond_to_completion(
                                             module_origin,
                                             &completion_project_module.module.syntax.comments,
                                             origin_module_declaration_node.range,
-                                            Some(elm_syntax_node_as_ref_map(
-                                                name_node,
-                                                Box::as_ref,
-                                            )),
+                                            Some(elm_syntax_node_unbox(name_node)),
                                             origin_module_declaration_documentation,
                                             parameters,
                                             maybe_type.as_ref().map(elm_syntax_node_as_ref),
@@ -5785,10 +5746,7 @@ fn respond_to_completion(
                                             &module_origin_lookup,
                                             module_origin,
                                             &completion_project_module.module.syntax.comments,
-                                            elm_syntax_node_as_ref_map(
-                                                start_name_node,
-                                                Box::as_ref,
-                                            ),
+                                            elm_syntax_node_unbox(start_name_node),
                                             origin_module_declaration_documentation,
                                             maybe_signature
                                                 .as_ref()
@@ -5889,15 +5847,10 @@ fn respond_to_completion(
                                     to_complete_module_origin,
                                     &import_origin_module_state.syntax.comments,
                                     origin_module_declaration_node.range,
-                                    Some(elm_syntax_node_as_ref_map(
-                                        choice_type_name_node,
-                                        Box::as_ref
-                                    )),
+                                    Some(elm_syntax_node_unbox(choice_type_name_node,)),
                                     origin_module_declaration_documentation,
                                     parameters,
-                                    variant0_name.as_ref().map(|node| {
-                                        elm_syntax_node_as_ref_map(node, Box::as_ref)
-                                    }),
+                                    variant0_name.as_ref().map(elm_syntax_node_unbox),
                                     variant0_values,
                                     variant1_up,
                                 ),
@@ -5947,10 +5900,7 @@ fn respond_to_completion(
                                             to_complete_module_origin,
                                             &import_origin_module_state.syntax.comments,
                                             origin_module_declaration_node.range,
-                                            Some(elm_syntax_node_as_ref_map(
-                                                name_node,
-                                                Box::as_ref,
-                                            )),
+                                            Some(elm_syntax_node_unbox(name_node)),
                                             origin_module_declaration_documentation,
                                             type_.as_ref().map(elm_syntax_node_as_ref),
                                         ),
@@ -5974,7 +5924,7 @@ fn respond_to_completion(
                         {
                             completion_items.push(lsp_types::CompletionItem {
                                 label: name_node.value.to_string(),
-                                kind: Some(lsp_types::CompletionItemKind::CONSTRUCTOR),
+                                kind: Some(lsp_types::CompletionItemKind::STRUCT),
                                 documentation: Some(lsp_types::Documentation::MarkupContent(
                                     lsp_types::MarkupContent {
                                         kind: lsp_types::MarkupKind::Markdown,
@@ -5983,10 +5933,7 @@ fn respond_to_completion(
                                             to_complete_module_origin,
                                             &import_origin_module_state.syntax.comments,
                                             origin_module_declaration_node.range,
-                                            Some(elm_syntax_node_as_ref_map(
-                                                name_node,
-                                                Box::as_ref,
-                                            )),
+                                            Some(elm_syntax_node_unbox(name_node)),
                                             origin_module_declaration_documentation,
                                             parameters,
                                             maybe_type.as_ref().map(elm_syntax_node_as_ref),
@@ -6017,10 +5964,7 @@ fn respond_to_completion(
                                             &import_module_origin_lookup,
                                             to_complete_module_origin,
                                             &import_origin_module_state.syntax.comments,
-                                            elm_syntax_node_as_ref_map(
-                                                start_name_node,
-                                                Box::as_ref,
-                                            ),
+                                            elm_syntax_node_unbox(start_name_node),
                                             origin_module_declaration_documentation,
                                             maybe_signature
                                                 .as_ref()
@@ -6403,15 +6347,10 @@ fn variable_declaration_completions_into(
                             module_name,
                             &module_syntax.comments,
                             origin_module_declaration_node.range,
-                            Some(elm_syntax_node_as_ref_map(
-                                choice_type_name_node,
-                                Box::as_ref
-                            )),
+                            Some(elm_syntax_node_unbox(choice_type_name_node,)),
                             origin_module_declaration_documentation,
                             parameters,
-                            variant0_name
-                                .as_ref()
-                                .map(|node| elm_syntax_node_as_ref_map(node, Box::as_ref)),
+                            variant0_name.as_ref().map(elm_syntax_node_unbox),
                             variant0_values,
                             variant1_up,
                         ),
@@ -6457,7 +6396,7 @@ fn variable_declaration_completions_into(
                                     module_name,
                                     &module_syntax.comments,
                                     origin_module_declaration_node.range,
-                                    Some(elm_syntax_node_as_ref_map(name_node, Box::as_ref)),
+                                    Some(elm_syntax_node_unbox(name_node)),
                                     origin_module_declaration_documentation,
                                     type_.as_ref().map(elm_syntax_node_as_ref),
                                 ),
@@ -6495,7 +6434,7 @@ fn variable_declaration_completions_into(
                                         module_name,
                                         &module_syntax.comments,
                                         origin_module_declaration_node.range,
-                                        Some(elm_syntax_node_as_ref_map(name_node, Box::as_ref)),
+                                        Some(elm_syntax_node_unbox(name_node)),
                                         origin_module_declaration_documentation,
                                         parameters,
                                         Some(elm_syntax_node_as_ref(type_node)),
@@ -6525,7 +6464,7 @@ fn variable_declaration_completions_into(
                                     &module_origin_lookup,
                                     module_name,
                                     &module_syntax.comments,
-                                    elm_syntax_node_as_ref_map(start_name_node, Box::as_ref),
+                                    elm_syntax_node_unbox(start_name_node),
                                     origin_module_declaration_documentation,
                                     maybe_signature
                                         .as_ref()
@@ -6603,12 +6542,10 @@ fn type_declaration_completions_into(
                                     module_name,
                                     &module_syntax.comments,
                                     origin_module_declaration_node.range,
-                                    Some(elm_syntax_node_as_ref_map(name_node, Box::as_ref)),
+                                    Some(elm_syntax_node_unbox(name_node)),
                                     origin_module_declaration_documentation,
                                     parameters,
-                                    maybe_variant0_name
-                                        .as_ref()
-                                        .map(|node| elm_syntax_node_as_ref_map(node, Box::as_ref)),
+                                    maybe_variant0_name.as_ref().map(elm_syntax_node_unbox),
                                     variant0_values,
                                     variant1_up,
                                 ),
@@ -6642,7 +6579,7 @@ fn type_declaration_completions_into(
                                     module_name,
                                     &module_syntax.comments,
                                     origin_module_declaration_node.range,
-                                    Some(elm_syntax_node_as_ref_map(name_node, Box::as_ref)),
+                                    Some(elm_syntax_node_unbox(name_node)),
                                     origin_module_declaration_documentation,
                                     parameters,
                                     type_.as_ref().map(elm_syntax_node_as_ref),
@@ -11329,7 +11266,7 @@ fn elm_syntax_let_declaration_into(
                 so_far,
                 indent,
                 comments,
-                elm_syntax_node_as_ref_map(start_name_node, Box::as_ref),
+                elm_syntax_node_unbox(start_name_node),
                 maybe_signature.as_ref(),
                 parameters,
                 *maybe_equals_key_symbol_range,
@@ -12362,13 +12299,9 @@ fn elm_syntax_declaration_into(
                 comments,
                 |qualified| qualified.qualification,
                 declaration_node.range,
-                maybe_name
-                    .as_ref()
-                    .map(|name_node| elm_syntax_node_as_ref_map(name_node, Box::as_ref)),
+                maybe_name.as_ref().map(elm_syntax_node_unbox),
                 parameters,
-                maybe_variant0_name
-                    .as_ref()
-                    .map(|name_node| elm_syntax_node_as_ref_map(name_node, Box::as_ref)),
+                maybe_variant0_name.as_ref().map(elm_syntax_node_unbox),
                 variant0_values,
                 variant1_up,
             );
@@ -12410,9 +12343,7 @@ fn elm_syntax_declaration_into(
                 comments,
                 |qualified| qualified.qualification,
                 declaration_node.range,
-                maybe_name
-                    .as_ref()
-                    .map(|name_node| elm_syntax_node_as_ref_map(name_node, Box::as_ref)),
+                maybe_name.as_ref().map(elm_syntax_node_unbox),
                 maybe_type.as_ref().map(elm_syntax_node_as_ref),
             );
         }
@@ -12428,9 +12359,7 @@ fn elm_syntax_declaration_into(
                 comments,
                 |qualified| qualified.qualification,
                 declaration_node.range,
-                maybe_name
-                    .as_ref()
-                    .map(|name_node| elm_syntax_node_as_ref_map(name_node, Box::as_ref)),
+                maybe_name.as_ref().map(elm_syntax_node_unbox),
                 parameters,
                 maybe_type.as_ref().map(elm_syntax_node_as_ref),
             );
@@ -12446,7 +12375,7 @@ fn elm_syntax_declaration_into(
                 so_far,
                 0,
                 comments,
-                elm_syntax_node_as_ref_map(start_name_node, Box::as_ref),
+                elm_syntax_node_unbox(start_name_node),
                 maybe_signature.as_ref(),
                 parameters,
                 *maybe_equals_key_symbol_range,
@@ -12669,9 +12598,7 @@ fn elm_syntax_choice_type_declaration_into<'a>(
             comments,
             assign_qualification,
             previous_syntax_end,
-            variant.name.as_ref().map(|variant_name_node| {
-                elm_syntax_node_as_ref_map(variant_name_node, Box::as_ref)
-            }),
+            variant.name.as_ref().map(elm_syntax_node_unbox),
             &variant.values,
         );
     }
