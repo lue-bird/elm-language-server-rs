@@ -11378,7 +11378,10 @@ fn elm_syntax_variable_declaration_into(
                 },
             ),
         );
-        elm_syntax_pattern_not_parenthesized_into(so_far, elm_syntax_node_as_ref(parameter_node));
+        elm_syntax_pattern_parenthesized_if_space_separated_into(
+            so_far,
+            elm_syntax_node_as_ref(parameter_node),
+        );
         previous_parameter_end = parameter_node.range.end;
     }
     space_or_linebreak_indented_into(so_far, parameters_line_span, next_indent(indent));
