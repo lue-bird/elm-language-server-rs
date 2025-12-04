@@ -19882,14 +19882,16 @@ fn parse_elm_syntax_module(module_source: &str) -> ElmSyntaxModule {
                 last_valid_end_offet_utf8 = state.offset_utf8;
             }
             None => {
+                last_parsed_was_valid = false;
                 parse_before_next_linebreak(&mut state);
-                if parse_linebreak(&mut state) {
-                    last_parsed_was_valid = false;
-                } else {
+                if !parse_linebreak(&mut state) {
                     break 'parsing_delarations;
                 }
             }
         }
+    }
+    if !last_parsed_was_valid {
+        declarations.push(Err(Box::from(&module_source[last_valid_end_offet_utf8..])));
     }
     ElmSyntaxModule {
         header: maybe_header,
