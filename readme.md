@@ -106,7 +106,5 @@ Then point your editor to the created `???/target/debug/elm-language-server-rs`.
   and request full file content on each change (potentially only for dependencies).
   This adds complexity and is slower so only if necessary.
 - in syntax tree, use separate range type for single-line tokens like keywords, symbols, names etc to save on memory consumption
-- switch most syntax tree `Box<str>`s to https://docs.rs/smartstring/latest/smartstring/
-  to for example speed up collecting references (e.g. for rename)
 - in syntax tree, use `Box<[]>` instead of `Vec` for common nodes like call arguments
 - on init, read modules in parallel, not just projects, to even out difference in project size (seems not worth using threads, maybe something more lightweight?)
