@@ -693,49 +693,68 @@ fn publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(
     connection: &lsp_server::Connection,
     state: &mut State,
 ) {
-    for (in_workspace_project_path, in_workspace_project_state) in
-        state
+    let (project_diagnostics_sender, project_diagnostics_receiver) = std::sync::mpsc::channel();
+    std::thread::scope(|thread_scope| {
+        let configured_elm_path_ref = state.configured_elm_path.as_deref();
+        let configured_elm_test_path_ref = state.configured_elm_test_path.as_deref();
+        for (in_workspace_project_path, in_workspace_project_state) in state
             .projects
             .iter_mut()
             .filter(|(_, project)| match project.kind {
                 ProjectKind::InWorkspace | ProjectKind::Test => true,
                 ProjectKind::Dependency => false,
             })
-    {
-        match compute_diagnostics(
-            state.configured_elm_path.as_deref(),
-            state.configured_elm_test_path.as_deref(),
-            in_workspace_project_path,
-            in_workspace_project_state,
-        ) {
-            Err(error) => {
-                eprintln!("{error}");
-            }
-            Ok(elm_make_errors) => {
-                let diagnostics_to_publish: Vec<lsp_types::PublishDiagnosticsParams> =
-                    elm_make_errors
-                        .iter()
-                        .filter_map(|elm_make_file_error| {
-                            let url: lsp_types::Url =
-                                lsp_types::Url::from_file_path(elm_make_file_error.path.as_ref())
-                                    .ok()?;
-                            let diagnostics: Vec<lsp_types::Diagnostic> = elm_make_file_error
-                                .problems
+        {
+            let project_diagnostics_sender = project_diagnostics_sender.clone();
+            thread_scope.spawn(move || {
+                match compute_diagnostics(
+                    configured_elm_path_ref,
+                    configured_elm_test_path_ref,
+                    in_workspace_project_path,
+                    in_workspace_project_state,
+                ) {
+                    Err(error) => {
+                        eprintln!("{error}");
+                    }
+                    Ok(elm_make_errors) => {
+                        let diagnostics_to_publish: Vec<lsp_types::PublishDiagnosticsParams> =
+                            elm_make_errors
                                 .iter()
-                                .map(elm_make_file_problem_to_diagnostic)
+                                .filter_map(|elm_make_file_error| {
+                                    let url: lsp_types::Url = lsp_types::Url::from_file_path(
+                                        elm_make_file_error.path.as_ref(),
+                                    )
+                                    .ok()?;
+                                    let diagnostics: Vec<lsp_types::Diagnostic> =
+                                        elm_make_file_error
+                                            .problems
+                                            .iter()
+                                            .map(elm_make_file_problem_to_diagnostic)
+                                            .collect::<Vec<_>>();
+                                    Some(lsp_types::PublishDiagnosticsParams {
+                                        uri: url,
+                                        diagnostics: diagnostics,
+                                        version: None,
+                                    })
+                                })
                                 .collect::<Vec<_>>();
-                            Some(lsp_types::PublishDiagnosticsParams {
-                                uri: url,
-                                diagnostics: diagnostics,
-                                version: None,
-                            })
-                        })
-                        .collect::<Vec<_>>();
-                for file_diagnostics_to_publish in diagnostics_to_publish {
-                    let _ = publish_diagnostics(connection, file_diagnostics_to_publish);
+                        let _: Result<(), std::sync::mpsc::SendError<_>> =
+                            project_diagnostics_sender
+                                .send((in_workspace_project_path.clone(), elm_make_errors));
+                        for file_diagnostics_to_publish in diagnostics_to_publish {
+                            let _ = publish_diagnostics(connection, file_diagnostics_to_publish);
+                        }
+                    }
                 }
-                in_workspace_project_state.elm_make_errors = elm_make_errors;
-            }
+            });
+        }
+    });
+    drop(project_diagnostics_sender);
+    while let Ok((diagnosed_project_path, elm_make_errors)) = project_diagnostics_receiver.recv() {
+        if let Some(workspace_project_state_to_update) =
+            state.projects.get_mut(&diagnosed_project_path)
+        {
+            workspace_project_state_to_update.elm_make_errors = elm_make_errors;
         }
     }
 }
