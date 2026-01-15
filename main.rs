@@ -9034,81 +9034,17 @@ fn elm_syntax_type_not_parenthesized_into<'a>(
             input,
             arrow_key_symbol_range: _,
             output: maybe_output,
-        } => {
-            let input_unparenthesized: ElmSyntaxNode<&ElmSyntaxType> =
-                elm_syntax_type_to_unparenthesized(elm_syntax_node_unbox(input));
-            match input_unparenthesized.value {
-                ElmSyntaxType::Function { .. } => {
-                    elm_syntax_type_parenthesized_into(
-                        so_far,
-                        indent,
-                        assign_qualification,
-                        comments,
-                        input.range,
-                        input_unparenthesized,
-                    );
-                }
-                _ => {
-                    elm_syntax_type_not_parenthesized_into(
-                        so_far,
-                        indent,
-                        assign_qualification,
-                        comments,
-                        elm_syntax_node_unbox(input),
-                    );
-                }
-            }
-            space_or_linebreak_indented_into(
-                so_far,
-                elm_syntax_range_line_span(type_node.range, comments),
-                indent,
-            );
-            let comments_around_arrow: &[ElmSyntaxNode<ElmSyntaxComment>] =
-                elm_syntax_comments_in_range(
-                    comments,
-                    lsp_types::Range {
-                        start: input.range.end,
-                        end: maybe_output
-                            .as_ref()
-                            .map(|node| node.range.start)
-                            .unwrap_or(type_node.range.end),
-                    },
-                );
-            if let Some(output_node) = maybe_output {
-                so_far.push_str("->");
-                space_or_linebreak_indented_into(
-                    so_far,
-                    if comments_around_arrow.is_empty() {
-                        elm_syntax_range_line_span(output_node.range, comments)
-                    } else {
-                        LineSpan::Multiple
-                    },
-                    next_indent(indent),
-                );
-                elm_syntax_comments_then_linebreak_indented_into(
-                    so_far,
-                    next_indent(indent),
-                    comments_around_arrow,
-                );
-                elm_syntax_type_not_parenthesized_into(
-                    so_far,
-                    next_indent(indent),
-                    assign_qualification,
-                    comments,
-                    elm_syntax_node_unbox(output_node),
-                );
-            } else {
-                if !comments_around_arrow.is_empty() {
-                    linebreak_indented_into(so_far, indent);
-                    elm_syntax_comments_then_linebreak_indented_into(
-                        so_far,
-                        indent,
-                        comments_around_arrow,
-                    );
-                }
-                so_far.push_str("-> ");
-            }
-        }
+        } => elm_syntax_type_function_into(
+            so_far,
+            comments,
+            assign_qualification,
+            elm_syntax_range_line_span(type_node.range, comments),
+            type_node.range,
+            indent,
+            elm_syntax_node_unbox(input),
+            indent,
+            maybe_output.as_ref().map(elm_syntax_node_unbox),
+        ),
         ElmSyntaxType::Parenthesized(in_parens) => {
             let innermost: ElmSyntaxNode<&ElmSyntaxType> =
                 elm_syntax_type_to_unparenthesized(elm_syntax_node_unbox(in_parens));
@@ -9441,6 +9377,112 @@ fn elm_syntax_type_not_parenthesized_into<'a>(
         }
     }
 }
+
+fn elm_syntax_type_function_into<'a>(
+    so_far: &mut String,
+    comments: &[ElmSyntaxNode<ElmSyntaxComment>],
+    assign_qualification: impl Fn(ElmQualified<'a>) -> &'a str + Copy,
+    line_span: LineSpan,
+    full_range: lsp_types::Range,
+    indent_for_input: usize,
+    input: ElmSyntaxNode<&'a ElmSyntaxType>,
+    indent_after_input: usize,
+    maybe_output: Option<ElmSyntaxNode<&'a ElmSyntaxType>>,
+) {
+    let input_unparenthesized: ElmSyntaxNode<&ElmSyntaxType> =
+        elm_syntax_type_to_unparenthesized(input);
+    match input_unparenthesized.value {
+        ElmSyntaxType::Function { .. } => {
+            elm_syntax_type_parenthesized_into(
+                so_far,
+                indent_for_input,
+                assign_qualification,
+                comments,
+                input.range,
+                input_unparenthesized,
+            );
+        }
+        _ => {
+            elm_syntax_type_not_parenthesized_into(
+                so_far,
+                indent_for_input,
+                assign_qualification,
+                comments,
+                input,
+            );
+        }
+    }
+    space_or_linebreak_indented_into(so_far, line_span, indent_after_input);
+    let comments_around_arrow: &[ElmSyntaxNode<ElmSyntaxComment>] = elm_syntax_comments_in_range(
+        comments,
+        lsp_types::Range {
+            start: input.range.end,
+            end: maybe_output
+                .as_ref()
+                .map(|node| node.range.start)
+                .unwrap_or(full_range.end),
+        },
+    );
+    match maybe_output {
+        None => {
+            if !comments_around_arrow.is_empty() {
+                linebreak_indented_into(so_far, indent_after_input);
+                elm_syntax_comments_then_linebreak_indented_into(
+                    so_far,
+                    indent_after_input,
+                    comments_around_arrow,
+                );
+            }
+            so_far.push_str("-> ");
+        }
+        Some(output_node) => {
+            so_far.push_str("->");
+            space_or_linebreak_indented_into(
+                so_far,
+                if comments_around_arrow.is_empty() {
+                    elm_syntax_range_line_span(output_node.range, comments)
+                } else {
+                    LineSpan::Multiple
+                },
+                next_indent(indent_after_input),
+            );
+            elm_syntax_comments_then_linebreak_indented_into(
+                so_far,
+                next_indent(indent_after_input),
+                comments_around_arrow,
+            );
+            let output_node_unparenthesized: ElmSyntaxNode<&ElmSyntaxType> =
+                elm_syntax_type_to_unparenthesized(output_node);
+            match output_node_unparenthesized.value {
+                ElmSyntaxType::Function {
+                    input: output_input,
+                    arrow_key_symbol_range: _,
+                    output: output_maybe_output,
+                } => elm_syntax_type_function_into(
+                    so_far,
+                    comments,
+                    assign_qualification,
+                    line_span,
+                    output_node_unparenthesized.range,
+                    next_indent(indent_after_input),
+                    elm_syntax_node_unbox(output_input),
+                    indent_after_input,
+                    output_maybe_output.as_ref().map(elm_syntax_node_unbox),
+                ),
+                _ => {
+                    elm_syntax_type_not_parenthesized_into(
+                        so_far,
+                        next_indent(indent_after_input),
+                        assign_qualification,
+                        comments,
+                        output_node_unparenthesized,
+                    );
+                }
+            }
+        }
+    }
+}
+
 fn elm_syntax_type_parenthesized_into<'a>(
     so_far: &mut String,
     indent: usize,
