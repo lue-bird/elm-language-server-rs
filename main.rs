@@ -10031,6 +10031,7 @@ fn elm_syntax_expression_not_parenthesized_into(
                     },
                 );
             let line_span_before_argument0: LineSpan = if comments_before_argument0.is_empty()
+                && called_node.range.start.line == argument0_node.range.end.line
                 && elm_syntax_expression_line_span(comments, elm_syntax_node_unbox(called_node))
                     == LineSpan::Single
                 && elm_syntax_expression_line_span(comments, elm_syntax_node_unbox(argument0_node))
