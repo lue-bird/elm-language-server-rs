@@ -1,5 +1,4 @@
 target
-Cargo.lock
 package-lock.json
 elm-stuff
 node_modules
