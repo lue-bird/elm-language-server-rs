@@ -672,28 +672,30 @@ fn update_state_on_did_change_text_document(
     };
     for project_state in state.projects.values_mut() {
         if let Some(module_state) = project_state.modules.get_mut(&changed_file_path) {
+            let mut updated_source: String = std::mem::take(&mut module_state.source);
             for change in did_change_text_document.content_changes {
                 match (change.range, change.range_length) {
+                    // means full replacement
                     (None, None) => {
-                        // means full replacement
-                        project_state.modules.insert(
-                            changed_file_path,
-                            initialize_module_state_from_source(change.text),
-                        );
-                        return;
+                        updated_source = change.text;
                     }
+                    (Some(range), None) => {
+                        string_replace_lsp_range(&mut updated_source, range, &change.text);
+                    }
+                    // sending a length is deprecated (sadly) but e.g. vscode still sends it
+                    // which allows us to do a faster string replace
                     (Some(range), Some(range_length)) => {
-                        string_replace_lsp_range(
-                            &mut module_state.source,
+                        string_replace_lsp_range_for_length(
+                            &mut updated_source,
                             range,
                             range_length as usize,
                             &change.text,
                         );
                     }
-                    (None, _) | (_, None) => {}
+                    (None, Some(_)) => {}
                 }
             }
-            module_state.syntax = parse_elm_syntax_module(&module_state.source);
+            *module_state = initialize_module_state_from_source(updated_source);
             break;
         }
     }
@@ -6734,7 +6736,20 @@ fn respond_to_document_formatting(
                 character: 0,
             },
             end: lsp_types::Position {
-                line: 1_000_000_000, // to_format_project_module.module.source.lines().count() as u32 + 1
+                line: to_format_project_module.module.source.lines().count() as u32
+                    + (
+                        // restore last line break potentially eaten by .lines()
+                        if to_format_project_module
+                            .module
+                            .source
+                            .ends_with(['\r', '\n'])
+                        {
+                            1
+                        } else {
+                            0
+                        }
+                    )
+                    + 1,
                 character: 0,
             },
         },
@@ -20105,7 +20120,10 @@ fn parse_elm_syntax_module(module_source: &str) -> ElmSyntaxModule {
     }
 }
 
-fn string_replace_lsp_range(
+fn string_replace_lsp_range(string: &mut String, range: lsp_types::Range, replacement: &str) {
+    string.replace_range(str_lsp_range_to_range(string, range), replacement);
+}
+fn string_replace_lsp_range_for_length(
     string: &mut String,
     range: lsp_types::Range,
     range_length: usize,
@@ -20124,6 +20142,27 @@ fn string_replace_lsp_range(
         start_offset..(start_offset + range_length_utf8),
         replacement,
     );
+}
+
+fn str_lsp_range_to_range(str: &str, range: lsp_types::Range) -> std::ops::Range<usize> {
+    let start_line_offset: usize =
+        str_offset_after_n_lsp_linebreaks(str, range.start.line as usize);
+    let start_offset: usize = start_line_offset
+        + str_starting_utf8_length_for_utf16_length(
+            &str[start_line_offset..],
+            range.start.character as usize,
+        );
+    let end_line_offset: usize = start_line_offset
+        + str_offset_after_n_lsp_linebreaks(
+            &str[start_line_offset..],
+            (range.end.line - range.start.line) as usize,
+        );
+    let end_offset: usize = end_line_offset
+        + str_starting_utf8_length_for_utf16_length(
+            &str[end_line_offset..],
+            range.end.character as usize,
+        );
+    start_offset..end_offset
 }
 fn str_offset_after_n_lsp_linebreaks(str: &str, linebreak_count_to_skip: usize) -> usize {
     if linebreak_count_to_skip == 0 {
