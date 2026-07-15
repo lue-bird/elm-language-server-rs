@@ -96,7 +96,7 @@ Then point your editor to `elm-language-server-rs`.
 - `declarations.shrink_to_fit();` saves around 0.6% of memory at the cost of a bit of speed
 - upgrading `lto` to `"thin"` to `"fat"` both improve runtime speed by ~13% compared to the default (and reduce binary size) but increase build time by about 30% (default to thin) and 15% (thin to fat).
   As this prolongs installation and prevents people from quickly trying it, the default is kept.
-  If this language server get distributed as a binary or people end up using this language server a lot, this `"thin"` might become a reasonable trade-off.
+  If this language server gets distributed as a binary or people end up using this language server a lot, this `"thin"` might become a reasonable trade-off.
 
 ### optimizations to try
 - reparse incrementally (somewhat easy to implement but somehow it's for me at least pretty much fast enough already without? More data points welcome)
