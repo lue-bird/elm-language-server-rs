@@ -8905,10 +8905,15 @@ fn elm_syntax_comments_in_range(
     let comments_in_range_start_index: usize = comments
         .binary_search_by(|comment_node| comment_node.range.start.cmp(&range.start))
         .unwrap_or_else(|i| i);
-    let comments_in_range_end_exclusive_index: usize = comments
-        .binary_search_by(|comment_node| comment_node.range.start.cmp(&range.end))
+    let comments_after_start_end_inclusive_index: usize = comments[comments_in_range_start_index..]
+        .binary_search_by(|comment_node| comment_node.range.end.cmp(&range.end))
         .unwrap_or_else(|i| i);
-    &comments[comments_in_range_start_index..comments_in_range_end_exclusive_index]
+    comments
+        .get(
+            comments_in_range_start_index
+                ..(comments_in_range_start_index + comments_after_start_end_inclusive_index),
+        )
+        .unwrap_or(&[])
 }
 fn elm_syntax_comments_from_position(
     comments: &[ElmSyntaxNode<ElmSyntaxComment>],
@@ -9440,7 +9445,17 @@ fn elm_syntax_type_function_into<'a>(
             space_or_linebreak_indented_into(
                 so_far,
                 if comments_around_arrow.is_empty() {
-                    elm_syntax_range_line_span(output_node.range, comments)
+                    elm_syntax_range_line_span(
+                        match output_node.value {
+                            ElmSyntaxType::Function {
+                                input: output_function_input_node,
+                                arrow_key_symbol_range: _,
+                                output: _,
+                            } => output_function_input_node.range,
+                            _ => output_node.range,
+                        },
+                        comments,
+                    )
                 } else {
                     LineSpan::Multiple
                 },
@@ -9904,9 +9919,12 @@ fn elm_char_needs_unicode_escaping(char: char) -> bool {
     (char.len_utf16() >= 2) || char.is_control()
 }
 fn elm_unicode_char_escape_into(so_far: &mut String, char: char) {
-    for utf16_code in char.encode_utf16(&mut [0; 2]) {
+    if char.len_utf16() <= 1 {
         use std::fmt::Write as _;
-        let _ = write!(so_far, "\\u{{{:04X}}}", utf16_code);
+        let _ = write!(so_far, "\\u{{{:04X}}}", u32::from(char));
+    } else {
+        use std::fmt::Write as _;
+        let _ = write!(so_far, "\\u{{{:06X}}}", u32::from(char));
     }
 }
 fn elm_int_into(so_far: &mut String, base: ElmSyntaxIntBase, value_or_err: &Result<i64, Box<str>>) {
@@ -9976,15 +9994,17 @@ fn elm_string_into(so_far: &mut String, quoting_style: ElmSyntaxStringQuotingSty
                     quote_count_to_insert += 1;
                     continue 'pushing_escaped_content;
                 }
-                so_far.extend(std::iter::repeat_n('\"', quote_count_to_insert));
+                if quote_count_to_insert >= 3 {
+                    so_far.extend(std::iter::repeat_n("\\\"", quote_count_to_insert));
+                } else {
+                    so_far.extend(std::iter::repeat_n('\"', quote_count_to_insert));
+                }
+                quote_count_to_insert = 0;
                 match char {
                     '\\' => so_far.push_str("\\\\"),
                     '\t' => so_far.push_str("\\t"),
                     '\r' => so_far.push('\r'),
                     '\n' => so_far.push('\n'),
-                    '\"' => {
-                        quote_count_to_insert += 1;
-                    }
                     other_character => {
                         if elm_char_needs_unicode_escaping(other_character) {
                             elm_unicode_char_escape_into(so_far, other_character);
@@ -10199,7 +10219,10 @@ fn elm_syntax_expression_not_parenthesized_into(
                     so_far,
                     next_indent(indent),
                     comments,
-                    previous_syntax_that_covered_comments_end,
+                    maybe_of_keyword_range
+                        .map(|r| r.end)
+                        .or_else(|| maybe_matched.as_ref().map(|n| n.range.end))
+                        .unwrap_or(expression_node.range.start),
                     case0,
                 );
                 for case in case1_up {
@@ -10588,7 +10611,7 @@ fn elm_syntax_expression_not_parenthesized_into(
                         },
                     ),
                 );
-                elm_syntax_pattern_not_parenthesized_into(
+                elm_syntax_pattern_parenthesized_if_space_separated_into(
                     so_far,
                     elm_syntax_node_as_ref(parameter0_node),
                 );
@@ -10610,7 +10633,7 @@ fn elm_syntax_expression_not_parenthesized_into(
                             },
                         ),
                     );
-                    elm_syntax_pattern_not_parenthesized_into(
+                    elm_syntax_pattern_parenthesized_if_space_separated_into(
                         so_far,
                         elm_syntax_node_as_ref(parameter_node),
                     );
@@ -10669,7 +10692,7 @@ fn elm_syntax_expression_not_parenthesized_into(
             result: maybe_result,
         } => {
             so_far.push_str("let");
-            let mut previous_declaration_end: lsp_types::Position = expression_node.range.end;
+            let mut previous_declaration_end: lsp_types::Position = expression_node.range.start;
             match declarations.split_last() {
                 None => {
                     linebreak_indented_into(so_far, next_indent(indent));
@@ -11230,7 +11253,7 @@ fn elm_syntax_case_into(
                 comments,
                 lsp_types::Range {
                     start: before_case_arrow_key_symbol,
-                    end: result_node.range.end,
+                    end: result_node.range.start,
                 },
             ),
         );
@@ -11258,19 +11281,20 @@ fn elm_syntax_expression_fields_into_string<'a>(
     let mut previous_syntax_end: lsp_types::Position = field0.name.range.end;
     so_far.push_str(" =");
     if let Some(field0_value_node) = &field0.value {
-        let comments_before_field0_value = elm_syntax_comments_in_range(
-            comments,
-            lsp_types::Range {
-                start: field0.name.range.end,
-                end: field0_value_node.range.start,
-            },
-        );
+        let range_between_field0_name_value = lsp_types::Range {
+            start: field0.name.range.end,
+            end: field0_value_node.range.start,
+        };
+        let comments_before_field0_value =
+            elm_syntax_comments_in_range(comments, range_between_field0_name_value);
         space_or_linebreak_indented_into(
             so_far,
-            if comments_before_field0_value.is_empty() {
-                elm_syntax_expression_line_span(comments, elm_syntax_node_as_ref(field0_value_node))
-            } else {
-                LineSpan::Multiple
+            match elm_syntax_range_line_span(range_between_field0_name_value, comments) {
+                LineSpan::Multiple => LineSpan::Multiple,
+                LineSpan::Single => elm_syntax_expression_line_span(
+                    comments,
+                    elm_syntax_node_as_ref(field0_value_node),
+                ),
             },
             next_indent(indent + 2),
         );
@@ -11307,25 +11331,20 @@ fn elm_syntax_expression_fields_into_string<'a>(
         previous_syntax_end = field.name.range.end;
         so_far.push_str(" =");
         if let Some(field_value_node) = &field.value {
-            let comments_before_field_value = elm_syntax_comments_in_range(
-                comments,
-                lsp_types::Range {
-                    start: field.name.range.end,
-                    end: field_value_node.range.start,
-                },
-            );
+            let range_between_field_name_value = lsp_types::Range {
+                start: field.name.range.end,
+                end: field_value_node.range.start,
+            };
+            let comments_before_field_value =
+                elm_syntax_comments_in_range(comments, range_between_field_name_value);
             space_or_linebreak_indented_into(
                 so_far,
-                if comments_before_field_value.is_empty() {
-                    elm_syntax_range_line_span(
-                        lsp_types::Range {
-                            start: field.name.range.end,
-                            end: field_value_node.range.end,
-                        },
+                match elm_syntax_range_line_span(range_between_field_name_value, comments) {
+                    LineSpan::Multiple => LineSpan::Multiple,
+                    LineSpan::Single => elm_syntax_expression_line_span(
                         comments,
-                    )
-                } else {
-                    LineSpan::Multiple
+                        elm_syntax_node_as_ref(field_value_node),
+                    ),
                 },
                 next_indent(indent + 2),
             );
@@ -11357,16 +11376,14 @@ fn elm_syntax_let_declaration_into(
             equals_key_symbol_range: maybe_equals_key_symbol_range,
             expression: maybe_expression,
         } => {
-            elm_syntax_comments_into(
+            elm_syntax_comments_then_linebreak_indented_into(
                 so_far,
                 indent,
                 elm_syntax_comments_in_range(
                     comments,
                     lsp_types::Range {
                         start: let_declaration_node.range.start,
-                        end: maybe_equals_key_symbol_range
-                            .map(|range| range.start)
-                            .unwrap_or(pattern_node.range.end),
+                        end: pattern_node.range.start,
                     },
                 ),
             );
@@ -11374,22 +11391,50 @@ fn elm_syntax_let_declaration_into(
                 so_far,
                 elm_syntax_node_as_ref(pattern_node),
             );
-            so_far.push_str(" =");
-            linebreak_indented_into(so_far, next_indent(indent));
-            if let Some(expression_node) = maybe_expression {
-                elm_syntax_comments_into(
-                    so_far,
-                    next_indent(indent),
-                    elm_syntax_comments_in_range(
+            match maybe_expression {
+                None => {
+                    if let Some(equals_key_symbol_range) = maybe_equals_key_symbol_range {
+                        let comments_before_equals = elm_syntax_comments_in_range(
+                            comments,
+                            lsp_types::Range {
+                                start: pattern_node.range.end,
+                                end: equals_key_symbol_range.start,
+                            },
+                        );
+                        if !comments_before_equals.is_empty() {
+                            elm_syntax_comments_then_linebreak_indented_into(
+                                so_far,
+                                next_indent(indent),
+                                comments_before_equals,
+                            );
+                        } else {
+                            so_far.push(' ');
+                        }
+                        so_far.push('=');
+                        linebreak_indented_into(so_far, next_indent(indent));
+                    }
+                }
+                Some(expression_node) => {
+                    so_far.push_str(" =");
+                    linebreak_indented_into(so_far, next_indent(indent));
+                    elm_syntax_comments_then_linebreak_indented_into(
+                        so_far,
+                        next_indent(indent),
+                        elm_syntax_comments_in_range(
+                            comments,
+                            lsp_types::Range {
+                                start: pattern_node.range.end,
+                                end: expression_node.range.start,
+                            },
+                        ),
+                    );
+                    elm_syntax_expression_not_parenthesized_into(
+                        so_far,
+                        next_indent(indent),
                         comments,
-                        lsp_types::Range {
-                            start: maybe_equals_key_symbol_range
-                                .map(|range| range.end)
-                                .unwrap_or(pattern_node.range.end),
-                            end: expression_node.range.end,
-                        },
-                    ),
-                );
+                        elm_syntax_node_as_ref(expression_node),
+                    );
+                }
             }
         }
         ElmSyntaxLetDeclaration::VariableDeclaration {
@@ -11501,7 +11546,7 @@ fn elm_syntax_variable_declaration_into(
     } else {
         LineSpan::Multiple
     };
-    let mut previous_parameter_end: lsp_types::Position = start_name_node.range.start;
+    let mut previous_parameter_end: lsp_types::Position = syntax_before_parameters_end;
     for parameter_node in parameters {
         space_or_linebreak_indented_into(so_far, parameters_line_span, next_indent(indent));
         elm_syntax_comments_then_linebreak_indented_into(
@@ -11943,8 +11988,8 @@ fn elm_syntax_module_format(module_state: &ModuleState) -> String {
             );
         }
     }
-    builder.push_str("\n\n");
     if let Some(module_documentation_node) = &elm_syntax_module.documentation {
+        builder.push_str("\n\n");
         elm_syntax_module_level_comments(
             &mut builder,
             elm_syntax_comments_in_range(
@@ -11959,24 +12004,27 @@ fn elm_syntax_module_format(module_state: &ModuleState) -> String {
             &mut builder,
             &module_documentation_node.value,
         );
-        builder.push_str("\n\n");
         previous_syntax_end = module_documentation_node.range.end;
     }
-    if let Some(last_import_node) = elm_syntax_module.imports.last() {
-        elm_syntax_module_level_comments(
-            &mut builder,
-            elm_syntax_comments_in_range(
-                &elm_syntax_module.comments,
-                lsp_types::Range {
-                    start: previous_syntax_end,
-                    end: last_import_node.range.end,
-                },
-            ),
-        );
-        elm_syntax_imports_then_linebreak_into(&mut builder, &elm_syntax_module.imports);
-        previous_syntax_end = last_import_node.range.end;
-    } else {
-        builder.push('\n');
+    match elm_syntax_module.imports.last() {
+        None => {
+            builder.push('\n');
+        }
+        Some(last_import_node) => {
+            builder.push_str("\n\n");
+            elm_syntax_module_level_comments(
+                &mut builder,
+                elm_syntax_comments_in_range(
+                    &elm_syntax_module.comments,
+                    lsp_types::Range {
+                        start: previous_syntax_end,
+                        end: last_import_node.range.end,
+                    },
+                ),
+            );
+            elm_syntax_imports_then_linebreak_into(&mut builder, &elm_syntax_module.imports);
+            previous_syntax_end = last_import_node.range.end;
+        }
     }
     for documented_declaration_or_err in &elm_syntax_module.declarations {
         match documented_declaration_or_err {
@@ -12051,12 +12099,21 @@ fn elm_syntax_module_documentation_comment_into(
     module_documentation_elements: &[ElmSyntaxNode<ElmSyntaxModuleDocumentationElement>],
 ) {
     so_far.push_str("{-|");
+    let mut previous_element_was_at_docs = false;
     for module_documentation_element in module_documentation_elements {
         match &module_documentation_element.value {
-            ElmSyntaxModuleDocumentationElement::Markdown(markdown_node) => {
-                so_far.push_str(markdown_node);
+            ElmSyntaxModuleDocumentationElement::Markdown(markdown) => {
+                if previous_element_was_at_docs
+                    && markdown.as_ref() != "\n"
+                    && markdown.as_ref() != "\r\n"
+                {
+                    previous_element_was_at_docs = false;
+                    so_far.push('\n');
+                }
+                so_far.push_str(markdown);
             }
             ElmSyntaxModuleDocumentationElement::AtDocs(expose_group_names) => {
+                previous_element_was_at_docs = true;
                 so_far.push_str("@docs ");
                 if let Some((expose_name0_node, expose_name1_up)) = expose_group_names.split_first()
                 {
@@ -18787,9 +18844,9 @@ fn parse_elm_string_triple_quoted(state: &mut ParseState) -> Option<String> {
 fn parse_elm_text_content_char(state: &mut ParseState) -> Option<char> {
     parse_symbol_as(state, "\\\\", '\\')
         .or_else(|| parse_symbol_as(state, "\\'", '\''))
-        .or_else(|| parse_symbol_as(state, "\\\n", '\n'))
-        .or_else(|| parse_symbol_as(state, "\\\r", '\r'))
-        .or_else(|| parse_symbol_as(state, "\\\t", '\t'))
+        .or_else(|| parse_symbol_as(state, "\\n", '\n'))
+        .or_else(|| parse_symbol_as(state, "\\r", '\r'))
+        .or_else(|| parse_symbol_as(state, "\\t", '\t'))
         .or_else(|| parse_symbol_as(state, "\\\"", '"'))
         .or_else(|| {
             let start_offset_utf8: usize = state.offset_utf8;
@@ -18806,33 +18863,15 @@ fn parse_elm_text_content_char(state: &mut ParseState) -> Option<char> {
             let unicode_hex_str: &str =
                 &state.source[unicode_hex_start_offset_utf8..state.offset_utf8];
             let _: bool = parse_symbol(state, "}");
-            let Ok(first_utf16_code) = u16::from_str_radix(unicode_hex_str, 16) else {
+            let Ok(char_code) = u32::from_str_radix(unicode_hex_str, 16) else {
                 reset_parse_state(state);
                 return None;
             };
-            match char::from_u32(u32::from(first_utf16_code)) {
+            match char::from_u32(char_code) {
                 Some(char) => Some(char),
                 None => {
-                    if !parse_symbol(state, "\\u{") {
-                        reset_parse_state(state);
-                        return None;
-                    }
-                    let second_unicode_hex_start_offset_utf8: usize = state.offset_utf8;
-                    parse_same_line_while(state, |c| c.is_ascii_hexdigit());
-                    let second_unicode_hex_str: &str =
-                        &state.source[second_unicode_hex_start_offset_utf8..state.offset_utf8];
-                    let _: bool = parse_symbol(state, "}");
-                    let Ok(second_utf16_code) = u16::from_str_radix(second_unicode_hex_str, 16)
-                    else {
-                        reset_parse_state(state);
-                        return None;
-                    };
-                    char::decode_utf16([first_utf16_code, second_utf16_code])
-                        .find_map(Result::ok)
-                        .or_else(|| {
-                            reset_parse_state(state);
-                            None
-                        })
+                    reset_parse_state(state);
+                    None
                 }
             }
         })
