@@ -1,29 +1,23 @@
 import * as vscode from "vscode";
-import {
-  LanguageClientOptions,
-} from "vscode-languageclient";
-import {
-  LanguageClient,
-  ServerOptions,
-} from "vscode-languageclient/node";
+import { LanguageClientOptions } from "vscode-languageclient";
+import { LanguageClient, ServerOptions } from "vscode-languageclient/node";
 import * as child_process from "node:child_process";
 
 let client: LanguageClient | null = null;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  const languageServerExecutableName: string =
-    // when debugging, switch out for
-    // "/???/elm-language-server-rs/target/debug/elm-language-server-rs"
-    "elm-language-server-rs";
-  context.subscriptions.push(vscode.commands.registerCommand("elm.commands.restart", async () => {
-    if (client !== null) {
-      await client.stop();
-      await client.start();
-    }
-  }));
+  const languageServerExecutableName: string = "elm-language-server-rs";
+  context.subscriptions.push(
+    vscode.commands.registerCommand("elm.commands.restart", async () => {
+      if (client !== null) {
+        await client.stop();
+        await client.start();
+      }
+    }),
+  );
 
   const serverOptions: ServerOptions = async () => {
-    return child_process.spawn(languageServerExecutableName)
+    return child_process.spawn(languageServerExecutableName);
   };
   const clientOptions: LanguageClientOptions = {
     diagnosticCollectionName: "elm",
@@ -41,10 +35,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       fileEvents: vscode.workspace.createFileSystemWatcher("**/{elm.json,*.elm}"),
       // documentation says this is deprecated but how else
       // would you get the client to ping on configuration changes?
-      configurationSection: "elm-language-server-rs"
+      configurationSection: "elm-language-server-rs",
     },
     // technically not necessary but saves an unnecessary roundtrip
-    initializationOptions: getSettings(vscode.workspace.getConfiguration().get<IClientSettings>("elm-language-server-rs")),
+    initializationOptions: getSettings(
+      vscode.workspace.getConfiguration().get<IClientSettings>("elm-language-server-rs"),
+    ),
   };
   client = new LanguageClient(
     "elm-language-server-rs",
@@ -57,10 +53,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 function getSettings(config: IClientSettings | undefined): object {
   return config
     ? {
-      elmPath: config.elmPath,
-      elmFormatPath: config.elmFormatPath,
-      elmTestPath: config.elmTestPath,
-    }
+        elmPath: config.elmPath,
+        elmFormatPath: config.elmFormatPath,
+        elmTestPath: config.elmTestPath,
+      }
     : {};
 }
 export interface IClientSettings {
@@ -71,7 +67,7 @@ export interface IClientSettings {
 
 export function deactivate(): Thenable<void> | undefined {
   if (client !== null) {
-    return client.stop()
+    return client.stop();
   }
   return undefined;
 }
