@@ -10800,8 +10800,8 @@ fn elm_syntax_expression_not_parenthesized_into(
                     if comments.is_empty() {
                         so_far.push_str("[]");
                     } else {
-                        so_far.push('[');
-                        elm_syntax_comments_into(so_far, indent + 1, comments);
+                        so_far.push_str("[ ");
+                        elm_syntax_comments_into(so_far, indent + 2, comments);
                         linebreak_indented_into(so_far, indent);
                         so_far.push(']');
                     }
