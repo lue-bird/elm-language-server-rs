@@ -9722,7 +9722,10 @@ fn elm_syntax_pattern_not_parenthesized_into(
             as_keyword_range: _,
             variable: maybe_variable,
         } => {
-            elm_syntax_pattern_not_parenthesized_into(so_far, elm_syntax_node_unbox(pattern));
+            elm_syntax_pattern_parenthesized_if_space_separated_into(
+                so_far,
+                elm_syntax_node_unbox(pattern),
+            );
             so_far.push_str(" as ");
             if let Some(variable_node) = maybe_variable {
                 so_far.push_str(&variable_node.value);
