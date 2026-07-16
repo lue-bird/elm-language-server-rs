@@ -1,7 +1,16 @@
 target
+*.wasm
+*.obj
+*.o
+*.tar.gz
+*.tgz
+*.zip
+*.jar
 package-lock.json
 elm-stuff
 node_modules
+run.rs
+build/
 .build
 dist
 elm.rs

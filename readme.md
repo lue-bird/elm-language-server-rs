@@ -38,7 +38,16 @@ You can also set their paths in the language server settings:
   This situation is, I assume, fixable by special-casing their storage and handling but it would require a _lot_ of work
 
 ## editor setups
-feel free to contribute, as I only use vscodium
+feel free to contribute, as I only use gram
+
+### zed/gram-like
+1. clone this repo
+2. open the editor command panel
+3. "zed: install dev extension" or "gram: install extension from folder" and select the cloned-path-elm-language-server-red/zed directory
+
+Optionally for more precise syntax highlighting, add the setting `"semantic_tokens": "combined"` or `"languages": { "elm": { "semantic_tokens": "full" } }`.
+
+Optionally for a file icon in the project panel, open the editor command panel, select `Icon theme selector: toggle` and choose "elm icon dark"/"elm icon light".
 
 ### vscode-like
 #### pre-built

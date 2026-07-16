@@ -1,0 +1,15 @@
+id = "elm language server rs"
+name = "elm language server rs"
+version = "0.0.1"
+schema_version = 1
+authors = ["lue-bird (lsp)", "Kolja Lampe (treesitter)"]
+description = "elm programming language support"
+repository = "https://github.com/lue-bird/elm-language-server-rs"
+
+[language_servers.elm-language-server-rs]
+name = "elm LSP in rust"
+languages = ["elm"]
+
+[grammars.elm]
+repository = "https://github.com/elm-tooling/tree-sitter-elm"
+rev = "main"

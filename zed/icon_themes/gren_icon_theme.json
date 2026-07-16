@@ -1,0 +1,27 @@
+{
+  "$schema": "https://zed.dev/schema/icon_themes/v0.3.0.json",
+  "name": "elm icon",
+  "author": "lue-bird",
+  "themes": [
+    {
+      "name": "elm icon dark",
+      "appearance": "dark",
+      "file_suffixes": {
+        "elm": "elm"
+      },
+      "file_icons": {
+        "elm": { "path": "./icons/file-icon-dark.svg" }
+      }
+    },
+    {
+      "name": "elm icon light",
+      "appearance": "light",
+      "file_suffixes": {
+        "elm": "elm"
+      },
+      "file_icons": {
+        "elm": { "path": "./icons/file-icon-light.svg" }
+      }
+    }
+  ]
+}
