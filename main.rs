@@ -1128,43 +1128,41 @@ fn update_state_with_configuration(state: &mut State, config_json: &serde_json::
                 })
             }
         });
-    if let Some(compiler_executable) = state.configured_elm_path.as_deref() {
-        let mut elm_version_command: std::process::Command =
-            std::process::Command::new(compiler_executable);
-        elm_version_command.stdin(std::process::Stdio::null());
-        elm_version_command.stdout(std::process::Stdio::piped());
-        elm_version_command.stderr(std::process::Stdio::piped());
-        elm_version_command.arg("--version");
-        match elm_version_command.spawn() {
+    let mut elm_version_command: std::process::Command =
+        std::process::Command::new(state.configured_elm_path.as_deref().unwrap_or("elm"));
+    elm_version_command.stdin(std::process::Stdio::null());
+    elm_version_command.stdout(std::process::Stdio::piped());
+    elm_version_command.stderr(std::process::Stdio::piped());
+    elm_version_command.arg("--version");
+    match elm_version_command.spawn() {
+        Err(error) => {
+            eprintln!(
+                "I tried to run {} but it failed: {error}. Try installing elm as shown in https://guide.elm-lang.org/install/elm.html",
+                format!("{elm_version_command:?}").replace('"', "")
+            );
+        }
+        Ok(elm_version_process) => match elm_version_process.wait_with_output() {
             Err(error) => {
                 eprintln!(
-                    "I tried to run {} but it failed: {error}. Try installing elm as shown in https://guide.elm-lang.org/install/elm.html",
+                    "I wasn't able to read the output of {}: {error}",
                     format!("{elm_version_command:?}").replace('"', "")
                 );
             }
-            Ok(elm_version_process) => match elm_version_process.wait_with_output() {
+            Ok(elm_make_output) => match str::from_utf8(&elm_make_output.stdout) {
                 Err(error) => {
                     eprintln!(
-                        "I wasn't able to read the output of {}: {error}",
+                        "I wasn't able to decode the output of {} as a string: {error}",
                         format!("{elm_version_command:?}").replace('"', "")
                     );
                 }
-                Ok(elm_make_output) => match str::from_utf8(&elm_make_output.stdout) {
-                    Err(error) => {
-                        eprintln!(
-                            "I wasn't able to decode the output of {} as a string: {error}",
-                            format!("{elm_version_command:?}").replace('"', "")
-                        );
-                    }
-                    Ok(elm_version) => {
-                        // since the version string is tiny
-                        // and it is leaked only once usually
-                        // this is perfectly fine
-                        state.elm_version = Box::leak(Box::from(elm_version.trim()));
-                    }
-                },
+                Ok(elm_version) => {
+                    // since the version string is tiny
+                    // and it is leaked only once usually
+                    // this is perfectly fine
+                    state.elm_version = Box::leak(Box::from(elm_version.trim()));
+                }
             },
-        }
+        },
     }
 }
 fn initialize_projects_state_for_workspace_directories_into(
@@ -7244,8 +7242,14 @@ fn elm_make_file_problem_to_diagnostic(
         range: if elm_version == "0.19.2" {
             // work around https://github.com/elm/compiler/issues/2358
             lsp_types::Range {
-                start: lsp_position_add_characters(problem.range.start, 1),
-                end: lsp_position_add_characters(problem.range.end, 1),
+                start: lsp_types::Position {
+                    line: problem.range.start.line + 1,
+                    character: problem.range.start.character + 1,
+                },
+                end: lsp_types::Position {
+                    line: problem.range.end.line + 1,
+                    character: problem.range.end.character + 1,
+                },
             }
         } else {
             problem.range
