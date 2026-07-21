@@ -6,6 +6,7 @@ struct State {
         /* path to directory containing elm.json */ std::path::PathBuf,
         ProjectState,
     >,
+    elm_version: &'static str,
     open_elm_text_document_uris: std::collections::HashSet<lsp_types::Url>,
     configured_elm_path: Option<Box<str>>,
     configured_elm_test_path: Option<Box<str>>,
@@ -67,8 +68,13 @@ fn initialize(
     connection: &lsp_server::Connection,
     initialize_arguments: &lsp_types::InitializeParams,
 ) -> Result<State, Box<dyn std::error::Error>> {
+    let elm_version_default = "0.19.1";
     let mut state: State = State {
-        projects: initialize_projects_state_for_workspace_directories_into(initialize_arguments),
+        projects: initialize_projects_state_for_workspace_directories_into(
+            elm_version_default,
+            initialize_arguments,
+        ),
+        elm_version: elm_version_default,
         open_elm_text_document_uris: std::collections::HashSet::new(),
         configured_elm_path: None,
         configured_elm_test_path: None,
@@ -411,12 +417,14 @@ fn update_state_on_did_change_watched_files(
     }
     if !edited_elm_json_project_paths.is_empty() {
         update_projects_state_on_elm_json_changes(
+            state.elm_version,
             &mut state.projects,
             edited_elm_json_project_paths.into_iter(),
         );
     }
 }
 fn update_projects_state_on_elm_json_changes(
+    elm_version: &str,
     projects_state: &mut std::collections::HashMap<std::path::PathBuf, ProjectState>,
     edited_elm_json_project_paths: impl Iterator<Item = std::path::PathBuf>,
 ) {
@@ -425,6 +433,7 @@ fn update_projects_state_on_elm_json_changes(
     let mut uninitialized_projects: std::collections::HashMap<std::path::PathBuf, ProjectState> =
         std::collections::HashMap::new();
     initialize_state_for_all_projects_into(
+        elm_version,
         &mut uninitialized_projects,
         edited_elm_json_project_paths,
     );
@@ -1101,8 +1110,47 @@ fn update_state_with_configuration(state: &mut State, config_json: &serde_json::
                 })
             }
         });
+    if let Some(compiler_executable) = state.configured_elm_path.as_deref() {
+        let mut elm_version_command: std::process::Command =
+            std::process::Command::new(compiler_executable);
+        elm_version_command.stdin(std::process::Stdio::null());
+        elm_version_command.stdout(std::process::Stdio::piped());
+        elm_version_command.stderr(std::process::Stdio::piped());
+        elm_version_command.arg("--version");
+        match elm_version_command.spawn() {
+            Err(error) => {
+                eprintln!(
+                    "I tried to run {} but it failed: {error}. Try installing elm as shown in https://guide.elm-lang.org/install/elm.html",
+                    format!("{elm_version_command:?}").replace('"', "")
+                );
+            }
+            Ok(elm_version_process) => match elm_version_process.wait_with_output() {
+                Err(error) => {
+                    eprintln!(
+                        "I wasn't able to read the output of {}: {error}",
+                        format!("{elm_version_command:?}").replace('"', "")
+                    );
+                }
+                Ok(elm_make_output) => match str::from_utf8(&elm_make_output.stdout) {
+                    Err(error) => {
+                        eprintln!(
+                            "I wasn't able to decode the output of {} as a string: {error}",
+                            format!("{elm_version_command:?}").replace('"', "")
+                        );
+                    }
+                    Ok(elm_version) => {
+                        // since the version string is tiny
+                        // and it is leaked only once usually
+                        // this is perfectly fine
+                        state.elm_version = Box::leak(Box::from(elm_version.trim()));
+                    }
+                },
+            },
+        }
+    }
 }
 fn initialize_projects_state_for_workspace_directories_into(
+    elm_version: &str,
     initialize_arguments: &lsp_types::InitializeParams,
 ) -> std::collections::HashMap<std::path::PathBuf, ProjectState> {
     let mut projects_state: std::collections::HashMap<std::path::PathBuf, ProjectState> =
@@ -1113,6 +1161,7 @@ fn initialize_projects_state_for_workspace_directories_into(
         .flatten()
         .filter_map(|workspace_folder| workspace_folder.uri.to_file_path().ok());
     initialize_state_for_all_projects_into(
+        elm_version,
         &mut projects_state,
         list_elm_project_directories_in_directory_at_path(workspace_directory_paths).into_iter(),
     );
@@ -1155,6 +1204,7 @@ fn initialize_project_modules(
 }
 
 fn initialize_state_for_all_projects_into(
+    elm_version: &str,
     projects_state: &mut std::collections::HashMap<std::path::PathBuf, ProjectState>,
     project_paths: impl Iterator<Item = std::path::PathBuf>,
 ) {
@@ -1190,6 +1240,7 @@ accordingly so that tools like the elm compiler and language server can find the
             &mut all_dependency_exposed_module_names,
             &mut skipped_dependencies,
             &elm_home_path,
+            elm_version,
             ProjectKind::InWorkspace,
             project_path,
         );
@@ -1221,6 +1272,7 @@ fn initialize_state_for_projects_into(
     >,
     skipped_dependencies: &mut std::collections::HashSet<std::path::PathBuf>,
     elm_home_path: &std::path::PathBuf,
+    elm_version: &str,
     project_kind: ProjectKind,
     project_paths: impl Iterator<Item = std::path::PathBuf>,
 ) -> std::collections::HashMap<ElmName, ProjectModuleOrigin> {
@@ -1234,6 +1286,7 @@ fn initialize_state_for_projects_into(
             all_dependency_exposed_module_names,
             skipped_dependencies,
             elm_home_path,
+            elm_version,
             project_kind,
             project_path,
         ));
@@ -1248,6 +1301,7 @@ fn initialize_state_for_project_into(
     >,
     skipped_dependencies: &mut std::collections::HashSet<std::path::PathBuf>,
     elm_home_path: &std::path::PathBuf,
+    elm_version: &str,
     project_kind: ProjectKind,
     project_path: std::path::PathBuf,
 ) -> std::collections::HashMap<ElmName, ProjectModuleOrigin> {
@@ -1306,7 +1360,7 @@ fn initialize_state_for_project_into(
     let dependency_path = |package_name: &str, package_version: &str| {
         std::path::Path::join(
             elm_home_path,
-            format!("0.19.1/packages/{package_name}/{package_version}"),
+            format!("{elm_version}/packages/{package_name}/{package_version}"),
         )
     };
     let direct_dependency_paths: Vec<std::path::PathBuf> = match &maybe_elm_json {
@@ -1370,6 +1424,7 @@ fn initialize_state_for_project_into(
         all_dependency_exposed_module_names,
         skipped_dependencies,
         elm_home_path,
+        elm_version,
         ProjectKind::Dependency,
         direct_dependency_paths.into_iter(),
     );
@@ -1408,6 +1463,7 @@ fn initialize_state_for_project_into(
                 all_dependency_exposed_module_names,
                 skipped_dependencies,
                 elm_home_path,
+                elm_version,
                 ProjectKind::Dependency,
                 test_only_dependencies,
             );
