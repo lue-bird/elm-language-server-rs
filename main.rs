@@ -279,6 +279,7 @@ fn handle_notification(
             {
                 publish_and_update_state_for_diagnostics_for_document(
                     connection,
+                    state.elm_version,
                     state.configured_elm_path.as_deref(),
                     state.configured_elm_test_path.as_deref(),
                     saved_project_path,
@@ -407,6 +408,7 @@ fn update_state_on_did_change_watched_files(
         if project_was_updated {
             publish_and_update_state_for_diagnostics_for_document(
                 connection,
+                state.elm_version,
                 state.configured_elm_path.as_deref(),
                 state.configured_elm_test_path.as_deref(),
                 project_path,
@@ -714,6 +716,7 @@ fn publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(
     connection: &lsp_server::Connection,
     state: &mut State,
 ) {
+    let elm_version = state.elm_version;
     let (project_diagnostics_sender, project_diagnostics_receiver) = std::sync::mpsc::channel();
     std::thread::scope(|thread_scope| {
         let configured_elm_path_ref = state.configured_elm_path.as_deref();
@@ -750,7 +753,12 @@ fn publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(
                                         elm_make_file_error
                                             .problems
                                             .iter()
-                                            .map(elm_make_file_problem_to_diagnostic)
+                                            .map(|problem| {
+                                                elm_make_file_problem_to_diagnostic(
+                                                    problem,
+                                                    elm_version,
+                                                )
+                                            })
                                             .collect::<Vec<_>>();
                                     Some(lsp_types::PublishDiagnosticsParams {
                                         uri: url,
@@ -782,6 +790,7 @@ fn publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(
 
 fn publish_and_update_state_for_diagnostics_for_document(
     connection: &lsp_server::Connection,
+    elm_version: &str,
     configured_elm_path: Option<&str>,
     configured_elm_test_path: Option<&str>,
     project_path: &std::path::Path,
@@ -810,7 +819,9 @@ fn publish_and_update_state_for_diagnostics_for_document(
                         let diagnostics: Vec<lsp_types::Diagnostic> = new
                             .problems
                             .iter()
-                            .map(elm_make_file_problem_to_diagnostic)
+                            .map(|problem| {
+                                elm_make_file_problem_to_diagnostic(problem, elm_version)
+                            })
                             .collect::<Vec<_>>();
                         Some(diagnostics)
                     }
@@ -7220,9 +7231,18 @@ fn elm_syntax_module_header_end_position(
 
 fn elm_make_file_problem_to_diagnostic(
     problem: &ElmMakeFileInternalCompileProblem,
+    elm_version: &str,
 ) -> lsp_types::Diagnostic {
     lsp_types::Diagnostic {
-        range: problem.range,
+        range: if elm_version == "0.19.2" {
+            // work around https://github.com/elm/compiler/issues/2358
+            lsp_types::Range {
+                start: lsp_position_add_characters(problem.range.start, 1),
+                end: lsp_position_add_characters(problem.range.end, 1),
+            }
+        } else {
+            problem.range
+        },
         severity: Some(lsp_types::DiagnosticSeverity::ERROR),
         code: None,
         code_description: None,
