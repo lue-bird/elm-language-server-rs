@@ -82,13 +82,14 @@ fn initialize(
     };
     if let Some(config_json) = &initialize_arguments.initialization_options {
         update_state_with_configuration(&mut state, config_json);
+        publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(
+            connection, &mut state,
+        );
     } else {
         connection
             .sender
             .send(lsp_server::Message::Request(configuration_request()?))?;
     }
-    // only initializing diagnostics once the `elmPath` configuration is received would be better
-    publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(connection, &mut state);
     connection.sender.send(lsp_server::Message::Notification(
         lsp_server::Notification {
             method: <lsp_types::request::RegisterCapability as lsp_types::request::Request>::METHOD
@@ -237,7 +238,9 @@ fn server_loop(
                 }
             }
             lsp_server::Message::Response(response) => {
-                if let Err(err) = handle_response(&mut state, &response.id, response.result) {
+                if let Err(err) =
+                    handle_response(connection, &mut state, &response.id, response.result)
+                {
                     eprintln!("failed to handle response {}: {err}", response.id);
                 }
             }
@@ -502,6 +505,7 @@ enum ServerRequestId {
     WorkspaceConfiguration,
 }
 fn handle_response(
+    connection: &lsp_server::Connection,
     state: &mut State,
     response_id: &lsp_server::RequestId,
     maybe_response_result: Option<serde_json::Value>,
@@ -513,6 +517,9 @@ fn handle_response(
             serde_json::from_value(response_result)?;
         if let Some(config_json) = response_parsed.first() {
             update_state_with_configuration(state, config_json);
+            publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(
+                connection, state,
+            );
         }
     }
     Ok(())
