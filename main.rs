@@ -10144,12 +10144,10 @@ fn elm_syntax_expression_not_parenthesized_into(
             cases,
         } => {
             so_far.push_str("case");
-            let previous_syntax_that_covered_comments_end: lsp_types::Position;
             match maybe_matched {
                 None => match maybe_of_keyword_range {
                     None => {
                         so_far.push_str("  ");
-                        previous_syntax_that_covered_comments_end = expression_node.range.start;
                     }
                     Some(of_keyword_range) => {
                         let comments_between_case_and_of_keywords: &[ElmSyntaxNode<
@@ -10172,7 +10170,6 @@ fn elm_syntax_expression_not_parenthesized_into(
                             );
                             linebreak_indented_into(so_far, indent);
                         }
-                        previous_syntax_that_covered_comments_end = of_keyword_range.end;
                     }
                 },
                 Some(matched_node) => {
@@ -10225,7 +10222,7 @@ fn elm_syntax_expression_not_parenthesized_into(
                         elm_syntax_node_unbox(matched_node),
                     );
                     space_or_linebreak_indented_into(so_far, before_cases_line_span, indent);
-                    if let Some(of_keyword_range) = maybe_of_keyword_range
+                    if let Some(_) = maybe_of_keyword_range
                         && !comments_before_of_keyword.is_empty()
                     {
                         linebreak_indented_into(so_far, indent);
@@ -10234,9 +10231,6 @@ fn elm_syntax_expression_not_parenthesized_into(
                             next_indent(indent),
                             comments_before_matched,
                         );
-                        previous_syntax_that_covered_comments_end = of_keyword_range.end;
-                    } else {
-                        previous_syntax_that_covered_comments_end = matched_node.range.end;
                     }
                 }
             }
