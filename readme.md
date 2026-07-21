@@ -17,6 +17,12 @@ You can also set their paths in the language server settings:
 - reliable (e.g. work well with code that only partially parses)
 - getting to know the language server protocol :)
 
+## alternatives
+- [WhileTruu/elm-language-server](https://github.com/WhileTruu/elm-language-server):
+  a real fork of the elm compiler and thus maybe more accurate and maybe more maintained
+- [elm-tooling/elm-language-server](https://github.com/elm-tooling/elm-language-server#editor-support): most used, quasi official, decked out but slightly sluggish and slightly unstable
+- [elm-land/vscode](https://github.com/elm-land/vscode): nice and minimal
+
 ## not planned
 - support for elm version <= 0.18 or inline GLSL blocks
 - type inference
