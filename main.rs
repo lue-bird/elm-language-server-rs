@@ -1353,7 +1353,7 @@ fn initialize_state_for_project_into(
                 });
             if let Some(module_origin_path) = maybe_module_origin_path {
                 exposed_module_names.insert(
-                    ElmName::from(exposed_module_name),
+                    ElmName::from_ref(exposed_module_name),
                     ProjectModuleOrigin {
                         project_path: project_path.clone(),
                         module_path: module_origin_path.clone(),
@@ -18355,10 +18355,10 @@ fn parse_elm_qualified_uppercase_reference_node(
                             end: state.position,
                         },
                         value: ElmQualifiedName {
-                            qualification: ElmName::from(
+                            qualification: ElmName::from_ref(
                                 &state.source[start_offset_utf8..(after_last_dot_offset_utf8 - 1)],
                             ),
-                            name: ElmName::from(
+                            name: ElmName::from_ref(
                                 &state.source[after_last_dot_offset_utf8..state.offset_utf8],
                             ),
                         },
@@ -18372,7 +18372,7 @@ fn parse_elm_qualified_uppercase_reference_node(
                         end: state.position,
                     },
                     value: ElmQualifiedName {
-                        qualification: ElmName::from(
+                        qualification: ElmName::from_ref(
                             &state.source[start_offset_utf8..(state.offset_utf8 - 1)],
                         ),
                         name: ElmName::EMPTY,
@@ -18388,7 +18388,7 @@ fn parse_elm_qualified_uppercase_reference_node(
             },
             value: ElmQualifiedName {
                 qualification: ElmName::EMPTY,
-                name: ElmName::from(&state.source[start_offset_utf8..state.offset_utf8]),
+                name: ElmName::from_ref(&state.source[start_offset_utf8..state.offset_utf8]),
             },
         })
     }
@@ -19096,7 +19096,7 @@ fn parse_elm_syntax_expression_reference(state: &mut ParseState) -> Option<ElmSy
                     let after_last_dot_offset_utf8: usize = state.offset_utf8;
                     if let Some(name) = parse_elm_lowercase_name(state) {
                         return Some(ElmSyntaxExpression::Reference {
-                            qualification: ElmName::from(
+                            qualification: ElmName::from_ref(
                                 &state.source[start_offset_utf8..(after_last_dot_offset_utf8 - 1)],
                             ),
                             name: name,
@@ -19105,11 +19105,11 @@ fn parse_elm_syntax_expression_reference(state: &mut ParseState) -> Option<ElmSy
                         parse_same_line_while(state, |c| c.is_alphanumeric() || c == '_');
                         if !parse_symbol(state, ".") {
                             return Some(ElmSyntaxExpression::Reference {
-                                qualification: ElmName::from(
+                                qualification: ElmName::from_ref(
                                     &state.source
                                         [start_offset_utf8..(after_last_dot_offset_utf8 - 1)],
                                 ),
-                                name: ElmName::from(
+                                name: ElmName::from_ref(
                                     &state.source[after_last_dot_offset_utf8..state.offset_utf8],
                                 ),
                             });
@@ -19117,7 +19117,7 @@ fn parse_elm_syntax_expression_reference(state: &mut ParseState) -> Option<ElmSy
                     } else {
                         // stopping at . and in effect having an empty name is explicitly allowed!
                         return Some(ElmSyntaxExpression::Reference {
-                            qualification: ElmName::from(
+                            qualification: ElmName::from_ref(
                                 &state.source[start_offset_utf8..(state.offset_utf8 - 1)],
                             ),
                             name: ElmName::EMPTY,
@@ -19127,7 +19127,7 @@ fn parse_elm_syntax_expression_reference(state: &mut ParseState) -> Option<ElmSy
             } else {
                 Some(ElmSyntaxExpression::Reference {
                     qualification: ElmName::EMPTY,
-                    name: ElmName::from(&state.source[start_offset_utf8..state.offset_utf8]),
+                    name: ElmName::from_ref(&state.source[start_offset_utf8..state.offset_utf8]),
                 })
             }
         })
